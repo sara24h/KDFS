@@ -1,7 +1,7 @@
 
 arch=resnet_56
 dataset_dir="/kaggle/input/hardfakevsrealfaces"
-dataset_type=cifar10
+dataset_type=hardfakevsrealfaces
 ckpt_path="/kaggle/working/KDFS/result/run_resnet56_cifar10_prune1/student_model/finetune_resnet_56_sparse_best.pt"
 device=0
 CUDA_VISIBLE_DEVICES=$device python main.py \
