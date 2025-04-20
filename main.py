@@ -22,13 +22,13 @@ def parse_args():
 
     # common
     parser.add_argument(
-        "--dataset_dir", type=str, default="./data", help="The dataset path"
+        "--dataset_dir", type=str, default="/kaggle/input/hardfakevsrealfaces", help="The dataset path"
     )
     parser.add_argument(
         "--dataset_type",
         type=str,
         default="cifar10",
-        choices=("cifar10", "cifar100", "imagenet"),
+        choices=("cifar10", "cifar100", "imagenet","hardfakevsrealfaces"),
         help="The type of dataset",
     )
     parser.add_argument(
