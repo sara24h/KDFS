@@ -1,3 +1,5 @@
+###TEST###
+
 import json
 import os
 import random
@@ -6,38 +8,35 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms as transforms
+from torch.utils.data import Dataset, DataLoader
+import pandas as pd
+from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_cifar10, Dataset_cifar100, Dataset_imagenet
-from model.teacher.resnet_cifar import (
-    resnet_56_cifar10,
-    resnet_110_cifar10,
-    resnet_56_cifar100,
-)
-from model.student.resnet_sparse_cifar import (
-    resnet_56_sparse_cifar10,
-    resnet_110_sparse_cifar10,
-    resnet_56_sparse_cifar100,
-)
-from model.teacher.ResNet import ResNet_18_imagenet, ResNet_50_imagenet
-from model.student.ResNet_sparse import (
-    ResNet_18_sparse_imagenet,
-    ResNet_50_sparse_imagenet,
-)
-from model.teacher.vgg_bn import VGG_16_bn_cifar10
-from model.student.vgg_bn_sparse import VGG_16_bn_sparse_cifar10
-from model.teacher.DenseNet import DenseNet_40_cifar10
-from model.student.DenseNet_sparse import (
-    DenseNet_40_sparse_cifar10,
-)
-from model.teacher.GoogLeNet import GoogLeNet_cifar10
-from model.student.GoogLeNet_sparse import GoogLeNet_sparse_cifar10
-from model.teacher.MobileNetV2 import MobileNetV2_imagenet
-from model.student.MobileNetV2_sparse import MobileNetV2_sparse_imagenet
-
+from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
 from get_flops_and_params import get_flops_and_params
 
+class CustomDataset(Dataset):
+    def __init__(self, csv_file, img_dir, transform=None):
+        self.data = pd.read_csv(csv_file)
+        self.img_dir = img_dir
+        self.transform = transform
+        self.label_map = {"fake": 0, "real": 1}  # Fake=0, Real=1
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.img_dir, f"{self.data.iloc[idx]['images_id']}.jpg")
+        image = Image.open(img_name).convert("RGB")
+        label = self.label_map[self.data.iloc[idx]["label"]]
+        
+        if self.transform:
+            image = self.transform(image)
+        
+        return image, label
 
 class Test:
     def __init__(self, args):
@@ -52,26 +51,47 @@ class Test:
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
 
     def dataload(self):
-        dataset = eval("Dataset_" + self.dataset_type)(
-            self.dataset_dir,
-            self.test_batch_size,
-            self.test_batch_size,
-            self.num_workers,
-            self.pin_memory,
-        )
-        self.train_loader, self.val_loader = (
-            dataset.loader_train,
-            dataset.loader_test,
-        )
-        print("Dataset has been loaded!")
+        print(f"Loading {self.dataset_type} dataset...")
+        
+        # تعریف transform برای تست
+        transform_test = transforms.Compose([
+            transforms.Resize((300, 300)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        if self.dataset_type == "hardfakevsrealfaces":
+            csv_file = os.path.join(self.dataset_dir, "data.csv")
+            img_dir = os.path.join(self.dataset_dir, "images")
+            dataset = CustomDataset(csv_file=csv_file, img_dir=img_dir, transform=transform_test)
+            # فقط داده‌های تست (validation) رو لود می‌کنیم
+            train_size = int(0.8 * len(dataset))
+            val_size = len(dataset) - train_size
+            _, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+            self.val_loader = DataLoader(
+                val_dataset, batch_size=self.test_batch_size, shuffle=False,
+                num_workers=self.num_workers, pin_memory=self.pin_memory
+            )
+        else:
+            raise ValueError(f"Unsupported dataset_type: {self.dataset_type}")
+
+        print(f"{self.dataset_type} dataset has been loaded!")
 
     def build_model(self):
         print("==> Building model..")
 
         print("Loading student model")
-        self.student = eval(self.arch + "_sparse_" + self.dataset_type)()
-        ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu")
-        self.student.load_state_dict(ckpt_student["student"])
+        if self.arch == "ResNet_50":
+            # پارامترهای Gumbel رو باید با مقادیر استفاده‌شده در آموزش سازگار کنیم
+            self.student = ResNet_50_sparse_imagenet(
+                gumbel_start_temperature=1.0,  # مقدار پیش‌فرض، باید با آموزش مطابقت داشته باشه
+                gumbel_end_temperature=0.1,    # مقدار پیش‌فرض
+                num_epochs=50                  # مقدار پیش‌فرض، باید با آموزش مطابقت داشته باشه
+            )
+            ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu")
+            self.student.load_state_dict(ckpt_student["student"])
+        else:
+            raise ValueError(f"Unsupported architecture for student: {self.arch}")
 
     def test(self):
         if self.device == "cuda":
@@ -81,7 +101,7 @@ class Test:
         meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True
+        self.student.ticket = True  # فعال کردن حالت فشرده‌شده
         with torch.no_grad():
             with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                 for images, targets in self.val_loader:
@@ -89,9 +109,7 @@ class Test:
                         images = images.cuda()
                         targets = targets.cuda()
                     logits_student, _ = self.student(images)
-                    prec1, prec5 = utils.get_accuracy(
-                        logits_student, targets, topk=(1, 5)
-                    )
+                    prec1, prec5 = utils.get_accuracy(logits_student, targets, topk=(1, 5))
                     n = images.size(0)
                     meter_top1.update(prec1.item(), n)
                     meter_top5.update(prec5.item(), n)
@@ -104,8 +122,7 @@ class Test:
                     time.sleep(0.01)
 
         print(
-            "[Test] "
-            "Prec@(1,5) {top1:.2f}, {top5:.2f}".format(
+            "[Test] Prec@(1,5) {top1:.2f}, {top5:.2f}".format(
                 top1=meter_top1.avg,
                 top5=meter_top5.avg,
             )
