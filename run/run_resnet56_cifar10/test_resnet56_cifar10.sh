@@ -1,7 +1,10 @@
+%%bash
+# مسیر فایل را مشخص کنید
+
 arch=resnet_56
-dataset_dir=dataset_cifar10
+dataset_dir="/kaggle/working/KDFS/dataset_cifar10/cifar-10-batches-py"
 dataset_type=cifar10
-ckpt_path=ckpt_path
+ckpt_path="/kaggle/working/KDFS/result/run_resnet56_cifar10_prune1/student_model/finetune_resnet_56_sparse_best.pt"
 device=0
 CUDA_VISIBLE_DEVICES=$device python main.py \
 --phase test \
