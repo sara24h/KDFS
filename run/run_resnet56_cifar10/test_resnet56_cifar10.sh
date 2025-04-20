@@ -1,5 +1,3 @@
-%%bash
-# مسیر فایل را مشخص کنید
 
 arch=resnet_56
 dataset_dir="/kaggle/working/KDFS/dataset_cifar10/cifar-10-batches-py"
