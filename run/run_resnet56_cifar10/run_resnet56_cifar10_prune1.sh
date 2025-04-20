@@ -2,7 +2,7 @@ arch=resnet_56
 result_dir=result/run_resnet56_cifar10_prune1
 dataset_dir=dataset_cifar10
 dataset_type=cifar10
-teacher_ckpt_path=teacher_dir/resnet_56.pt
+teacher_ckpt_path="/kaggle/working/KDFS/teacher_dir/resnet56-4bfd9763.th"
 device=0
 CUDA_VISIBLE_DEVICES=$device python main.py \
 --phase train \
@@ -42,7 +42,7 @@ CUDA_VISIBLE_DEVICES=$device python main.py \
 --arch $arch \
 --seed 3407 \
 --result_dir $result_dir \
---finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_last.pt" \
+--finetune_student_ckpt_path "${result_dir}/student_model/${arch}_sparse_last.pt" \
 --finetune_num_epochs 50 \
 --finetune_lr 1e-4 \
 --finetune_warmup_steps 10 \
@@ -52,4 +52,4 @@ CUDA_VISIBLE_DEVICES=$device python main.py \
 --finetune_weight_decay 1e-4 \
 --finetune_train_batch_size 256 \
 --finetune_eval_batch_size 256 \
---sparsed_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_best.pt" \
+--sparsed_student_ckpt_path "${result_dir}/student_model/finetune_${arch}_sparse_best.pt"
