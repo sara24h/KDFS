@@ -1,3 +1,108 @@
+##FINE TUNE ON TEACHER###
+
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import torchvision.transforms as transforms
+from torch.utils.data import Dataset, DataLoader
+import pandas as pd
+from PIL import Image
+import os
+
+class CustomDataset(Dataset):
+    def __init__(self, csv_file, img_dir, transform=None):
+        self.data = pd.read_csv(csv_file)
+        self.img_dir = img_dir
+        self.transform = transform
+        self.label_map = {"fake": 0, "real": 1}
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.img_dir, f"{self.data.iloc[idx]['images_id']}.jpg")
+        image = Image.open(img_name).convert("RGB")
+        label = self.label_map[self.data.iloc[idx]["label"]]
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+# تنظیمات
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+dataset_dir = "/kaggle/input/hardfakevsrealfaces"
+csv_file = os.path.join(dataset_dir, "data.csv")
+img_dir = os.path.join(dataset_dir, "images")
+
+# تعریف transforms
+transform_train = transforms.Compose([
+    transforms.Resize((300,300)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+transform_val = transforms.Compose([
+    transforms.Resize((300, 300)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+# لود دیتاست
+dataset = CustomDataset(csv_file=csv_file, img_dir=img_dir, transform=transform_train)
+train_size = int(0.8 * len(dataset))
+val_size = len(dataset) - train_size
+train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+val_dataset.dataset.transform = transform_val
+
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
+
+# لود مدل معلم
+teacher = models.resnet50(pretrained=True)
+num_ftrs = teacher.fc.in_features
+teacher.fc = nn.Linear(num_ftrs, 2)  # 2 کلاس: fake و real
+teacher = teacher.to(device)
+
+# تعریف بهینه‌ساز و تابع خسارت
+optimizer = torch.optim.Adam(teacher.parameters(), lr=1e-4, weight_decay=1e-4)
+criterion = nn.CrossEntropyLoss()
+
+# فاین‌تیون کردن
+num_epochs = 10
+teacher.train()
+for epoch in range(num_epochs):
+    running_loss = 0.0
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = teacher(images)  # ResNet_50 خروجی features رو جدا نمی‌کنه، فقط logits می‌ده
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(train_loader):.4f}")
+
+# ارزیابی
+teacher.eval()
+correct, total = 0, 0
+with torch.no_grad():
+    for images, labels in val_loader:
+        images, labels = images.to(device), labels.to(device)
+        outputs = teacher(images)
+        _, predicted = torch.max(outputs, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+print(f"Validation Accuracy: {100 * correct / total:.2f}%")
+
+# ذخیره مدل فاین‌تیون‌شده
+torch.save({"state_dict": teacher.state_dict()}, "teacher_resnet50_finetuned.pth")
+print("Teacher model saved to 'teacher_resnet50_finetuned.pth'")   
+
+
+
+#########################
+
+
 ##########TRAIN
 import json
 import os
