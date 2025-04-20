@@ -1,3 +1,4 @@
+
 import json
 import os
 import random
@@ -136,8 +137,9 @@ class Train:
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        self.teacher = eval(self.arch + "_" + self.dataset_type)()
+        self.teacher = eval(self.arch + "_" + self.dataset_type)()  # e.g., resnet_56_cifar10
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
+    
         if self.arch in [
             "resnet_56",
             "resnet_110",
@@ -145,7 +147,20 @@ class Train:
             "DenseNet_40",
             "GoogleNet",
         ]:
-            self.teacher.load_state_dict(ckpt_teacher["state_dict"])
+            state_dict = ckpt_teacher["state_dict"]
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        
+        # Rename 'linear' keys to 'fc' to match your model's expected structure
+            new_state_dict = {}
+            for key, value in state_dict.items():
+                new_key = key
+                if "linear.weight" in key:
+                    new_key = key.replace("linear.weight", "fc.weight")
+                elif "linear.bias" in key:
+                    new_key = key.replace("linear.bias", "fc.bias")
+                new_state_dict[new_key] = value
+        
+            self.teacher.load_state_dict(new_state_dict)
         elif self.arch in ["ResNet_18", "ResNet_50", "MobileNetV2"]:
             self.teacher.load_state_dict(ckpt_teacher)
 
