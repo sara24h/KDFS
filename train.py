@@ -139,7 +139,11 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
         img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
-        image = Image.open(img_name).convert("RGB")
+        try:
+            image = Image.open(img_name).convert("RGB")
+        except FileNotFoundError:
+            print(f"Warning: {img_name} not found, returning None")
+            return None, None
         numeric_label = self.label_map[label]
         if self.transform:
             image = self.transform(image)
@@ -217,7 +221,7 @@ class Train:
 
     def dataload(self):
         self.logger.info(f"Loading {self.dataset_type} dataset...")
-    
+        
         transform_train = transforms.Compose([
             transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(),
@@ -242,7 +246,7 @@ class Train:
             train_size = int(0.8 * len(dataset))
             val_size = len(dataset) - train_size
             train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-            val_dataset.dataset.transform = transform       transform = transform_val
+            val_dataset.dataset.transform = transform_val  # Set validation transform
         else:
             raise ValueError(f"Unsupported dataset_type: {self.dataset_type}")
 
@@ -259,7 +263,7 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         num_classes = 2 if self.dataset_type == "hardfakevsrealfaces" else 10
-
+    
         self.logger.info("Loading teacher model")
         if self.arch == "ResNet_50":
             self.teacher = models.resnet50(weights=None)  # Load without pretrained weights initially
@@ -289,7 +293,6 @@ class Train:
 
         self.teacher = self.teacher.to(self.device)
         self.student = self.student.to(self.device)
-        
 
     class _ResNet_50_sparse_imagenet(nn.Module):
         def __init__(self, gumbel_start_temperature, gumbel_end_temperature, num_epochs, num_classes):
@@ -395,6 +398,13 @@ class Train:
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 _tqdm.set_description(f"epoch: {epoch}/{self.num_epochs}")
                 for images, targets in self.train_loader:
+                    # Filter out None values
+                    valid_indices = [i for i in range(len(images)) if images[i] is not None]
+                    if not valid_indices:
+                        continue
+                    images = torch.stack([images[i] for i in valid_indices])
+                    targets = torch.tensor([targets[i] for i in valid_indices], dtype=torch.long)
+
                     self.optim_weight.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
@@ -433,6 +443,12 @@ class Train:
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description(f"val epoch: {epoch}/{self.num_epochs}")
                     for images, targets in self.val_loader:
+                        valid_indices = [i for i in range(len(images)) if images[i] is not None]
+                        if not valid_indices:
+                            continue
+                        images = torch.stack([images[i] for i in valid_indices])
+                        targets = torch.tensor([targets[i] for i in valid_indices], dtype=torch.long)
+
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda()
