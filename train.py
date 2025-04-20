@@ -13,7 +13,7 @@ class CustomDataset(Dataset):
         self.data = pd.read_csv(csv_file)
         self.root_dir = root_dir  # Base directory containing real and fake subdirs
         self.transform = transform
-        self.label_map = {"fake": 0, "real": 1}
+        self.label_map = {"fake": 0, "real": 1}  # Fake=0, Real=1
 
     def __len__(self):
         return len(self.data)
@@ -22,10 +22,10 @@ class CustomDataset(Dataset):
         label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
         img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
         image = Image.open(img_name).convert("RGB")
-        label_numeric = self.label_map[label]
+        numeric_label = self.label_map[label]
         if self.transform:
             image = self.transform(image)
-        return image, label_numeric
+        return image, numeric_label
 
 # Settings
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -137,7 +137,7 @@ class CustomDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        label = self.data.iloc[idx]["label"]
+        label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
         img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
         image = Image.open(img_name).convert("RGB")
         numeric_label = self.label_map[label]
@@ -217,7 +217,7 @@ class Train:
 
     def dataload(self):
         self.logger.info(f"Loading {self.dataset_type} dataset...")
-        
+    
         transform_train = transforms.Compose([
             transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(),
@@ -242,7 +242,7 @@ class Train:
             train_size = int(0.8 * len(dataset))
             val_size = len(dataset) - train_size
             train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-            val_dataset.dataset.transform = transform_val
+            val_dataset.dataset.transform = transform       transform = transform_val
         else:
             raise ValueError(f"Unsupported dataset_type: {self.dataset_type}")
 
@@ -259,7 +259,7 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         num_classes = 2 if self.dataset_type == "hardfakevsrealfaces" else 10
-    
+
         self.logger.info("Loading teacher model")
         if self.arch == "ResNet_50":
             self.teacher = models.resnet50(weights=None)  # Load without pretrained weights initially
@@ -289,6 +289,7 @@ class Train:
 
         self.teacher = self.teacher.to(self.device)
         self.student = self.student.to(self.device)
+        
 
     class _ResNet_50_sparse_imagenet(nn.Module):
         def __init__(self, gumbel_start_temperature, gumbel_end_temperature, num_epochs, num_classes):
