@@ -119,7 +119,6 @@ print("Teacher model saved to 'teacher_resnet50_finetuned.pth'")
 
 ##############
 
-
 import json
 import os
 import random
@@ -136,26 +135,27 @@ from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torchvision.models import ResNet50_Weights
+from torch.cuda.amp import GradScaler, autocast
 
 # Base FLOPs for models
 Flops_baselines = {
-    "resnet_56": 125.49,  # For CIFAR-10 (32x32)
-    "ResNet_50": 4134,    # Approximate for ImageNet (224x224)
+    "resnet_56": 125.49,
+    "ResNet_50": 4134,
 }
 
 # Custom dataset
 class CustomDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file)
-        self.root_dir = root_dir  # Base directory containing real and fake subdirs
+        self.root_dir = root_dir
         self.transform = transform
-        self.label_map = {"fake": 0, "real": 1}  # Fake=0, Real=1
+        self.label_map = {"fake": 0, "real": 1}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
+        label = self.data.iloc[idx]["label"]
         img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
         try:
             image = Image.open(img_name).convert("RGB")
@@ -197,9 +197,11 @@ class Train:
         self.coef_maskloss = args.coef_maskloss
         self.compress_rate = args.compress_rate
         self.resume = args.resume
+        self.accumulation_steps = args.accumulation_steps
 
         self.start_epoch = 0
         self.best_prec1 = 0
+        self.scaler = GradScaler()
 
     def result_init(self):
         if not os.path.exists(self.result_dir):
@@ -241,14 +243,14 @@ class Train:
         self.logger.info(f"Loading {self.dataset_type} dataset...")
         
         transform_train = transforms.Compose([
-            transforms.Resize((300, 300)),
+            transforms.Resize((224, 224)),  # Reduced from 300x300
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(10),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         transform_val = transforms.Compose([
-            transforms.Resize((300, 300)),
+            transforms.Resize((224, 224)),  # Reduced from 300x300
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
@@ -259,12 +261,12 @@ class Train:
             val_dataset = CIFAR10(root=self.dataset_dir, train=False, download=True, transform=transform_val)
         elif self.dataset_type == "hardfakevsrealfaces":
             csv_file = os.path.join(self.dataset_dir, "data.csv")
-            root_dir = self.dataset_dir  # Points to directory with real and fake subdirs
+            root_dir = self.dataset_dir
             dataset = CustomDataset(csv_file=csv_file, root_dir=root_dir, transform=transform_train)
             train_size = int(0.8 * len(dataset))
             val_size = len(dataset) - train_size
             train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-            val_dataset.dataset.transform = transform_val  # Set validation transform
+            val_dataset.dataset.transform = transform_val
         else:
             raise ValueError(f"Unsupported dataset_type: {self.dataset_type}")
 
@@ -284,7 +286,7 @@ class Train:
     
         self.logger.info("Loading teacher model")
         if self.arch == "ResNet_50":
-            self.teacher = models.resnet50(weights=None)  # Load without pretrained weights initially
+            self.teacher = models.resnet50(weights=None)
             num_ftrs = self.teacher.fc.in_features
             self.teacher.fc = nn.Linear(num_ftrs, num_classes)
             if self.teacher_ckpt_path and os.path.exists(self.teacher_ckpt_path):
@@ -415,37 +417,42 @@ class Train:
             self.student.update_gumbel_temperature(epoch)
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 _tqdm.set_description(f"epoch: {epoch}/{self.num_epochs}")
-                for images, targets in self.train_loader:
-                    # Filter out None values
+                self.optim_weight.zero_grad()
+                for i, (images, targets) in enumerate(self.train_loader):
                     valid_indices = [i for i in range(len(images)) if images[i] is not None]
                     if not valid_indices:
                         continue
                     images = torch.stack([images[i] for i in valid_indices])
                     targets = torch.tensor([targets[i] for i in valid_indices], dtype=torch.long)
 
-                    self.optim_weight.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
                         targets = targets.cuda()
-                    logits_student, feature_list_student = self.student(images)
-                    with torch.no_grad():
-                        logits_teacher, feature_list_teacher = self.teacher(images)
                     
-                    ori_loss = self.ori_loss(logits_student, targets)
-                    kd_loss = (self.target_temperature**2) * self.kd_loss(logits_teacher / self.target_temperature, logits_student / self.target_temperature)
-                    rc_loss = self.rc_loss(feature_list_student, feature_list_teacher)
-                    Flops_baseline = Flops_baselines.get(self.arch, 4134)
-                    Flops = self.student.get_flops()
-                    mask_loss = self.mask_loss(Flops, Flops_baseline * (10**6), self.compress_rate)
+                    with autocast():
+                        logits_student, feature_list_student = self.student(images)
+                        with torch.no_grad():
+                            logits_teacher, feature_list_teacher = self.teacher(images)
+                        
+                        ori_loss = self.ori_loss(logits_student, targets) / self.accumulation_steps
+                        kd_loss = (self.target_temperature**2) * self.kd_loss(logits_teacher / self.target_temperature, logits_student / self.target_temperature) / self.accumulation_steps
+                        rc_loss = self.rc_loss(feature_list_student, feature_list_teacher) / self.accumulation_steps
+                        Flops_baseline = Flops_baselines.get(self.arch, 4134)
+                        Flops = self.student.get_flops()
+                        mask_loss = self.mask_loss(Flops, Flops_baseline * (10**6), self.compress_rate) / self.accumulation_steps
 
-                    total_loss = ori_loss + self.coef_kdloss * kd_loss + self.coef_rcloss * rc_loss + self.coef_maskloss * mask_loss
+                        total_loss = ori_loss + self.coef_kdloss * kd_loss + self.coef_rcloss * rc_loss + self.coef_maskloss * mask_loss
 
-                    total_loss.backward()
-                    self.optim_weight.step()
+                    self.scaler.scale(total_loss).backward()
+                    
+                    if (i + 1) % self.accumulation_steps == 0:
+                        self.scaler.step(self.optim_weight)
+                        self.scaler.update()
+                        self.optim_weight.zero_grad()
 
                     prec1 = self._get_accuracy(logits_student, targets, topk=(1,))[0]
                     n = images.size(0)
-                    meter_loss.update(total_loss.item(), n)
+                    meter_loss.update(total_loss.item() * self.accumulation_steps, n)
                     meter_top1.update(prec1.item(), n)
 
                     _tqdm.set_postfix(loss=f"{meter_loss.avg:.4f}", top1=f"{meter_top1.avg:.4f}")
@@ -470,7 +477,8 @@ class Train:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda()
-                        logits_student, _ = self.student(images)
+                        with autocast():
+                            logits_student, _ = self.student(images)
                         prec1 = self._get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
