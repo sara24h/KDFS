@@ -119,14 +119,14 @@ class Train:
         self.logger.info(f"Loading {self.dataset_type} dataset...")
         
         transform_train = transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(10),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
         transform_val = transforms.Compose([
-            transforms.Resize((300,300)),
+            transforms.Resize((300, 300)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
