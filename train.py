@@ -1,5 +1,3 @@
-##FINE TUNE ON TEACHER###
-
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -8,11 +6,12 @@ from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 from PIL import Image
 import os
+from torchvision.models import ResNet50_Weights
 
 class CustomDataset(Dataset):
-    def __init__(self, csv_file, img_dir, transform=None):
+    def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file)
-        self.img_dir = img_dir
+        self.root_dir = root_dir  # Base directory containing real and fake subdirs
         self.transform = transform
         self.label_map = {"fake": 0, "real": 1}
 
@@ -20,22 +19,23 @@ class CustomDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.img_dir, f"{self.data.iloc[idx]['images_id']}.jpg")
+        label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
+        img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
         image = Image.open(img_name).convert("RGB")
-        label = self.label_map[self.data.iloc[idx]["label"]]
+        label_numeric = self.label_map[label]
         if self.transform:
             image = self.transform(image)
-        return image, label
+        return image, label_numeric
 
-# تنظیمات
+# Settings
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dataset_dir = "/kaggle/input/hardfakevsrealfaces"
 csv_file = os.path.join(dataset_dir, "data.csv")
-img_dir = os.path.join(dataset_dir, "images")
+root_dir = dataset_dir  # Points to directory with real and fake subdirs
 
-# تعریف transforms
+# Define transforms
 transform_train = transforms.Compose([
-    transforms.Resize((300,300)),
+    transforms.Resize((300, 300)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
     transforms.ToTensor(),
@@ -47,8 +47,8 @@ transform_val = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# لود دیتاست
-dataset = CustomDataset(csv_file=csv_file, img_dir=img_dir, transform=transform_train)
+# Load dataset
+dataset = CustomDataset(csv_file=csv_file, root_dir=root_dir, transform=transform_train)
 train_size = int(0.8 * len(dataset))
 val_size = len(dataset) - train_size
 train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
@@ -57,17 +57,17 @@ val_dataset.dataset.transform = transform_val
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
 val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
 
-# لود مدل معلم
-teacher = models.resnet50(pretrained=True)
+# Load teacher model
+teacher = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)  # Updated to use weights
 num_ftrs = teacher.fc.in_features
-teacher.fc = nn.Linear(num_ftrs, 2)  # 2 کلاس: fake و real
+teacher.fc = nn.Linear(num_ftrs, 2)  # 2 classes: fake and real
 teacher = teacher.to(device)
 
-# تعریف بهینه‌ساز و تابع خسارت
+# Define optimizer and loss function
 optimizer = torch.optim.Adam(teacher.parameters(), lr=1e-4, weight_decay=1e-4)
 criterion = nn.CrossEntropyLoss()
 
-# فاین‌تیون کردن
+# Fine-tuning
 num_epochs = 10
 teacher.train()
 for epoch in range(num_epochs):
@@ -75,14 +75,14 @@ for epoch in range(num_epochs):
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
-        outputs = teacher(images)  # ResNet_50 خروجی features رو جدا نمی‌کنه، فقط logits می‌ده
+        outputs = teacher(images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
     print(f"Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(train_loader):.4f}")
 
-# ارزیابی
+# Evaluation
 teacher.eval()
 correct, total = 0, 0
 with torch.no_grad():
@@ -94,16 +94,14 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
-# ذخیره مدل فاین‌تیون‌شده
+# Save fine-tuned model
 torch.save({"state_dict": teacher.state_dict()}, "teacher_resnet50_finetuned.pth")
-print("Teacher model saved to 'teacher_resnet50_finetuned.pth'")   
+print("Teacher model saved to 'teacher_resnet50_finetuned.pth'")
 
 
+##############
 
-#########################
 
-
-##########TRAIN
 import json
 import os
 import random
@@ -119,18 +117,19 @@ import pandas as pd
 from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from torchvision.models import ResNet50_Weights
 
-# ثابت‌های پایه برای Flops مدل‌ها
+# Base FLOPs for models
 Flops_baselines = {
-    "resnet_56": 125.49,  # برای CIFAR-10 (32x32)
-    "ResNet_50": 4134,    # تقریبی برای ImageNet (224x224)
+    "resnet_56": 125.49,  # For CIFAR-10 (32x32)
+    "ResNet_50": 4134,    # Approximate for ImageNet (224x224)
 }
 
-# تعریف دیتاست سفارشی
+# Custom dataset
 class CustomDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file)
-        self.root_dir = root_dir  # مسیر پایه که شامل پوشه‌های real و fake است
+        self.root_dir = root_dir  # Base directory containing real and fake subdirs
         self.transform = transform
         self.label_map = {"fake": 0, "real": 1}  # Fake=0, Real=1
 
@@ -146,7 +145,7 @@ class CustomDataset(Dataset):
             image = self.transform(image)
         return image, numeric_label
 
-# کلاس اصلی برای مدیریت آموزش
+# Training class
 class Train:
     def __init__(self, args):
         self.args = args
@@ -181,7 +180,6 @@ class Train:
         self.best_prec1 = 0
 
     def result_init(self):
-        """ایجاد دایرکتوری نتایج و تنظیم لاگر"""
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
         self.writer = SummaryWriter(self.result_dir)
@@ -193,7 +191,6 @@ class Train:
         self.logger.info("--------- Train -----------")
 
     def _get_logger(self, filename, logger_name):
-        """ایجاد یک لاگر ساده"""
         import logging
         logger = logging.getLogger(logger_name)
         logger.setLevel(logging.INFO)
@@ -205,7 +202,6 @@ class Train:
         return logger
 
     def setup_seed(self):
-        """تنظیم seed برای تکرارپذیری"""
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
@@ -220,7 +216,6 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        """لود کردن دیتاست"""
         self.logger.info(f"Loading {self.dataset_type} dataset...")
         
         transform_train = transforms.Compose([
@@ -242,7 +237,7 @@ class Train:
             val_dataset = CIFAR10(root=self.dataset_dir, train=False, download=True, transform=transform_val)
         elif self.dataset_type == "hardfakevsrealfaces":
             csv_file = os.path.join(self.dataset_dir, "data.csv")
-            root_dir = os.path.join(self.dataset_dir, "images")
+            root_dir = self.dataset_dir  # Points to directory with real and fake subdirs
             dataset = CustomDataset(csv_file=csv_file, root_dir=root_dir, transform=transform_train)
             train_size = int(0.8 * len(dataset))
             val_size = len(dataset) - train_size
@@ -262,13 +257,12 @@ class Train:
         self.logger.info(f"{self.dataset_type} dataset has been loaded!")
 
     def build_model(self):
-        """ساخت مدل معلم و دانش‌آموز"""
         self.logger.info("==> Building model..")
         num_classes = 2 if self.dataset_type == "hardfakevsrealfaces" else 10
     
         self.logger.info("Loading teacher model")
         if self.arch == "ResNet_50":
-            self.teacher = models.resnet50(pretrained=False)
+            self.teacher = models.resnet50(weights=None)  # Load without pretrained weights initially
             num_ftrs = self.teacher.fc.in_features
             self.teacher.fc = nn.Linear(num_ftrs, num_classes)
             if self.teacher_ckpt_path and os.path.exists(self.teacher_ckpt_path):
@@ -277,7 +271,7 @@ class Train:
                 self.logger.info("Teacher loaded from finetuned checkpoint.")
             else:
                 self.logger.info("No teacher checkpoint provided. Using ImageNet pretrained weights.")
-                self.teacher = models.resnet50(pretrained=True)
+                self.teacher = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
                 self.teacher.fc = nn.Linear(num_ftrs, num_classes)
         else:
             raise ValueError(f"Unsupported architecture for teacher: {self.arch}")
@@ -297,37 +291,34 @@ class Train:
         self.student = self.student.to(self.device)
 
     class _ResNet_50_sparse_imagenet(nn.Module):
-        """یک پیاده‌سازی ساده از ResNet-50 sparse"""
         def __init__(self, gumbel_start_temperature, gumbel_end_temperature, num_epochs, num_classes):
             super().__init__()
-            self.model = models.resnet50(pretrained=False)
+            self.model = models.resnet50(weights=None)
             num_ftrs = self.model.fc.in_features
             self.model.fc = nn.Linear(num_ftrs, num_classes)
             self.gumbel_start_temperature = gumbel_start_temperature
             self.gumbel_end_temperature = gumbel_end_temperature
             self.num_epochs = num_epochs
             self.gumbel_temperature = gumbel_start_temperature
-            self.mask_modules = []  # در اینجا باید ماژول‌های ماسک تعریف شوند
+            self.mask_modules = []
             self.ticket = False
 
         def forward(self, x):
-            return self.model(x), []  # feature_list خالی برای ساده‌سازی
+            return self.model(x), []
 
         def update_gumbel_temperature(self, epoch):
             self.gumbel_temperature = self.gumbel_start_temperature - (self.gumbel_start_temperature - self.gumbel_end_temperature) * (epoch / self.num_epochs)
 
         def get_flops(self):
-            return torch.tensor(Flops_baselines["ResNet_50"] * (10**6))  # مقدار تقریبی
+            return torch.tensor(Flops_baselines["ResNet_50"] * (10**6))
 
     def define_loss(self):
-        """تعریف لاس‌ها"""
         self.ori_loss = nn.CrossEntropyLoss()
         self.kd_loss = self._KDLoss()
         self.rc_loss = self._RCLoss()
         self.mask_loss = self._MaskLoss()
 
     class _KDLoss(nn.Module):
-        """پیاده‌سازی ساده لاس KD"""
         def __init__(self):
             super().__init__()
             self.criterion = nn.KLDivLoss(reduction="batchmean")
@@ -338,15 +329,13 @@ class Train:
             return self.criterion(student_log_softmax, teacher_softmax)
 
     class _RCLoss(nn.Module):
-        """پیاده‌سازی ساده لاس RC"""
         def __init__(self):
             super().__init__()
 
         def forward(self, student_features, teacher_features):
-            return torch.tensor(0.0)  # برای ساده‌سازی صفر فرض شده
+            return torch.tensor(0.0)
 
     class _MaskLoss(nn.Module):
-        """پیاده‌سازی ساده لاس Mask"""
         def __init__(self):
             super().__init__()
 
@@ -354,7 +343,6 @@ class Train:
             return torch.abs(flops - flops_baseline * compress_rate) / flops_baseline
 
     def define_optim(self):
-        """تعریف بهینه‌سازها"""
         weight_params = [p for n, p in self.student.named_parameters() if p.requires_grad]
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
@@ -365,7 +353,6 @@ class Train:
         )
 
     class _CosineAnnealingLRWarmup:
-        """پیاده‌سازی ساده scheduler"""
         def __init__(self, optimizer, T_max, eta_min, warmup_steps, warmup_start_lr):
             self.optimizer = optimizer
             self.T_max = T_max
@@ -384,7 +371,6 @@ class Train:
                 param_group["lr"] = lr
 
     def train(self):
-        """حلقه آموزش"""
         if self.device == "cuda":
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
@@ -462,7 +448,6 @@ class Train:
         self.logger.info("Train finished!")
 
     class _AverageMeter:
-        """محاسبه میانگین مقادیر"""
         def __init__(self, name, fmt=":f"):
             self.name = name
             self.fmt = fmt
@@ -485,7 +470,6 @@ class Train:
             return fmtstr.format(**self.__dict__)
 
     def _get_accuracy(self, output, target, topk=(1,)):
-        """محاسبه دقت"""
         maxk = max(topk)
         batch_size = target.size(0)
         _, pred = output.topk(maxk, 1, True, True)
@@ -498,7 +482,6 @@ class Train:
         return res
 
     def main(self):
-        """اجرای فرآیند آموزش"""
         self.result_init()
         self.setup_seed()
         self.dataload()
@@ -506,5 +489,3 @@ class Train:
         self.define_loss()
         self.define_optim()
         self.train()
-
-# مثال آرگومان‌ها و اجرا
