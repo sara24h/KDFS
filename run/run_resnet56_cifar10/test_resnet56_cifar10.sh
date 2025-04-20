@@ -1,6 +1,6 @@
 
 arch=resnet_56
-dataset_dir="/kaggle/working/KDFS/dataset_cifar10/cifar-10-batches-py"
+dataset_dir="/kaggle/input/hardfakevsrealfaces"
 dataset_type=cifar10
 ckpt_path="/kaggle/working/KDFS/result/run_resnet56_cifar10_prune1/student_model/finetune_resnet_56_sparse_best.pt"
 device=0
