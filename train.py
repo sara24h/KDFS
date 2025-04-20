@@ -21,7 +21,11 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         label = self.data.iloc[idx]["label"]  # 'fake' or 'real'
         img_name = os.path.join(self.root_dir, label, f"{self.data.iloc[idx]['images_id']}.jpg")
-        image = Image.open(img_name).convert("RGB")
+        try:
+            image = Image.open(img_name).convert("RGB")
+        except FileNotFoundError:
+            print(f"Warning: {img_name} not found, returning None")
+            return None, None
         numeric_label = self.label_map[label]
         if self.transform:
             image = self.transform(image)
@@ -73,6 +77,13 @@ teacher.train()
 for epoch in range(num_epochs):
     running_loss = 0.0
     for images, labels in train_loader:
+        # Filter out None values
+        valid_indices = [i for i in range(len(images)) if images[i] is not None]
+        if not valid_indices:
+            continue
+        images = torch.stack([images[i] for i in valid_indices])
+        labels = torch.tensor([labels[i] for i in valid_indices], dtype=torch.long)
+
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = teacher(images)
@@ -87,6 +98,13 @@ teacher.eval()
 correct, total = 0, 0
 with torch.no_grad():
     for images, labels in val_loader:
+        # Filter out None values
+        valid_indices = [i for i in range(len(images)) if images[i] is not None]
+        if not valid_indices:
+            continue
+        images = torch.stack([images[i] for i in valid_indices])
+        labels = torch.tensor([labels[i] for i in valid_indices], dtype=torch.long)
+
         images, labels = images.to(device), labels.to(device)
         outputs = teacher(images)
         _, predicted = torch.max(outputs, 1)
