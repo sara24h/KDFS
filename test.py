@@ -98,7 +98,7 @@ class Test:
             self.student = self.student.cuda()
 
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-        #meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
+        meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
 
         self.student.eval()
         self.student.ticket = True  # فعال کردن حالت فشرده‌شده
