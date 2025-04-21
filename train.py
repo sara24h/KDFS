@@ -1,28 +1,32 @@
 import json
 import os
 import random
-import shutil
-import time
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils import utils, meter, scheduler
-from data.dataset import Dataset_hardfakevsreal  # اضافه کردن دیتاست جدید
-import torchvision.models as models
+from dataset import Dataset_hardfakevsreal  # Your custom dataset
+from model.teacher.ResNet import ResNet_50_imagenet
+from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
+from utils import utils, loss, meter, scheduler
+
+Flops_baselines = {
+    "ResNet_50": 4134,
+}
 
 class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch
+        self.arch = args.arch  # Should be 'ResNet_50'
         self.device = args.device
         self.seed = args.seed
         self.result_dir = args.result_dir
+        self.teacher_ckpt_path = args.teacher_ckpt_path  # Path to save fine-tuned teacher
         self.num_epochs = args.num_epochs
         self.lr = args.lr
         self.warmup_steps = args.warmup_steps
@@ -32,6 +36,13 @@ class Train:
         self.weight_decay = args.weight_decay
         self.train_batch_size = args.train_batch_size
         self.eval_batch_size = args.eval_batch_size
+        self.target_temperature = args.target_temperature
+        self.gumbel_start_temperature = args.gumbel_start_temperature
+        self.gumbel_end_temperature = args.gumbel_end_temperature
+        self.coef_kdloss = args.coef_kdloss
+        self.coef_rcloss = args.coef_rcloss
+        self.coef_maskloss = args.coef_maskloss
+        self.compress_rate = args.compress_rate
         self.resume = args.resume
 
         self.start_epoch = 0
@@ -67,161 +78,321 @@ class Train:
 
     def dataload(self):
         self.train_loader, self.val_loader = Dataset_hardfakevsreal.get_loaders(
-            self.dataset_dir,
-            os.path.join(self.dataset_dir, 'data.csv'),
-            self.train_batch_size,
-            self.eval_batch_size,
-            self.num_workers,
-            self.pin_memory,
+            data_dir=self.dataset_dir,
+            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),  # Adjust as needed
+            train_batch_size=self.train_batch_size,
+            eval_batch_size=self.eval_batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
             ddp=False
         )
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
-        self.logger.info("==> Building model..")
-        self.logger.info("Loading ResNet50 model")
-        self.model = models.resnet50(pretrained=True)  # مدل از پیش آموزش‌دیده ImageNet
+        self.logger.info("==> Building teacher model (ResNet50 pre-trained)..")
+        # Load pre-trained ResNet50 from torchvision
+        self.teacher = models.resnet50(pretrained=True)
+        # Modify the final layer for binary classification
+        num_ftrs = self.teacher.fc.in_features
+        self.teacher.fc = nn.Linear(num_ftrs, 2)  # 2 classes: Fake, Real
 
-        # تغییر لایه نهایی برای 2 کلاس
-        self.model.fc = nn.Linear(self.model.fc.in_features, 2)
-
-        # فریز کردن لایه‌های اولیه
-        for param in self.model.parameters():
-            param.requires_grad = False
-        for param in self.model.fc.parameters():
-            param.requires_grad = True
-
-        self.logger.info("Model has been built!")
+        self.logger.info("Building student model (ResNet50 sparse)..")
+        self.student = ResNet_50_sparse_imagenet(
+            gumbel_start_temperature=self.gumbel_start_temperature,
+            gumbel_end_temperature=self.gumbel_end_temperature,
+            num_epochs=self.num_epochs,
+        )
 
     def define_loss(self):
-        # وزن‌دهی به کلاس‌ها برای مدیریت نامتوازنی (Fake: 0, Real: 1)
-        class_weights = torch.tensor([589/1288, 700/1288]).to(self.device)
-        self.ori_loss = nn.CrossEntropyLoss(weight=class_weights)
+        self.ori_loss = nn.CrossEntropyLoss()
+        self.kd_loss = loss.KDLoss()
+        self.rc_loss = loss.RCLoss()
+        self.mask_loss = loss.MaskLoss()
 
     def define_optim(self):
-        self.optim_weight = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=self.lr, weight_decay=self.weight_decay
+        # Optimizer for teacher fine-tuning
+        self.optim_teacher = torch.optim.Adam(
+            self.teacher.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay
         )
+        self.scheduler_teacher = scheduler.CosineAnnealingLRWarmup(
+            self.optim_teacher,
+            T_max=self.lr_decay_T_max,
+            eta_min=self.lr_decay_eta_min,
+            last_epoch=-1,
+            warmup_steps=self.warmup_steps,
+            warmup_start_lr=self.warmup_start_lr,
+        )
+
+        # Split weight and mask for student
+        weight_params = map(
+            lambda a: a[1],
+            filter(
+                lambda p: p[1].requires_grad and "mask" not in p[0],
+                self.student.named_parameters(),
+            ),
+        )
+        mask_params = map(
+            lambda a: a[1],
+            filter(
+                lambda p: p[1].requires_grad and "mask" in p[0],
+                self.student.named_parameters(),
+            ),
+        )
+        self.optim_weight = torch.optim.Adamax(
+            weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
+        )
+        self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
         self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
             self.optim_weight,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr
+            warmup_start_lr=self.warmup_start_lr,
         )
+        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
+            self.optim_mask,
+            T_max=self.lr_decay_T_max,
+            eta_min=self.lr_decay_eta_min,
+            last_epoch=-1,
+            warmup_steps=self.warmup_steps,
+            warmup_start_lr=self.warmup_start_lr,
+        )
+
+    def fine_tune_teacher(self, num_epochs=10):
+        self.logger.info("Fine-tuning teacher model...")
+        if self.device == "cuda":
+            self.teacher = self.teacher.cuda()
+            self.ori_loss = self.ori_loss.cuda()
+        
+        self.teacher.train()
+        for epoch in range(1, num_epochs + 1):
+            meter_loss = meter.AverageMeter("Loss", ":.4e")
+            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
+                _tqdm.set_description(f"Fine-tune epoch: {epoch}/{num_epochs}")
+                for images, targets in self.train_loader:
+                    self.optim_teacher.zero_grad()
+                    if self.device == "cuda":
+                        images = images.cuda()
+                        targets = targets.cuda()
+                    outputs = self.teacher(images)
+                    loss = self.ori_loss(outputs, targets)
+                    loss.backward()
+                    self.optim_teacher.step()
+                    
+                    prec1 = utils.get_accuracy(outputs, targets, topk=(1,))[0]
+                    n = images.size(0)
+                    meter_loss.update(loss.item(), n)
+                    meter_top1.update(prec1.item(), n)
+                    
+                    _tqdm.set_postfix(
+                        loss="{:.4f}".format(meter_loss.avg),
+                        top1="{:.4f}".format(meter_top1.avg),
+                    )
+                    _tqdm.update(1)
+            
+            self.scheduler_teacher.step()
+            self.logger.info(
+                f"[Teacher Fine-tune] Epoch {epoch} : Loss {meter_loss.avg:.4f}, Prec@1 {meter_top1.avg:.2f}"
+            )
+        
+        # Save fine-tuned teacher
+        torch.save(self.teacher.state_dict(), self.teacher_ckpt_path)
+        self.logger.info(f"Teacher model saved to {self.teacher_ckpt_path}")
 
     def resume_student_ckpt(self):
-        ckpt = torch.load(self.resume)
-        self.best_prec1 = ckpt["best_prec1"]
-        self.start_epoch = ckpt["start_epoch"]
-        self.model.load_state_dict(ckpt["model"])
-        self.optim_weight.load_state_dict(ckpt["optim_weight"])
+        ckpt_student = torch.load(self.resume)
+        self.best_prec1 = ckpt_student["best_prec1"]
+        self.start_epoch = ckpt_student["start_epoch"]
+        self.student.load_state_dict(ckpt_student["student"])
+        self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
+        self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
         self.scheduler_student_weight.load_state_dict(
-            ckpt["scheduler_student_weight"]
+            ckpt_student["scheduler_student_weight"]
         )
-        self.logger.info("=> Continue from epoch {}...".format(self.start_epoch))
+        self.scheduler_student_mask.load_state_dict(
+            ckpt_student["scheduler_student_mask"]
+        )
+        self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
 
     def save_student_ckpt(self, is_best):
-        folder = os.path.join(self.result_dir, "model")
+        folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
-
-        ckpt = {
+        ckpt_student = {
             "best_prec1": self.best_prec1,
             "start_epoch": self.start_epoch,
-            "model": self.model.state_dict(),
+            "student": self.student.state_dict(),
             "optim_weight": self.optim_weight.state_dict(),
-            "scheduler_student_weight": self.scheduler_student_weight.state_dict()
+            "optim_mask": self.optim_mask.state_dict(),
+            "scheduler_student_weight": self.scheduler_student_weight.state_dict(),
+            "scheduler_student_mask": self.scheduler_student_mask.state_dict(),
         }
-
         if is_best:
-            torch.save(ckpt, os.path.join(folder, "resnet50_best.pt"))
-        torch.save(ckpt, os.path.join(folder, "resnet50_last.pt"))
+            torch.save(
+                ckpt_student,
+                os.path.join(folder, f"{self.arch}_sparse_best.pt"),
+            )
+        torch.save(ckpt_student, os.path.join(folder, f"{self.arch}_sparse_last.pt"))
 
     def train(self):
         if self.device == "cuda":
-            self.model = self.model.cuda()
+            self.teacher = self.teacher.cuda()
+            self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
+            self.kd_loss = self.kd_loss.cuda()
+            self.rc_loss = self.rc_loss.cuda()
+            self.mask_loss = self.mask_loss.cuda()
 
         if self.resume:
             self.resume_student_ckpt()
 
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
+        meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
+        meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
+        meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-        meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
 
+        self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
-            # train
-            self.model.train()
+            self.student.train()
+            self.student.ticket = False
             meter_oriloss.reset()
+            meter_kdloss.reset()
+            meter_rcloss.reset()
+            meter_maskloss.reset()
             meter_loss.reset()
             meter_top1.reset()
-            meter_top5.reset()
-            lr = self.optim_weight.state_dict()["param_groups"][0]["lr"]
+            lr = (
+                self.optim_weight.state_dict()["param_groups"][0]["lr"]
+                if epoch > 1
+                else self.warmup_start_lr
+            )
 
+            self.student.update_gumbel_temperature(epoch)
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
-                _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
+                _tqdm.set_description(f"epoch: {epoch}/{self.num_epochs}")
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
+                    self.optim_mask.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
                         targets = targets.cuda()
-                    logits = self.model(images)  # ResNet50 مستقیماً logits را تولید می‌کند
-                    ori_loss = self.ori_loss(logits, targets)
-                    total_loss = ori_loss
+                    logits_student, feature_list_student = self.student(images)
+                    with torch.no_grad():
+                        logits_teacher, feature_list_teacher = self.teacher(images)
+                    ori_loss = self.ori_loss(logits_student, targets)
+                    kd_loss = (self.target_temperature**2) * self.kd_loss(
+                        logits_teacher / self.target_temperature,
+                        logits_student / self.target_temperature,
+                    )
+                    rc_loss = torch.tensor(0.0, device=logits_student.device)
+                    for i in range(len(feature_list_student)):
+                        rc_loss = rc_loss + self.rc_loss(
+                            feature_list_student[i], feature_list_teacher[i]
+                        )
+                    Flops_baseline = Flops_baselines[self.arch]
+                    Flops = self.student.get_flops()
+                    mask_loss = self.mask_loss(
+                        Flops, Flops_baseline * (10**6), self.compress_rate
+                    )
+                    total_loss = (
+                        ori_loss
+                        + self.coef_kdloss * kd_loss
+                        + self.coef_rcloss * rc_loss / len(feature_list_student)
+                        + self.coef_maskloss * mask_loss
+                    )
                     total_loss.backward()
                     self.optim_weight.step()
+                    self.optim_mask.step()
 
-                    prec1, prec5 = utils.get_accuracy(logits, targets, topk=(1, 5))
+                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
+                    meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
+                    meter_rcloss.update(
+                        self.coef_rcloss * rc_loss.item() / len(feature_list_student), n
+                    )
+                    meter_maskloss.update(self.coef_maskloss * mask_loss.item(), n)
                     meter_loss.update(total_loss.item(), n)
                     meter_top1.update(prec1.item(), n)
-                    meter_top5.update(prec5.item(), n)
 
-                    _tqdm.set_postfix(loss="{:.4f}".format(meter_loss.avg), top1="{:.4f}".format(meter_top1.avg))
+                    _tqdm.set_postfix(
+                        loss="{:.4f}".format(meter_loss.avg),
+                        top1="{:.4f}".format(meter_top1.avg),
+                    )
                     _tqdm.update(1)
-                    time.sleep(0.01)
 
+            Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
-            self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
-            self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("train/acc/top5", meter_top5.avg, global_step=epoch)
-            self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
+            self.scheduler_student_mask.step()
+
+            self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, epoch)
+            self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, epoch)
+            self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, epoch)
+            self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, epoch)
+            self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, epoch)
+            self.writer.add_scalar("train/acc/top1", meter_top1.avg, epoch)
+            self.writer.add_scalar("train/lr/lr", lr, epoch)
+            self.writer.add_scalar(
+                "train/temperature/gumbel_temperature",
+                self.student.gumbel_temperature,
+                epoch,
+            )
+            self.writer.add_scalar("train/Flops", Flops, epoch)
 
             self.logger.info(
-                "[Train] Epoch {0} : LR {lr:.6f} OriLoss {ori_loss:.4f} TotalLoss {total_loss:.4f} Prec@(1,5) {top1:.2f}, {top5:.2f}".format(
-                    epoch, lr=lr, ori_loss=meter_oriloss.avg, total_loss=meter_loss.avg, top1=meter_top1.avg, top5=meter_top5.avg
-                )
+                f"[Train] Epoch {epoch} : "
+                f"Gumbel_temperature {self.student.gumbel_temperature:.2f} "
+                f"LR {lr:.6f} "
+                f"OriLoss {meter_oriloss.avg:.4f} "
+                f"KDLoss {meter_kdloss.avg:.4f} "
+                f"RCLoss {meter_rcloss.avg:.4f} "
+                f"MaskLoss {meter_maskloss.avg:.6f} "
+                f"TotalLoss {meter_loss.avg:.4f} "
+                f"Prec@1 {meter_top1.avg:.2f}"
             )
 
-            # valid
-            self.model.eval()
+            masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
+            self.logger.info(f"[Train mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(
+                f"[Train model Flops] Epoch {epoch} : {Flops.item() / (10**6)}M"
+            )
+
+            # Validation
+            self.student.eval()
+            self.student.ticket = True
             meter_top1.reset()
-            meter_top5.reset()
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
+                    _tqdm.set_description(f"epoch: {epoch}/{self.num_epochs}")
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda()
-                        logits = self.model(images)
-                        prec1, prec5 = utils.get_accuracy(logits, targets, topk=(1, 5))
+                        logits_student, _ = self.student(images)
+                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
-                        meter_top5.update(prec5.item(), n)
-                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg), top5="{:.4f}".format(meter_top5.avg))
+
+                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
-                        time.sleep(0.01)
 
-            self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("val/acc/top5", meter_top5.avg, global_step=epoch)
+            Flops = self.student.get_flops()
+            self.writer.add_scalar("val/acc/top1", meter_top1.avg, epoch)
+            self.writer.add_scalar("val/Flops", Flops, epoch)
 
-            self.logger.info("[Val] Epoch {0} : Prec@(1,5) {top1:.2f}, {top5:.2f}".format(epoch, top1=meter_top1.avg, top5=meter_top5.avg))
+            self.logger.info(
+                f"[Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
+            )
+            self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(
+                f"[Val model Flops] Epoch {epoch} : {Flops.item() / (10**6)}M"
+            )
 
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
@@ -230,7 +401,8 @@ class Train:
             else:
                 self.save_student_ckpt(False)
 
-            self.logger.info(" => Best top1 accuracy: " + str(self.best_prec1))
+            self.logger.info(f" => Best top1 accuracy: {self.best_prec1}")
+
         self.logger.info("Training finished!")
 
     def main(self):
@@ -240,4 +412,5 @@ class Train:
         self.build_model()
         self.define_loss()
         self.define_optim()
+        self.fine_tune_teacher(num_epochs=10)  # Fine-tune teacher for 10 epochs
         self.train()
