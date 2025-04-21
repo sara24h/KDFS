@@ -43,7 +43,7 @@ def get_flops_and_params(args):
         pruned_model = pruned_model.cuda()
 
     # تنظیم اندازه تصویر بر اساس dataset_type
-    image_size = 224 if args.dataset_type == "hardfakevsrealfaces" else 32
+    image_size = 300 if args.dataset_type == "hardfakevsrealfaces" else 32
     input = torch.rand([1, 3, image_size, image_size], device=device)
     
     # محاسبه FLOPs و پارامترها
