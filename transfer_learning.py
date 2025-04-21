@@ -30,11 +30,19 @@ print(df['label'].value_counts())  # بررسی توزیع برچسب‌ها
 # مدیریت NaN
 df = df.dropna(subset=['label'])  # حذف ردیف‌های با label NaN
 
-# ایجاد مسیر تصاویر (تأیید کنید 'images_id' درست است)
-df['image_path'] = df['images_id'].apply(lambda x: os.path.join(data_dir, 'images', x))
+# ایجاد مسیر تصاویر با توجه به پوشه fake یا real
+def get_image_path(row):
+    folder = 'fake' if row['label'] == 'fake' else 'real'
+    return os.path.join(data_dir, folder, row['images_id'] + '.jpg')
 
-# بدون نگاشت به اعداد، از برچسب‌های رشته‌ای استفاده می‌کنیم
-# df['label'] = df['label'].map({'fake': 0, 'real': 1})  # این خط حذف شده
+df['image_path'] = df.apply(get_image_path, axis=1)
+
+# بررسی وجود فایل‌ها
+df['file_exists'] = df['image_path'].apply(os.path.isfile)
+print("Files not found:\n", df[~df['file_exists']])  # نمایش فایل‌های ناموجود
+
+# حذف ردیف‌هایی که فایل آن‌ها وجود ندارد
+df = df[df['file_exists']]
 
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
 train_df, val_df = train_test_split(train_val_df, test_size=0.15 / (1 - 0.15), random_state=42, stratify=train_val_df['label'])
