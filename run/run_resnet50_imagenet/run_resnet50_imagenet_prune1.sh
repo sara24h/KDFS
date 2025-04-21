@@ -4,10 +4,8 @@ dataset_dir=/kaggle/input/hardfakevsrealfaces
 dataset_type=hardfakevsrealfaces
 csv_file=/kaggle/input/hardfakevsrealfaces/train.csv
 teacher_dir=./teacher_dir
-device=0,1,2,3
-master_port=6681
 
-CUDA_VISIBLE_DEVICES=$device torchrun --nproc_per_node=4 --master_port $master_port main.py \
+CUDA_VISIBLE_DEVICES=0 python main.py \
 --phase train \
 --dataset_dir $dataset_dir \
 --dataset_type $dataset_type \
@@ -27,5 +25,4 @@ CUDA_VISIBLE_DEVICES=$device torchrun --nproc_per_node=4 --master_port $master_p
 --lr_decay_eta_min 1e-5 \
 --weight_decay 1e-4 \
 --train_batch_size 64 \
---eval_batch_size 64 \
---ddp
+--eval_batch_size 64
