@@ -1,5 +1,5 @@
 arch=ResNet_50
-result_dir=result/run_resnet50_hardfakevsrealfaces
+result_dir=results/run_resnet50_hardfakevsrealfaces
 dataset_dir=/kaggle/input/hardfakevsrealfaces
 dataset_type=hardfakevsrealfaces
 csv_file=/kaggle/input/hardfakevsrealfaces/train.csv
@@ -10,19 +10,19 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 --dataset_dir $dataset_dir \
 --dataset_type $dataset_type \
 --csv_file $csv_file \
---num_workers 8 \
---pin_memory \
+--num_workers 4 \
+--pin_memory True \
 --device cuda \
 --arch $arch \
---seed 3407 \
+--seed 42 \
 --result_dir $result_dir \
 --teacher_dir $teacher_dir \
 --num_epochs 50 \
---lr 1e-3 \
+--lr 0.001 \
 --warmup_steps 5 \
---warmup_start_lr 1e-5 \
+--warmup_start_lr 0.0001 \
 --lr_decay_T_max 50 \
---lr_decay_eta_min 1e-5 \
---weight_decay 1e-4 \
---train_batch_size 64 \
---eval_batch_size 64
+--lr_decay_eta_min 0.00001 \
+--weight_decay 5e-4 \
+--train_batch_size 32 \
+--eval_batch_size 32
