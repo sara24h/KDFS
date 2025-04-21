@@ -3,7 +3,7 @@ import time
 import numpy as np
 import torch
 from tqdm import tqdm
-from dataset import Dataset_hardfakevsreal  # Your custom dataset
+from data.dataset import Dataset_hardfakevsreal  # Your custom dataset
 from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
 from utils import utils, meter
 from get_flops_and_params import get_flops_and_params
