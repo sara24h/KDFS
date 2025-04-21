@@ -7,7 +7,7 @@ import torch.nn as nn
 import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from dataset import Dataset_hardfakevsreal  # Your custom dataset
+from data.dataset import Dataset_hardfakevsreal  # Your custom dataset
 from model.teacher.ResNet import ResNet_50_imagenet
 from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
 from utils import utils, loss, meter, scheduler
