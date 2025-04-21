@@ -218,6 +218,9 @@ def main():
     args = parse_args()
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     os.environ["OMP_NUM_THREADS"] = "4"
+    if not os.path.exists(args.result_dir):
+        os.makedirs(args.result_dir)
+
 
     if args.phase == "train":
         train = Train(args=args)
