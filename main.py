@@ -1,10 +1,6 @@
 import argparse
 import os
-from train import Train
-from finetune import Finetune  # Assuming your fine-tuning script is named fine_tune.py
-
 import json
-import os
 import random
 import numpy as np
 import torch
@@ -14,6 +10,8 @@ from torchvision.models import resnet50, ResNet50_Weights
 from tqdm import tqdm
 from data.dataset import Dataset_hardfakevsreal
 from utils import utils, meter, scheduler
+from train import Train
+from finetune import Finetune
 
 class TrainTeacher:
     def __init__(self, args):
@@ -72,7 +70,7 @@ class TrainTeacher:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        self.train_loader, self.val_loader = Dataset_hardfakevsreal.get_loaders(
+        self.train_loader, self.val_loader, self.test_loader = Dataset_hardfakevsreal.get_loaders(
             self.dataset_dir,
             self.csv_file,
             self.train_batch_size,
@@ -81,24 +79,6 @@ class TrainTeacher:
             self.pin_memory,
             ddp=False
         )
-
-        # مجموعه تست (10% از داده‌ها)
-        dataset = Dataset_hardfakevsreal(self.dataset_dir, self.csv_file, transform=transforms.Compose([
-            transforms.CenterCrop(300),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ]))
-        test_size = int(0.1 * len(dataset))
-        train_val_size = len(dataset) - test_size
-        _, test_dataset = torch.utils.data.random_split(dataset, [train_val_size, test_size])
-        self.test_loader = torch.utils.data.DataLoader(
-            test_dataset,
-            batch_size=self.eval_batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory
-        )
-
         self.logger.info("HardFakeVsRealFaces dataset loaded! Train: {}, Val: {}, Test: {}".format(
             len(self.train_loader.dataset), len(self.val_loader.dataset), len(self.test_loader.dataset)))
 
@@ -228,42 +208,6 @@ class TrainTeacher:
         self.define_optim()
         self.finetune_teacher()
 
-class Args:
-    dataset_dir = '/kaggle/input/hardfakevsrealfaces'
-    csv_file = '/kaggle/input/hardfakevsrealfaces/data.csv'  # فرض بر وجود فایل متادیتا
-    num_workers = 4
-    pin_memory = True
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    seed = 42
-    result_dir = './results'
-    teacher_dir = './teacher_dir'
-    num_epochs = 50
-    lr = 0.001
-    warmup_steps = 5
-    warmup_start_lr = 0.0001
-    lr_decay_T_max = 50
-    lr_decay_eta_min = 0.00001
-    weight_decay = 5e-4
-    train_batch_size = 32
-    eval_batch_size = 32
-
-if __name__ == "__main__":
-    args = Args()
-    trainer = TrainTeacher(args)
-    trainer.main()
-
-
-
-
-
-
-
-
-
-
-
-
-
 def parse_args():
     desc = "Pytorch implementation of KDFS"
     parser = argparse.ArgumentParser(description=desc)
@@ -275,8 +219,6 @@ def parse_args():
         choices=("train", "finetune"),
         help="train or finetune",
     )
-
-    # Common
     parser.add_argument(
         "--dataset_dir", type=str, default="/kaggle/input/hardfakevsrealfaces", help="The dataset path"
     )
@@ -284,19 +226,25 @@ def parse_args():
         "--dataset_type",
         type=str,
         default="hardfakevsrealfaces",
-        choices=("cifar10", "hardfakevsrealfaces"),
+        choices=("cifar10", "cifar100", "imagenet", "hardfakevsrealfaces"),
         help="The type of dataset",
+    )
+    parser.add_argument(
+        "--csv_file",
+        type=str,
+        default="/kaggle/input/hardfakevsrealfaces/train.csv",
+        help="Path to the CSV file for training/validation"
     )
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=2,  # Reduced for memory efficiency
+        default=2,
         help="The num_workers of dataloader",
     )
     parser.add_argument(
         "--pin_memory",
         type=bool,
-        default=False,  # Disabled for memory efficiency
+        default=False,
         help="The pin_memory of dataloader",
     )
     parser.add_argument(
@@ -320,13 +268,11 @@ def parse_args():
         default="./results/",
         help="The directory where the results will be stored",
     )
-
-    # Train
     parser.add_argument(
-        "--teacher_ckpt_path",
+        "--teacher_dir",
         type=str,
-        default="teacher_resnet50_finetuned.pth",
-        help="The path where to load the teacher ckpt",
+        default="./teacher_dir",
+        help="The directory where the trained teacher model will be saved"
     )
     parser.add_argument(
         "--num_epochs", type=int, default=10, help="The num of epochs to train"
@@ -365,139 +311,7 @@ def parse_args():
     parser.add_argument(
         "--eval_batch_size", type=int, default=16, help="Batch size for validation"
     )
-    parser.add_argument(
-        "--accumulation_steps", type=int, default=2, help="Gradient accumulation steps"
-    )
-    parser.add_argument(
-        "--target_temperature",
-        type=float,
-        default=4.0,
-        help="Temperature of soft targets",
-    )
-    parser.add_argument(
-        "--gumbel_start_temperature",
-        type=float,
-        default=1.0,
-        help="Gumbel-softmax temperature at the start of training",
-    )
-    parser.add_argument(
-        "--gumbel_end_temperature",
-        type=float,
-        default=0.1,
-        help="Gumbel-softmax temperature at the end of training",
-    )
-    parser.add_argument(
-        "--coef_kdloss", type=float, default=1.0, help="Coefficient of kd loss"
-    )
-    parser.add_argument(
-        "--coef_rcloss",
-        type=float,
-        default=0.0,
-        help="Coefficient of reconstruction loss",
-    )
-    parser.add_argument(
-        "--coef_maskloss", type=float, default=0.0, help="Coefficient of mask loss"
-    )
-    parser.add_argument(
-        "--compress_rate",
-        type=float,
-        default=0.5,
-        help="Compress rate of the student model",
-    )
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Load the model from the specified checkpoint",
-    )
-
-    # Finetune
-    parser.add_argument(
-        "--finetune_num_epochs",
-        type=int,
-        default=10,
-        help="The num of epochs to train in finetune",
-    )
-    parser.add_argument(
-        "--finetune_lr",
-        default=1e-4,
-        type=float,
-        help="The initial learning rate of model in finetune",
-    )
-    parser.add_argument(
-        "--finetune_warmup_steps",
-        default=5,
-        type=int,
-        help="The steps of warmup in finetune",
-    )
-    parser.add_argument(
-        "--finetune_warmup_start_lr",
-        default=1e-6,
-        type=float,
-        help="The starting learning rate for warmup in finetune",
-    )
-    parser.add_argument(
-        "--finetune_lr_decay_T_max",
-        default=10,
-        type=int,
-        help="T_max of CosineAnnealingLR in finetune",
-    )
-    parser.add_argument(
-        "--finetune_lr_decay_eta_min",
-        default=1e-6,
-        type=float,
-        help="eta_min of CosineAnnealingLR in finetune",
-    )
-    parser.add_argument(
-        "--finetune_weight_decay",
-        type=float,
-        default=1e-4,
-        help="Weight decay in finetune",
-    )
-    parser.add_argument(
-        "--finetune_train_batch_size",
-        type=int,
-        default=16,
-        help="Batch size for training in finetune",
-    )
-    parser.add_argument(
-        "--finetune_eval_batch_size",
-        type=int,
-        default=16,
-        help="Batch size for validation in finetune",
-    )
-    parser.add_argument(
-        "--finetune_resume",
-        type=str,
-        default=None,
-        help="Load the model from the specified checkpoint in finetune",
-    )
-    parser.add_argument(
-    "--csv_file",
-    type=str,
-    default="/kaggle/input/hardfakevsrealfaces/train.csv",
-    help="Path to the CSV file for training/validation"
-    )
-    parser.add_argument(
-        "--test_csv_file",
-        type=str,
-        default=None,
-        help="Path to the CSV file for testing (optional)"
-    )
-    parser.add_argument(
-        "--teacher_dir",
-        type=str,
-        default="./teacher_dir",
-        help="The directory where the trained teacher model will be saved" 
-    )
-    parser.add_argument(
-        "--dataset_type",
-        type=str,
-        default="cifar10",
-        choices=("cifar10", "cifar100", "imagenet", "hardfakevsrealfaces"),
-        help="The type of dataset"
-    )
-
+    # ... بقیه آرگومان‌ها برای فاز train و finetune ...
     return parser.parse_args()
 
 def main():
@@ -506,7 +320,6 @@ def main():
     os.environ["OMP_NUM_THREADS"] = "4"
     if not os.path.exists(args.result_dir):
         os.makedirs(args.result_dir)
-
 
     if args.phase == "train":
         train = Train(args=args)
@@ -519,5 +332,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
