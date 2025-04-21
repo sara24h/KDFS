@@ -310,7 +310,6 @@ def parse_args():
     parser.add_argument(
         "--eval_batch_size", type=int, default=16, help="Batch size for validation"
     )
-    # بقیه آرگومان‌ها برای فاز train و finetune
     parser.add_argument(
         "--teacher_ckpt_path",
         type=str,
