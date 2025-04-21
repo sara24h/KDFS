@@ -22,7 +22,7 @@ epochs = 50
 
 # بارگذاری و آماده‌سازی داده‌ها
 df = pd.read_csv(os.path.join(data_dir, 'data.csv'))
-df['image_path'] = df['image_id'].apply(lambda x: os.path.join(data_dir, 'images', x))
+df['image_path'] = df['images_id'].apply(lambda x: os.path.join(data_dir, 'images', x))
 df['label'] = df['label'].map({'Fake': 0, 'Real': 1})
 
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
