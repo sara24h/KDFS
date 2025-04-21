@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument(
         "--dataset_type",
         type=str,
-        default="imagenet",
+        default="hardfakevsrealfaces",
         choices=("imagenet",),
         help="The type of dataset",
     )
