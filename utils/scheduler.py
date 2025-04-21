@@ -68,3 +68,31 @@ class CosineAnnealingLRWarmup(CosineAnnealingLR):
                 / 2
                 for base_lr in self.base_lrs
             ]
+
+
+
+import torch.optim.lr_scheduler as lr_scheduler
+
+class CosineAnnealingLRWarmup:
+    def __init__(self, optimizer, T_max, eta_min, last_epoch, warmup_steps, warmup_start_lr):
+        self.scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max, eta_min, last_epoch)
+        self.warmup_steps = warmup_steps
+        self.warmup_start_lr = warmup_start_lr
+        self.optimizer = optimizer
+        self.current_step = 0
+
+    def step(self):
+        if self.current_step < self.warmup_steps:
+            lr = self.warmup_start_lr + (self.optimizer.param_groups[0]['lr'] - self.warmup_start_lr) * (
+                self.current_step / self.warmup_steps)
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+            self.current_step += 1
+        else:
+            self.scheduler.step()
+
+    def state_dict(self):
+        return self.scheduler.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.scheduler.load_state_dict(state_dict)
