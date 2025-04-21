@@ -472,6 +472,31 @@ def parse_args():
         default=None,
         help="Load the model from the specified checkpoint in finetune",
     )
+    parser.add_argument(
+    "--csv_file",
+    type=str,
+    default="/kaggle/input/hardfakevsrealfaces/train.csv",
+    help="Path to the CSV file for training/validation"
+    )
+    parser.add_argument(
+        "--test_csv_file",
+        type=str,
+        default=None,
+        help="Path to the CSV file for testing (optional)"
+    )
+    parser.add_argument(
+        "--teacher_dir",
+        type=str,
+        default="./teacher_dir",
+        help="The directory where the trained teacher model will be saved" 
+    )
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="cifar10",
+        choices=("cifar10", "cifar100", "imagenet", "hardfakevsrealfaces"),
+        help="The type of dataset"
+    )
 
     return parser.parse_args()
 
