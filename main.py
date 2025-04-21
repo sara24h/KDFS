@@ -1,7 +1,7 @@
 import argparse
 import os
 from train import Train
-from fine_tune import Finetune  # Assuming your fine-tuning script is named fine_tune.py
+from finetune import Finetune  # Assuming your fine-tuning script is named fine_tune.py
 
 def parse_args():
     desc = "Pytorch implementation of KDFS"
