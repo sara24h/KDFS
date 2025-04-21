@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils import utils, loss, meter, scheduler
+from utils import utils, meter, scheduler
 from data.dataset import Dataset_hardfakevsreal
 from torchvision.models import resnet50, ResNet50_Weights
 
@@ -83,7 +83,7 @@ class Train:
             None
         )
         self.logger.info("Dataset has been loaded! Train: {}, Val: {}, Test: {}".format(
-            len(self.train_loader.dataset), len(self.val_loader.dataset), len(self.test_loader.dataset)))
+            len(self.train_loader.dataset), len(self.val_loader.dataset), len(self.test_loader.dataset if self.test_loader else [])))
 
     def build_model(self):
         self.logger.info("==> Building teacher model..")
