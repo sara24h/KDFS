@@ -74,3 +74,36 @@ def get_accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+
+
+
+
+import logging
+import torch
+
+def get_logger(logpath, name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    file_handler = logging.FileHandler(logpath)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    return logger
+
+def record_config(args, filepath):
+    with open(filepath, 'w') as f:
+        for key, value in vars(args).items():
+            f.write(f"{key}: {value}\n")
+
+def get_accuracy(output, target, topk=(1,)):
+    maxk = max(topk)
+    batch_size = target.size(0)
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+    res = []
+    for k in topk:
+        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
