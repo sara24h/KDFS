@@ -74,7 +74,7 @@ class Train:
         
         self.train_loader, self.val_loader, self.test_loader = Dataset_hardfakevsreal.get_loaders(
             self.dataset_dir,
-            self.args.csv_file if hasattr(self.args, 'csv_file') else os.path.join(self.dataset_dir, 'train.csv'),
+            self.args.csv_file if hasattr(self.args, 'csv_file') else os.path.join(self.dataset_dir, 'data.csv'),
             self.train_batch_size,
             self.eval_batch_size,
             self.num_workers,
