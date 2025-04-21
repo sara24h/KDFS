@@ -72,7 +72,7 @@ class Train:
         if self.dataset_type != 'hardfakevsrealfaces':
             raise ValueError("Only 'hardfakevsrealfaces' dataset is supported in this configuration")
         
-        dataset = Dataset_hardfakevsreal(
+        self.train_loader, self.val_loader, self.test_loader = Dataset_hardfakevsreal.get_loaders(
             self.dataset_dir,
             self.args.csv_file if hasattr(self.args, 'csv_file') else os.path.join(self.dataset_dir, 'train.csv'),
             self.train_batch_size,
@@ -82,27 +82,19 @@ class Train:
             self.args.ddp if hasattr(self.args, 'ddp') else False,
             None
         )
-        self.train_loader, self.val_loader, self.test_loader = dataset.get_loaders(
-            self.dataset_dir,
-            self.args.csv_file if hasattr(self.args, 'csv_file') else os.path.join(self.dataset_dir, 'train.csv'),
-            self.train_batch_size,
-            self.eval_batch_size,
-            self.num_workers,
-            self.pin_memory,
-            self.args.ddp if hasattr(self.args, 'ddp') else False,
-            None
-        )
-        self.logger.info("Dataset has been loaded!")
+        self.logger.info("Dataset has been loaded! Train: {}, Val: {}, Test: {}".format(
+            len(self.train_loader.dataset), len(self.val_loader.dataset), len(self.test_loader.dataset)))
 
     def build_model(self):
         self.logger.info("==> Building teacher model..")
-        self.teacher = resnet50(weights=ResNet50_Weights.IMAGEN1K_V2)
+        self.teacher = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
         for param in self.teacher.parameters():
             param.requires_grad = False
         num_ftrs = self.teacher.fc.in_features
         self.teacher.fc = nn.Linear(num_ftrs, 2)
         for param in self.teacher.fc.parameters():
             param.requires_grad = True
+        self.teacher = self.teacher.to(self.device)
         self.logger.info("Teacher model built successfully!")
 
     def define_loss(self):
