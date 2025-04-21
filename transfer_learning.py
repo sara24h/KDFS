@@ -9,7 +9,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split
 
-# مسیرها و پارامترها (لطفاً به‌روزرسانی کنید)
+# مسیرها و پارامترها
 data_dir = '/kaggle/input/hardfakevsrealfaces'
 base_model_weights = '/kaggle/input/resnet50-w/resnet50_weights.h5'
 teacher_dir = 'teacher_dir'
@@ -22,8 +22,19 @@ epochs = 50
 
 # بارگذاری و آماده‌سازی داده‌ها
 df = pd.read_csv(os.path.join(data_dir, 'data.csv'))
+print(df.columns)  # برای دیباگ
+print(df.head())   # برای دیباگ
+print(df['label'].isnull().sum())  # بررسی NaN‌ها
+print(df['label'].value_counts())  # بررسی توزیع برچسب‌ها
+
+# مدیریت NaN
+df = df.dropna(subset=['label'])  # حذف ردیف‌های با label NaN
+
+# ایجاد مسیر تصاویر (تأیید کنید 'images_id' درست است)
 df['image_path'] = df['images_id'].apply(lambda x: os.path.join(data_dir, 'images', x))
-df['label'] = df['label'].map({'fake': 0, 'real': 1})
+
+# بدون نگاشت به اعداد، از برچسب‌های رشته‌ای استفاده می‌کنیم
+# df['label'] = df['label'].map({'fake': 0, 'real': 1})  # این خط حذف شده
 
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
 train_df, val_df = train_test_split(train_val_df, test_size=0.15 / (1 - 0.15), random_state=42, stratify=train_val_df['label'])
