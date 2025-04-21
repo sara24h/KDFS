@@ -7,9 +7,10 @@ import torch.nn as nn
 import torchvision.models as models
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from data.dataset import Dataset_hardfakevsreal  # Your custom dataset
-from model.teacher.ResNet import ResNet_50_imagenet
+from sklearn.metrics import f1_score, roc_auc_score, confusion_matrix
 from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
+from data.dataset import Dataset_hardfakevsreal  # دیتاست ارائه‌شده
+# فرض می‌کنیم ماژول‌های utils، loss، meter، و scheduler در دسترس هستند
 from utils import utils, loss, meter, scheduler
 
 Flops_baselines = {
@@ -20,13 +21,15 @@ class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
+        self.dataset_type = args.dataset_type
+        self.csv_file = args.csv_file  # فایل CSV برای دیتاست
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch  # Should be 'ResNet_50'
+        self.arch = args.arch
         self.device = args.device
         self.seed = args.seed
         self.result_dir = args.result_dir
-        self.teacher_ckpt_path = args.teacher_ckpt_path  # Path to save fine-tuned teacher
+        self.teacher_ckpt_path = args.teacher_ckpt_path
         self.num_epochs = args.num_epochs
         self.lr = args.lr
         self.warmup_steps = args.warmup_steps
@@ -79,7 +82,7 @@ class Train:
     def dataload(self):
         self.train_loader, self.val_loader = Dataset_hardfakevsreal.get_loaders(
             data_dir=self.dataset_dir,
-            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),  # Adjust as needed
+            csv_file=self.csv_file,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
@@ -89,14 +92,15 @@ class Train:
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
-        self.logger.info("==> Building teacher model (ResNet50 pre-trained)..")
-        # Load pre-trained ResNet50 from torchvision
-        self.teacher = models.resnet50(pretrained=True)
-        # Modify the final layer for binary classification
-        num_ftrs = self.teacher.fc.in_features
-        self.teacher.fc = nn.Linear(num_ftrs, 2)  # 2 classes: Fake, Real
+        self.logger.info("==> Building model..")
 
-        self.logger.info("Building student model (ResNet50 sparse)..")
+        self.logger.info("Loading teacher model")
+        self.teacher = models.resnet50()
+        self.teacher.fc = nn.Linear(self.teacher.fc.in_features, 2)  # تنظیم برای 2 کلاس
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
+        self.teacher.load_state_dict(ckpt_teacher)
+
+        self.logger.info("Building student model")
         self.student = ResNet_50_sparse_imagenet(
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
@@ -104,28 +108,14 @@ class Train:
         )
 
     def define_loss(self):
-        self.ori_loss = nn.CrossEntropyLoss()
+        # مدیریت عدم تعادل کلاس‌ها
+        class_weights = torch.tensor([1.0, 1.0]).to(self.device)  # قابل تنظیم بر اساس توزیع
+        self.ori_loss = nn.CrossEntropyLoss(weight=class_weights)
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
     def define_optim(self):
-        # Optimizer for teacher fine-tuning
-        self.optim_teacher = torch.optim.Adam(
-            self.teacher.parameters(),
-            lr=self.lr,
-            weight_decay=self.weight_decay
-        )
-        self.scheduler_teacher = scheduler.CosineAnnealingLRWarmup(
-            self.optim_teacher,
-            T_max=self.lr_decay_T_max,
-            eta_min=self.lr_decay_eta_min,
-            last_epoch=-1,
-            warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
-        )
-
-        # Split weight and mask for student
         weight_params = map(
             lambda a: a[1],
             filter(
@@ -160,48 +150,6 @@ class Train:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
-
-    def fine_tune_teacher(self, num_epochs=10):
-        self.logger.info("Fine-tuning teacher model...")
-        if self.device == "cuda":
-            self.teacher = self.teacher.cuda()
-            self.ori_loss = self.ori_loss.cuda()
-        
-        self.teacher.train()
-        for epoch in range(1, num_epochs + 1):
-            meter_loss = meter.AverageMeter("Loss", ":.4e")
-            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
-                _tqdm.set_description(f"Fine-tune epoch: {epoch}/{num_epochs}")
-                for images, targets in self.train_loader:
-                    self.optim_teacher.zero_grad()
-                    if self.device == "cuda":
-                        images = images.cuda()
-                        targets = targets.cuda()
-                    outputs = self.teacher(images)
-                    loss = self.ori_loss(outputs, targets)
-                    loss.backward()
-                    self.optim_teacher.step()
-                    
-                    prec1 = utils.get_accuracy(outputs, targets, topk=(1,))[0]
-                    n = images.size(0)
-                    meter_loss.update(loss.item(), n)
-                    meter_top1.update(prec1.item(), n)
-                    
-                    _tqdm.set_postfix(
-                        loss="{:.4f}".format(meter_loss.avg),
-                        top1="{:.4f}".format(meter_top1.avg),
-                    )
-                    _tqdm.update(1)
-            
-            self.scheduler_teacher.step()
-            self.logger.info(
-                f"[Teacher Fine-tune] Epoch {epoch} : Loss {meter_loss.avg:.4f}, Prec@1 {meter_top1.avg:.2f}"
-            )
-        
-        # Save fine-tuned teacher
-        torch.save(self.teacher.state_dict(), self.teacher_ckpt_path)
-        self.logger.info(f"Teacher model saved to {self.teacher_ckpt_path}")
 
     def resume_student_ckpt(self):
         ckpt_student = torch.load(self.resume)
@@ -256,6 +204,11 @@ class Train:
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        # Early Stopping
+        patience = 5
+        counter = 0
+        best_val_loss = float('inf')
 
         self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
@@ -367,6 +320,9 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
+            all_preds = []
+            all_labels = []
+            all_probs = []
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description(f"epoch: {epoch}/{self.num_epochs}")
@@ -375,6 +331,12 @@ class Train:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
+                        probs = torch.softmax(logits_student, dim=1)[:, 1].cpu().numpy()
+                        preds = torch.argmax(logits_student, dim=1).cpu().numpy()
+                        targets_np = targets.cpu().numpy()
+                        all_preds.extend(preds)
+                        all_labels.extend(targets_np)
+                        all_probs.extend(probs)
                         prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
@@ -383,16 +345,34 @@ class Train:
                         _tqdm.update(1)
 
             Flops = self.student.get_flops()
+            f1 = f1_score(all_labels, all_preds)
+            auc = roc_auc_score(all_labels, all_probs)
+            cm = confusion_matrix(all_labels, all_preds)
+
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, epoch)
             self.writer.add_scalar("val/Flops", Flops, epoch)
+            self.writer.add_scalar("val/f1_score", f1, epoch)
+            self.writer.add_scalar("val/auc_roc", auc, epoch)
 
             self.logger.info(
-                f"[Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
+                f"[Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}, F1-Score {f1:.4f}, AUC-ROC {auc:.4f}"
             )
+            self.logger.info(f"[Val Confusion Matrix] Epoch {epoch} :\n{cm}")
             self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
             self.logger.info(
                 f"[Val model Flops] Epoch {epoch} : {Flops.item() / (10**6)}M"
             )
+
+            # Early Stopping
+            val_loss = meter_loss.avg
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                counter = 0
+            else:
+                counter += 1
+                if counter >= patience:
+                    self.logger.info('Early stopping')
+                    break
 
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
@@ -412,5 +392,39 @@ class Train:
         self.build_model()
         self.define_loss()
         self.define_optim()
-        self.fine_tune_teacher(num_epochs=10)  # Fine-tune teacher for 10 epochs
         self.train()
+
+# تنظیم آرگومان‌ها
+class Args:
+    dataset_dir = '/kaggle/input/hardfakevsrealfaces'
+    dataset_type = 'hardfakevsreal'
+    csv_file = '/kaggle/input/hardfakevsrealfaces/data.csv'  # مسیر فایل CSV
+    num_workers = 4
+    pin_memory = True
+    arch = 'ResNet_50'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    seed = 42
+    result_dir = './results'
+    teacher_ckpt_path = 'best_teacher.pth'  # مسیر مدل فاین‌تیون‌شده
+    num_epochs = 50
+    lr = 0.001
+    warmup_steps = 5
+    warmup_start_lr = 1e-5
+    lr_decay_T_max = 50
+    lr_decay_eta_min = 1e-5
+    weight_decay = 1e-4
+    train_batch_size = 32
+    eval_batch_size = 32
+    target_temperature = 4.0
+    gumbel_start_temperature = 1.0
+    gumbel_end_temperature = 0.1
+    coef_kdloss = 1.0
+    coef_rcloss = 1.0
+    coef_maskloss = 0.01
+    compress_rate = 0.5
+    resume = None
+
+# اجرای آموزش
+args = Args()
+trainer = Train(args)
+trainer.main()
