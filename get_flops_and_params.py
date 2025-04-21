@@ -12,7 +12,7 @@ def get_flops_and_params(args):
     محاسبه FLOPs و پارامترهای مدل ResNet-50 sparse و pruned.
     
     Args:
-        args: آرگومان‌ها شامل arch، device، و sparsed_student_ckpt_path
+        args: آرگومان‌ها شامل arch، device، dataset_type، و sparsed_student_ckpt_path
     
     Returns:
         tuple: (Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction)
@@ -42,8 +42,11 @@ def get_flops_and_params(args):
     if device == "cuda":
         pruned_model = pruned_model.cuda()
 
+    # تنظیم اندازه تصویر بر اساس dataset_type
+    image_size = 224 if args.dataset_type == "hardfakevsrealfaces" else 32
+    input = torch.rand([1, 3, image_size, image_size], device=device)
+    
     # محاسبه FLOPs و پارامترها
-    input = torch.rand([1, 3, 224, 224], device=device)  # فرض اندازه تصویر 224x224
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
     Flops /= 1e6  # تبدیل به میلیون
     Params /= 1e6  # تبدیل به میلیون
