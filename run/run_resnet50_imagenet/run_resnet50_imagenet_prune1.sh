@@ -11,7 +11,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 --dataset_type $dataset_type \
 --csv_file $csv_file \
 --num_workers 4 \
---pin_memory True \
+--pin_memory \
 --device cuda \
 --arch $arch \
 --seed 42 \
