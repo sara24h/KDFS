@@ -10,7 +10,7 @@ from PIL import Image
 
 # مسیرها و پارامترها
 data_dir = '/kaggle/input/hardfakevsrealfaces'
-base_model_weights = '/kaggle/input/resnet50-w/resnet50_weights.pth'  # فرمت PyTorch
+base_model_weights = '/kaggle/input/resnet50-w/resnet50_weights.h5'  # فرمت PyTorch
 teacher_dir = 'teacher_dir'
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
