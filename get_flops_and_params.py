@@ -3,8 +3,8 @@ import argparse
 from thop import profile
 
 # فرض می‌کنیم این ماژول‌ها به درستی تعریف شده‌اند
-from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
-from model.pruned_model.ResNet_pruned import ResNet_50_pruned_imagenet
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsrealfaces
+from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsrealfaces
 
 Flops_baselines = {
     "ResNet_50": 4134,  # FLOPs پایه برای ResNet_50 (میلیون)
@@ -12,7 +12,7 @@ Flops_baselines = {
 Params_baselines = {
     "ResNet_50": 25.50,  # پارامترهای پایه برای ResNet_50 (میلیون)
 }
-image_sizes = {"imagenet": 224}
+image_sizes = {"hardfakevsrealfaces": 224}  # فرض می‌کنیم اندازه تصویر مشابه ImageNet است
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -20,7 +20,7 @@ def parse_args():
         "--dataset_type",
         type=str,
         default="hardfakevsrealfaces",
-        choices=("imagenet",),
+        choices=("cifar10", "hardfakevsrealfaces"),
         help="The type of dataset",
     )
     parser.add_argument(
@@ -40,7 +40,7 @@ def parse_args():
 
 def get_flops_and_params(args):
     # بارگذاری مدل sparse
-    student = ResNet_50_sparse_imagenet()
+    student = ResNet_50_sparse_hardfakevsrealfaces()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu")
     student.load_state_dict(ckpt_student["student"])
 
@@ -52,7 +52,7 @@ def get_flops_and_params(args):
     ]
 
     # بارگذاری مدل pruned
-    pruned_model = ResNet_50_pruned_imagenet(masks=masks)
+    pruned_model = ResNet_50_pruned_hardfakevsrealfaces(masks=masks)
     input = torch.rand([1, 3, image_sizes[args.dataset_type], image_sizes[args.dataset_type]])
 
     # محاسبه FLOPs و پارامترها
