@@ -243,8 +243,7 @@ def parse_args():
     )
     parser.add_argument(
         "--pin_memory",
-        type=bool,
-        default=False,
+        action='store_true',
         help="The pin_memory of dataloader",
     )
     parser.add_argument(
@@ -311,7 +310,125 @@ def parse_args():
     parser.add_argument(
         "--eval_batch_size", type=int, default=16, help="Batch size for validation"
     )
-    # ... بقیه آرگومان‌ها برای فاز train و finetune ...
+    # بقیه آرگومان‌ها برای فاز train و finetune
+    parser.add_argument(
+        "--teacher_ckpt_path",
+        type=str,
+        default="teacher_resnet50_finetuned.pth",
+        help="The path where to load the teacher ckpt",
+    )
+    parser.add_argument(
+        "--accumulation_steps", type=int, default=2, help="Gradient accumulation steps"
+    )
+    parser.add_argument(
+        "--target_temperature",
+        type=float,
+        default=4.0,
+        help="Temperature of soft targets",
+    )
+    parser.add_argument(
+        "--gumbel_start_temperature",
+        type=float,
+        default=1.0,
+        help="Gumbel-softmax temperature at the start of training",
+    )
+    parser.add_argument(
+        "--gumbel_end_temperature",
+        type=float,
+        default=0.1,
+        help="Gumbel-softmax temperature at the end of training",
+    )
+    parser.add_argument(
+        "--coef_kdloss", type=float, default=1.0, help="Coefficient of kd loss"
+    )
+    parser.add_argument(
+        "--coef_rcloss",
+        type=float,
+        default=0.0,
+        help="Coefficient of reconstruction loss",
+    )
+    parser.add_argument(
+        "--coef_maskloss", type=float, default=0.0, help="Coefficient of mask loss"
+    )
+    parser.add_argument(
+        "--compress_rate",
+        type=float,
+        default=0.5,
+        help="Compress rate of the student model",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Load the model from the specified checkpoint",
+    )
+    parser.add_argument(
+        "--finetune_num_epochs",
+        type=int,
+        default=10,
+        help="The num of epochs to train in finetune",
+    )
+    parser.add_argument(
+        "--finetune_lr",
+        default=1e-4,
+        type=float,
+        help="The initial learning rate of model in finetune",
+    )
+    parser.add_argument(
+        "--finetune_warmup_steps",
+        default=5,
+        type=int,
+        help="The steps of warmup in finetune",
+    )
+    parser.add_argument(
+        "--finetune_warmup_start_lr",
+        default=1e-6,
+        type=float,
+        help="The starting learning rate for warmup in finetune",
+    )
+    parser.add_argument(
+        "--finetune_lr_decay_T_max",
+        default=10,
+        type=int,
+        help="T_max of CosineAnnealingLR in finetune",
+    )
+    parser.add_argument(
+        "--finetune_lr_decay_eta_min",
+        default=1e-6,
+        type=float,
+        help="eta_min of CosineAnnealingLR in finetune",
+    )
+    parser.add_argument(
+        "--finetune_weight_decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay in finetune",
+    )
+    parser.add_argument(
+        "--finetune_train_batch_size",
+        type=int,
+        default=16,
+        help="Batch size for training in finetune",
+    )
+    parser.add_argument(
+        "--finetune_eval_batch_size",
+        type=int,
+        default=16,
+        help="Batch size for validation in finetune",
+    )
+    parser.add_argument(
+        "--finetune_resume",
+        type=str,
+        default=None,
+        help="Load the model from the specified checkpoint in finetune",
+    )
+    parser.add_argument(
+        "--test_csv_file",
+        type=str,
+        default=None,
+        help="Path to the CSV file for testing (optional)"
+    )
+
     return parser.parse_args()
 
 def main():
