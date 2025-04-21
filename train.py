@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_cifar10, Dataset_cifar100, Dataset_imagenet, Dataset_hardfakevsreal
+from data.dataset import  Dataset_hardfakevsreal
 from model.teacher.resnet_cifar import (
     resnet_56_cifar10,
     resnet_110_cifar10,
