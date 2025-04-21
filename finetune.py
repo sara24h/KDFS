@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from data.dataset import Dataset_hardfakevsreal  # Your custom dataset
-from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
+from data.dataset import Dataset_hardfakevsreal
+from model.student.ResNet_pruned import ResNet_50_pruned_imagenet
 from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 
@@ -46,7 +46,7 @@ class Finetune:
         self.logger.info("finetune config:")
         self.logger.info(str(json.dumps(vars(self.args), indent=4)))
         utils.record_config(
-            self.args, h
+            self.args,
             os.path.join(self.result_dir, "finetune_config.txt")
         )
         self.logger.info("--------- Finetune -----------")
@@ -66,23 +66,24 @@ class Finetune:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
+        self.logger.info("==> Loading datasets..")
         self.train_loader, self.val_loader = Dataset_hardfakevsreal.get_loaders(
             data_dir=self.dataset_dir,
-            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),  # Adjust as needed
+            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),
             train_batch_size=self.finetune_train_batch_size,
             eval_batch_size=self.finetune_eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            ddp=False
+            ddp=True
         )
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
-        self.logger.info("==> Building student model..")
-        self.logger.info("Loading sparse student model")
-        self.student = ResNet_50_sparse_imagenet()  # Initialize without Gumbel params for fine-tuning
+        self.logger.info("==> Building pruned student model for fine-tuning..")
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
-        self.student.load_state_dict(ckpt_student["student"])
+        masks = ckpt_student["masks"]
+        self.student = ResNet_50_pruned_imagenet(masks=masks).to(self.device)
+        self.student.load_state_dict(ckpt_student["student"], strict=False)
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
 
     def define_loss(self):
@@ -92,7 +93,7 @@ class Finetune:
         weight_params = map(
             lambda a: a[1],
             filter(
-                lambda p: p[1].requires_grad and "mask" not in p[0],
+                lambda p: p[1].requires_grad,
                 self.student.named_parameters(),
             ),
         )
@@ -138,11 +139,11 @@ class Finetune:
         if is_best:
             torch.save(
                 ckpt_student,
-                os.path.join(folder, f"finetune_{self.arch}_sparse_best.pt"),
+                os.path.join(folder, f"finetune_{self.arch}_pruned_best.pt"),
             )
         torch.save(
             ckpt_student,
-            os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"),
+            os.path.join(folder, f"finetune_{self.arch}_pruned_last.pt"),
         )
 
     def finetune(self):
@@ -159,7 +160,6 @@ class Finetune:
         for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
             # Train
             self.student.train()
-            self.student.ticket = True
             meter_oriloss.reset()
             meter_loss.reset()
             meter_top1.reset()
@@ -212,7 +212,6 @@ class Finetune:
 
             # Validation
             self.student.eval()
-            self.student.ticket = True
             meter_top1.reset()
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -235,9 +234,6 @@ class Finetune:
             self.logger.info(
                 f"[Finetune_val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
             )
-
-            masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Mask avg] Epoch {epoch} : {masks}")
 
             self.start_epoch += 1
             if self.best_prec1_after_finetune < meter_top1.avg:
