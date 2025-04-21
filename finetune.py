@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from data.dataset import Dataset_hardfakevsreal
-from model.student.ResNet_pruned import ResNet_50_pruned_imagenet
+from model.student.ResNet_sparse import ResNet_50_sparse_imagenet  # Reverted to sparse
 from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 
@@ -18,7 +18,7 @@ class Finetune:
         self.dataset_dir = args.dataset_dir
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch  # Should be 'ResNet_50'
+        self.arch = args.arch
         self.device = args.device
         self.seed = args.seed
         self.result_dir = args.result_dir
@@ -34,7 +34,6 @@ class Finetune:
         self.finetune_weight_decay = args.finetune_weight_decay
         self.finetune_resume = args.finetune_resume
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
 
@@ -79,10 +78,9 @@ class Finetune:
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
-        self.logger.info("==> Building pruned student model for fine-tuning..")
+        self.logger.info("==> Building sparse student model for fine-tuning..")
+        self.student = ResNet_50_sparse_imagenet().to(self.device)
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
-        masks = ckpt_student["masks"]
-        self.student = ResNet_50_pruned_imagenet(masks=masks).to(self.device)
         self.student.load_state_dict(ckpt_student["student"], strict=False)
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
 
@@ -93,7 +91,7 @@ class Finetune:
         weight_params = map(
             lambda a: a[1],
             filter(
-                lambda p: p[1].requires_grad,
+                lambda p: p[1].requires_grad and "mask" not in p[0],
                 self.student.named_parameters(),
             ),
         )
@@ -139,11 +137,11 @@ class Finetune:
         if is_best:
             torch.save(
                 ckpt_student,
-                os.path.join(folder, f"finetune_{self.arch}_pruned_best.pt"),
+                os.path.join(folder, f"finetune_{self.arch}_sparse_best.pt"),
             )
         torch.save(
             ckpt_student,
-            os.path.join(folder, f"finetune_{self.arch}_pruned_last.pt"),
+            os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"),
         )
 
     def finetune(self):
@@ -158,8 +156,8 @@ class Finetune:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
-            # Train
             self.student.train()
+            self.student.ticket = True
             meter_oriloss.reset()
             meter_loss.reset()
             meter_top1.reset()
@@ -210,8 +208,8 @@ class Finetune:
                 f"Prec@1 {meter_top1.avg:.2f}"
             )
 
-            # Validation
             self.student.eval()
+            self.student.ticket = True
             meter_top1.reset()
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -234,6 +232,9 @@ class Finetune:
             self.logger.info(
                 f"[Finetune_val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
             )
+
+            masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
+            self.logger.info(f"[Mask avg] Epoch {epoch} : {masks}")
 
             self.start_epoch += 1
             if self.best_prec1_after_finetune < meter_top1.avg:
