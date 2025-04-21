@@ -16,8 +16,8 @@ class Dataset_hardfakevsreal(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = self.data.iloc[idx, 0]  # ستون 'id'
-        label_str = self.data.iloc[idx, 1]  # ستون 'label'
+        img_name = self.data.iloc[idx, 0]
+        label_str = self.data.iloc[idx, 1]
         label = self.label_map[label_str]
 
         if label_str == 'Fake':
@@ -47,7 +47,6 @@ class Dataset_hardfakevsreal(Dataset):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-        # دیتاست train/validation
         dataset = Dataset_hardfakevsreal(data_dir, csv_file)
         train_size = int(0.8 * len(dataset))
         val_size = len(dataset) - train_size
@@ -82,16 +81,5 @@ class Dataset_hardfakevsreal(Dataset):
             pin_memory=pin_memory
         )
 
-        # دیتاست تست (اگر test_csv_file وجود داره)
         test_loader = None
-        if test_csv_file:
-            test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_test_transform)
-            test_loader = DataLoader(
-                test_dataset,
-                batch_size=eval_batch_size,
-                shuffle=False,
-                num_workers=num_workers,
-                pin_memory=pin_memory
-            )
-
         return train_loader, val_loader, test_loader
