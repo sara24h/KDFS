@@ -8,6 +8,9 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
+import random
+import matplotlib.pyplot as plt
+import numpy as np
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -78,8 +81,9 @@ class CustomDataset(Dataset):
         image = Image.open(img_path).convert('RGB')
         label = 0 if self.dataframe.iloc[idx]['label'] == 'fake' else 1
         if self.transform:
-            image = self.transform(image)
-        return image, label
+            transformed_image = self.transform(image)
+            return transformed_image, label, img_path, image  # بازگشت تصویر اصلی و تبدیل‌شده
+        return image, label, img_path, image
 
 # تعریف پیش‌پردازش تصاویر
 train_transform = transforms.Compose([
@@ -146,7 +150,7 @@ for epoch in range(epochs):
     running_loss = 0.0
     correct_train = 0
     total_train = 0
-    for images, labels in train_loader:
+    for images, labels, _, _ in train_loader:  # نادیده گرفتن img_path و تصویر اصلی
         images, labels = images.to(device), labels.to(device).float().view(-1, 1)
         optimizer.zero_grad()
         outputs = model(images)
@@ -170,7 +174,7 @@ for epoch in range(epochs):
     correct_val = 0
     total_val = 0
     with torch.no_grad():
-        for images, labels in val_loader:
+        for images, labels, _, _ in val_loader:  # نادیده گرفتن img_path و تصویر اصلی
             images, labels = images.to(device), labels.to(device).float().view(-1, 1)
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -191,7 +195,7 @@ test_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for images, labels in test_loader:
+    for images, labels, _, _ in test_loader:  # نادیده گرفتن img_path و تصویر اصلی
         images, labels = images.to(device), labels.to(device).float().view(-1, 1)
         outputs = model(images)
         loss = criterion(outputs, labels)
@@ -201,5 +205,39 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.4f}%')
 
-# **6. ذخیره مدل**
+# **6. نمایش 10 نمونه تصادفی از داده‌های تست همراه با پیش‌بینی و تصویر**
+model.eval()
+print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
+# انتخاب 10 نمونه تصادفی از دیتاست تست
+random_indices = random.sample(range(len(test_dataset)), 10)
+
+# تنظیمات برای نمایش تصاویر
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+axes = axes.ravel()
+
+with torch.no_grad():
+    for i, idx in enumerate(random_indices):
+        image, label, img_path, raw_image = test_dataset[idx]
+        image = image.unsqueeze(0).to(device)  # اضافه کردن بُعد batch
+        output = model(image)
+        predicted = 'real' if output.item() > 0.5 else 'fake'
+        true_label = 'real' if label == 1 else 'fake'
+        
+        # تبدیل تصویر به فرمت قابل نمایش
+        raw_image = np.array(raw_image)  # تبدیل تصویر PIL به آرایه numpy
+        if raw_image.shape[2] == 3:  # اطمینان از ترتیب صحیح کانال‌ها
+            raw_image = raw_image[:, :, ::-1]  # تبدیل RGB به BGR برای matplotlib
+        
+        # نمایش تصویر
+        axes[i].imshow(raw_image)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted}')
+        axes[i].axis('off')
+        
+        # چاپ اطلاعات متنی
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted}")
+
+plt.tight_layout()
+plt.show()
+
+# **7. ذخیره مدل**
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
