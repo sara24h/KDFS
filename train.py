@@ -111,7 +111,7 @@ class Train:
         # استفاده از Dataset_hardfakevsreal
         self.train_loader, self.val_loader, _ = Dataset_hardfakevsreal.get_loaders(
             data_dir=self.dataset_dir,
-            csv_file=self.csv_file,
+            #csv_file=self.csv_file,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
