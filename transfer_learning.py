@@ -17,7 +17,7 @@ if not os.path.exists(teacher_dir):
 
 img_height, img_width = 224, 224
 batch_size = 32
-epochs = 50
+epochs = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # **1. بارگذاری و آماده‌سازی داده‌ها**
@@ -117,7 +117,6 @@ criterion = nn.BCELoss()  # معادل binary_crossentropy
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
 # **4. آموزش مدل**
-min_val_loss = float('inf')
 for epoch in range(epochs):
     # آموزش
     model.train()
@@ -162,17 +161,6 @@ for epoch in range(epochs):
     val_loss = val_loss / len(val_loader)
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}%')
-
-    # شبیه‌سازی EarlyStopping
-    if epoch >= 5 and val_loss <= min_val_loss:
-        best_model_state = model.state_dict()
-        print("Early stopping triggered")
-        break
-    min_val_loss = min(min_val_loss, val_loss)
-
-# بارگذاری بهترین مدل (در صورت استفاده از EarlyStopping)
-if 'best_model_state' in locals():
-    model.load_state_dict(best_model_state)
 
 # **5. ارزیابی**
 model.eval()
