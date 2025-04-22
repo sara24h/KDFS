@@ -102,7 +102,7 @@ class CustomResNet(nn.Module):
     def forward(self, x):
         x = self.features(x)  # خروجی: (batch_size, 2048, H, W)
         x = self.pool(x)      # خروجی: (batch_size, 2048, 1, 1)
-        x = self.flatten(x)   # خروجی: (batch_size, 2048)
+        x = self.flattenPhysical(x)   # خروجی: (batch_size, 2048)
         x = self.fc1(x)       # خروجی: (batch_size, 1024)
         x = self.relu(x)
         x = self.fc2(x)       # خروجی: (batch_size, 1)
@@ -119,8 +119,11 @@ optimizer = optim.Adam(model.parameters(), lr=0.0001)
 # **4. آموزش مدل**
 min_val_loss = float('inf')
 for epoch in range(epochs):
+    # آموزش
     model.train()
     running_loss = 0.0
+    correct_train = 0
+    total_train = 0
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device).float().view(-1, 1)
         optimizer.zero_grad()
@@ -129,24 +132,36 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-    print(f'Epoch {epoch+1}, Loss: {running_loss / len(train_loader)}')
+        
+        # محاسبه دقت آموزشی
+        predicted = (outputs > 0.5).float()
+        total_train += labels.size(0)
+        correct_train += (predicted == labels).sum().item()
+    
+    train_loss = running_loss / len(train_loader)
+    train_accuracy = 100 * correct_train / total_train
+    print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}%')
 
     # اعتبارسنجی
     model.eval()
     val_loss = 0.0
-    correct = 0
-    total = 0
+    correct_val = 0
+    total_val = 0
     with torch.no_grad():
         for images, labels in val_loader:
             images, labels = images.to(device), labels.to(device).float().view(-1, 1)
             outputs = model(images)
             loss = criterion(outputs, labels)
             val_loss += loss.item()
+            
+            # محاسبه دقت اعتبارسنجی
             predicted = (outputs > 0.5).float()
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    val_accuracy = 100 * correct / total
-    print(f'Validation Loss: {val_loss / len(val_loader)}, Accuracy: {val_accuracy}%')
+            total_val += labels.size(0)
+            correct_val += (predicted == labels).sum().item()
+    
+    val_loss = val_loss / len(val_loader)
+    val_accuracy = 100 * correct_val / total_val
+    print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}%')
 
     # شبیه‌سازی EarlyStopping
     if epoch >= 5 and val_loss <= min_val_loss:
