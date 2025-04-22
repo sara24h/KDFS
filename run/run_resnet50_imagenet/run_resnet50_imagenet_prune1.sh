@@ -10,6 +10,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 --dataset_dir $dataset_dir \
 --dataset_type $dataset_type \
 --num_workers 4 \
+--csv_file /kaggle/input/hardfakevsrealfaces/data.csv \
+--teacher_dir /kaggle/working/KDFS/teacher_dir \
 --pin_memory \
 --device cuda \
 --arch $arch \
