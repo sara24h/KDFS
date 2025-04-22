@@ -102,7 +102,7 @@ class CustomResNet(nn.Module):
     def forward(self, x):
         x = self.features(x)  # خروجی: (batch_size, 2048, H, W)
         x = self.pool(x)      # خروجی: (batch_size, 2048, 1, 1)
-        x = self.flattenPhysical(x)   # خروجی: (batch_size, 2048)
+        x = self.flatten(x)   # خروجی: (batch_size, 2048)
         x = self.fc1(x)       # خروجی: (batch_size, 1024)
         x = self.relu(x)
         x = self.fc2(x)       # خروجی: (batch_size, 1)
