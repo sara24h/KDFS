@@ -81,9 +81,8 @@ class CustomDataset(Dataset):
         image = Image.open(img_path).convert('RGB')
         label = 0 if self.dataframe.iloc[idx]['label'] == 'fake' else 1
         if self.transform:
-            transformed_image = self.transform(image)
-            return transformed_image, label, img_path, image  # بازگشت تصویر اصلی و تبدیل‌شده
-        return image, label, img_path, image
+            image = self.transform(image)
+        return image, label, img_path  # فقط تصویر تبدیل‌شده، برچسب و مسیر تصویر
 
 # تعریف پیش‌پردازش تصاویر
 train_transform = transforms.Compose([
@@ -150,7 +149,7 @@ for epoch in range(epochs):
     running_loss = 0.0
     correct_train = 0
     total_train = 0
-    for images, labels, _, _ in train_loader:  # نادیده گرفتن img_path و تصویر اصلی
+    for images, labels, _ in train_loader:  # نادیده گرفتن img_path
         images, labels = images.to(device), labels.to(device).float().view(-1, 1)
         optimizer.zero_grad()
         outputs = model(images)
@@ -174,7 +173,7 @@ for epoch in range(epochs):
     correct_val = 0
     total_val = 0
     with torch.no_grad():
-        for images, labels, _, _ in val_loader:  # نادیده گرفتن img_path و تصویر اصلی
+        for images, labels, _ in val_loader:  # نادیده گرفتن img_path
             images, labels = images.to(device), labels.to(device).float().view(-1, 1)
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -195,7 +194,7 @@ test_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for images, labels, _, _ in test_loader:  # نادیده گرفتن img_path و تصویر اصلی
+    for images, labels, _ in test_loader:  # نادیده گرفتن img_path
         images, labels = images.to(device), labels.to(device).float().view(-1, 1)
         outputs = model(images)
         loss = criterion(outputs, labels)
@@ -217,7 +216,9 @@ axes = axes.ravel()
 
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
-        image, label, img_path, raw_image = test_dataset[idx]
+        image, label, img_path = test_dataset[idx]
+        # بارگذاری تصویر اصلی برای نمایش
+        raw_image = Image.open(img_path).convert('RGB')
         image = image.unsqueeze(0).to(device)  # اضافه کردن بُعد batch
         output = model(image)
         predicted = 'real' if output.item() > 0.5 else 'fake'
