@@ -8,32 +8,42 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils import utils, loss, meter, scheduler
-from data.dataset import  Dataset_hardfakevsreal  # اضافه کردن دیتاست سفارشی
-from model.teacher.resnet_cifar import (
+import argparse
 
+# import دیتاست
+from data.dataset import Dataset_hardfakevsreal
+
+# فرض می‌کنیم فایل‌های utils, loss, meter, scheduler وجود دارن
+from utils import utils, loss, meter, scheduler
+
+from model.student.resnet_sparse_cifar import (
+    resnet_56_sparse_cifar10,
+    resnet_110_sparse_cifar10,
+    resnet_56_sparse_cifar100,
+)
 from model.teacher.ResNet import  ResNet_50_imagenet
 from model.student.ResNet_sparse import (
+ 
     ResNet_50_sparse_imagenet,
 )
-from torchvision.models import resnet50  # برای بارگذاری مدل معلم
+
 
 Flops_baselines = {
     "resnet_56": 125.49,
     "resnet_110": 252.89,
     "ResNet_18": 1820,
-    "ResNet_50": 4134,  # FLOPs برای ResNet50
+    "ResNet_50": 4134,
     "VGG_16_bn": 313.73,
     "DenseNet_40": 282.00,
     "GoogLeNet": 1520,
     "MobileNetV2": 327.55,
 }
 
-
 class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
+        self.csv_file = args.csv_file  # مسیر data.csv
         self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
@@ -59,7 +69,6 @@ class Train:
         self.coef_maskloss = args.coef_maskloss
         self.compress_rate = args.compress_rate
         self.resume = args.resume
-        self.num_classes = getattr(args, 'num_classes', 2)  # فرض: دیتاست دوکلاسه (مثل واقعی/جعلی)
 
         self.start_epoch = 0
         self.best_prec1 = 0
@@ -69,6 +78,7 @@ class Train:
             os.makedirs(self.result_dir)
 
         self.writer = SummaryWriter(self.result_dir)
+
         self.logger = utils.get_logger(
             os.path.join(self.result_dir, "train_logger.log"), "train_logger"
         )
@@ -98,62 +108,42 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        if self.dataset_type == "hardfakevsrealfaces":
-            self.train_loader, self.val_loader, _ = Dataset_hardfakevsreal.get_loaders(
-                self.dataset_dir,
-                os.path.join(self.dataset_dir, "data.csv"),  # فرض: فایل CSV برای دیتاست
-                self.train_batch_size,
-                self.eval_batch_size,
-                self.num_workers,
-                self.pin_memory,
-                self.args.ddp if hasattr(self.args, 'ddp') else False,
-                None
-            )
-        else:
-            dataset = eval("Dataset_" + self.dataset_type)(
-                self.dataset_dir,
-                self.train_batch_size,
-                self.eval_batch_size,
-                self.num_workers,
-                self.pin_memory,
-            )
-            self.train_loader, self.val_loader = (
-                dataset.loader_train,
-                dataset.loader_test,
-            )
+        # استفاده از Dataset_hardfakevsreal
+        self.train_loader, self.val_loader, _ = Dataset_hardfakevsreal.get_loaders(
+            data_dir=self.dataset_dir,
+            csv_file=self.csv_file,
+            train_batch_size=self.train_batch_size,
+            eval_batch_size=self.eval_batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            ddp=False,  # فرض می‌کنیم DDP استفاده نمی‌کنیم
+        )
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        # بارگذاری مدل معلم از torchvision
-        self.teacher = resnet50(weights=None)  # بدون وزن پیش‌فرض
-        checkpoint = torch.load(self.teacher_ckpt_path, map_location="cpu")
-        # فرض: چک‌پوینت شامل state_dict است
-        try:
-            self.teacher.load_state_dict(checkpoint["state_dict"])
-        except KeyError:
-            self.teacher.load_state_dict(checkpoint)  # اگه فقط state_dict باشه
-        # تنظیم لایه آخر برای تعداد کلاس‌های دیتاست
-        num_ftrs = self.teacher.fc.in_features
-        self.teacher.fc = nn.Linear(num_ftrs, self.num_classes)
-        self.teacher = self.teacher.to(self.device)
-        self.teacher.eval()
-        for param in self.teacher.parameters():
-            param.requires_grad = False
-        self.logger.info("Teacher model loaded successfully!")
+        self.teacher = eval(self.arch + "_" + self.dataset_type)(num_classes=2)
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
+        if self.arch in [
+            "resnet_56",
+            "resnet_110",
+            "VGG_16_bn",
+            "DenseNet_40",
+            "GoogleNet",
+        ]:
+            self.teacher.load_state_dict(ckpt_teacher["state_dict"])
+        elif self.arch in ["ResNet_18", "ResNet_50", "MobileNetV2"]:
+            self.teacher.load_state_dict(ckpt_teacher, strict=False)
 
         self.logger.info("Building student model")
-        # مدل دانشجو با پشتیبانی از تعداد کلاس‌ها
         self.student = eval(self.arch + "_sparse_" + self.dataset_type)(
-            gumbel_start_temperature=self.gumbel_start_temperature  # اضافه کردن تعداد کلاس‌ها
+            gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
-            num_classes=self.num_classes
+            num_classes=2,
         )
-        self.student = self.student.to(self.device)
-        self.logger.info("Student model built successfully!")
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
@@ -298,7 +288,7 @@ class Train:
                         logits_student / self.target_temperature,
                     )
 
-                    rc_loss = torch.tensor(0.0, device=self.device)
+                    rc_loss = torch.tensor(0)
                     for i in range(len(feature_list_student)):
                         rc_loss = rc_loss + self.rc_loss(
                             feature_list_student[i], feature_list_teacher[i]
