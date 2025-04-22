@@ -79,28 +79,45 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 # **2. ساخت مدل**
-base_model = models.resnet50(pretrained=False)
-base_model.load_state_dict(torch.load(base_model_weights))  # بارگذاری وزن‌ها
-for param in base_model.parameters():
-    param.requires_grad = False  # غیرفعال کردن آموزش لایه‌های پایه
+# تعریف مدل سفارشی
+class CustomResNet(nn.Module):
+    def __init__(self, base_model_weights):
+        super(CustomResNet, self).__init__()
+        # بارگذاری ResNet50 بدون لایه fc
+        base_model = models.resnet50(weights=None)
+        base_model.load_state_dict(torch.load(base_model_weights, weights_only=True))
+        # حذف لایه fc با انتخاب همه لایه‌ها به جز fc
+        self.features = nn.Sequential(*list(base_model.children())[:-1])
+        # غیرفعال کردن آموزش لایه‌های پایه
+        for param in self.features.parameters():
+            param.requires_grad = False
+        # اضافه کردن لایه‌های سفارشی
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))  # خروجی: (batch_size, 2048, 1, 1)
+        self.flatten = nn.Flatten()               # خروجی: (batch_size, 2048)
+        self.fc1 = nn.Linear(2048, 1024)          # خروجی: (batch_size, 1024)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(1024, 1)             # خروجی: (batch_size, 1)
+        self.sigmoid = nn.Sigmoid()
 
-# اضافه کردن لایه‌های سفارشی
-model = nn.Sequential(
-    base_model,
-    nn.AdaptiveAvgPool2d((1, 1)),  # معادل GlobalAveragePooling2D
-    nn.Flatten(),
-    nn.Linear(2048, 1024),
-    nn.ReLU(),
-    nn.Linear(1024, 1),
-    nn.Sigmoid()
-)
-model = model.to(device)
+    def forward(self, x):
+        x = self.features(x)  # خروجی: (batch_size, 2048, H, W)
+        x = self.pool(x)      # خروجی: (batch_size, 2048, 1, 1)
+        x = self.flatten(x)   # خروجی: (batch_size, 2048)
+        x = self.fc1(x)       # خروجی: (batch_size, 1024)
+        x = self.relu(x)
+        x = self.fc2(x)       # خروجی: (batch_size, 1)
+        x = self.sigmoid(x)   # خروجی: (batch_size, 1)
+        return x
+
+# ایجاد مدل
+model = CustomResNet(base_model_weights).to(device)
 
 # **3. تعریف loss و optimizer**
 criterion = nn.BCELoss()  # معادل binary_crossentropy
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
 # **4. آموزش مدل**
+min_val_loss = float('inf')
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -131,12 +148,12 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct / total
     print(f'Validation Loss: {val_loss / len(val_loader)}, Accuracy: {val_accuracy}%')
 
-    # شبیه‌سازی EarlyStopping (به صورت دستی)
-    if epoch > 5 and val_loss <= min_val_loss:  # patience=5
+    # شبیه‌سازی EarlyStopping
+    if epoch >= 5 and val_loss <= min_val_loss:
         best_model_state = model.state_dict()
         print("Early stopping triggered")
         break
-    min_val_loss = min(min_val_loss, val_loss) if 'min_val_loss' in locals() else val_loss
+    min_val_loss = min(min_val_loss, val_loss)
 
 # بارگذاری بهترین مدل (در صورت استفاده از EarlyStopping)
 if 'best_model_state' in locals():
