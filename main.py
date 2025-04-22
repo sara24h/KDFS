@@ -32,6 +32,12 @@ def parse_args():
         help="The type of dataset",
     )
     parser.add_argument(
+        "--csv_file",
+        type=str,
+        default="/kaggle/input/hardfakevsrealfaces/data.csv",
+        help="The path to the CSV file",
+    )
+    parser.add_argument(
         "--num_workers",
         type=int,
         default=8,
@@ -85,10 +91,10 @@ def parse_args():
 
     # train
     parser.add_argument(
-        "--teacher_ckpt_path",
+        "--teacher_dir",
         type=str,
-        default=None,
-        help="The path where to load the teacher ckpt",
+        default="/kaggle/working/KDFS/teacher_dir/teacher_model",
+        help="The directory where the teacher model is stored",
     )
     parser.add_argument(
         "--num_epochs", type=int, default=3, help="The num of epochs to train."
