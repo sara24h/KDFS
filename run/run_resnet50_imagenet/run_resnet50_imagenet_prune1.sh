@@ -2,8 +2,8 @@ arch=ResNet_50
 result_dir=results/run_resnet50_hardfakevsrealfaces
 dataset_dir=/kaggle/input/hardfakevsrealfaces
 dataset_type=hardfakevsrealfaces
-csv_file=/kaggle/input/hardfakevsrealfaces/train.csv
-teacher_dir=./teacher_dir
+csv_file=/kaggle/input/hardfakevsrealfaces/data.csv
+teacher_dir=/kaggle/working/KDFS/teacher_dir
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
 --phase train \
