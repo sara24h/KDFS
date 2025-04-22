@@ -7,18 +7,46 @@ from torchvision import models, transforms
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from PIL import Image
+import argparse
 
-# مسیرها و پارامترها
-data_dir = '/kaggle/input/hardfakevsrealfaces'
-base_model_weights = '/kaggle/input/resnet50-pth/resnet50-19c8e357.pth'  # فرمت PyTorch
-teacher_dir = 'teacher_dir'
+# تعریف آرگومان‌ها
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
+    parser.add_argument('--data_dir', type=str, default='/kaggle/input/hardfakevsrealfaces',
+                        help='Path to the dataset directory')
+    parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
+                        help='Path to the pretrained ResNet50 weights')
+    parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
+                        help='Directory to save the trained model')
+    parser.add_argument('--img_height', type=int, default=300,
+                        help='Height of input images')
+    parser.add_argument('--img_width', type=int, default=300,
+                        help='Width of input images')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='Batch size for training')
+    parser.add_argument('--epochs', type=int, default=15,
+                        help='Number of training epochs')
+    parser.add_argument('--lr', type=float, default=0.0001,
+                        help='Learning rate for the optimizer')
+    return parser.parse_args()
+
+# دریافت آرگومان‌ها
+args = parse_args()
+
+# تنظیم پارامترها از آرگومان‌ها
+data_dir = args.data_dir
+base_model_weights = args.base_model_weights
+teacher_dir = args.teacher_dir
+img_height = args.img_height
+img_width = args.img_width
+batch_size = args.batch_size
+epochs = args.epochs
+lr = args.lr
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ایجاد دایرکتوری برای ذخیره مدل
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
-
-img_height, img_width = 224, 224
-batch_size = 32
-epochs = 10
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # **1. بارگذاری و آماده‌سازی داده‌ها**
 df = pd.read_csv(os.path.join(data_dir, 'data.csv'))
@@ -58,9 +86,9 @@ train_transform = transforms.Compose([
     transforms.Resize((img_height, img_width)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(20),
-    transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),  # معادل width/height_shift_range
+    transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # پیش‌پردازش ResNet
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 val_test_transform = transforms.Compose([
@@ -79,42 +107,37 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 # **2. ساخت مدل**
-# تعریف مدل سفارشی
 class CustomResNet(nn.Module):
     def __init__(self, base_model_weights):
         super(CustomResNet, self).__init__()
-        # بارگذاری ResNet50 بدون لایه fc
         base_model = models.resnet50(weights=None)
         base_model.load_state_dict(torch.load(base_model_weights, weights_only=True))
-        # حذف لایه fc با انتخاب همه لایه‌ها به جز fc
         self.features = nn.Sequential(*list(base_model.children())[:-1])
-        # غیرفعال کردن آموزش لایه‌های پایه
         for param in self.features.parameters():
             param.requires_grad = False
-        # اضافه کردن لایه‌های سفارشی
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))  # خروجی: (batch_size, 2048, 1, 1)
-        self.flatten = nn.Flatten()               # خروجی: (batch_size, 2048)
-        self.fc1 = nn.Linear(2048, 1024)          # خروجی: (batch_size, 1024)
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(2048, 1024)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(1024, 1)             # خروجی: (batch_size, 1)
+        self.fc2 = nn.Linear(1024, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        x = self.features(x)  # خروجی: (batch_size, 2048, H, W)
-        x = self.pool(x)      # خروجی: (batch_size, 2048, 1, 1)
-        x = self.flatten(x)   # خروجی: (batch_size, 2048)
-        x = self.fc1(x)       # خروجی: (batch_size, 1024)
+        x = self.features(x)
+        x = self.pool(x)
+        x = self.flatten(x)
+        x = self.fc1(x)
         x = self.relu(x)
-        x = self.fc2(x)       # خروجی: (batch_size, 1)
-        x = self.sigmoid(x)   # خروجی: (batch_size, 1)
+        x = self.fc2(x)
+        x = self.sigmoid(x)
         return x
 
 # ایجاد مدل
 model = CustomResNet(base_model_weights).to(device)
 
 # **3. تعریف loss و optimizer**
-criterion = nn.BCELoss()  # معادل binary_crossentropy
-optimizer = optim.Adam(model.parameters(), lr=0.0001)
+criterion = nn.BCELoss()
+optimizer = optim.Adam(model.parameters(), lr=lr)
 
 # **4. آموزش مدل**
 for epoch in range(epochs):
