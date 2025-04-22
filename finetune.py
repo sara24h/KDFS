@@ -73,7 +73,7 @@ class Finetune:
             eval_batch_size=self.finetune_eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            ddp=True
+            ddp=False
         )
         self.logger.info("Dataset has been loaded!")
 
