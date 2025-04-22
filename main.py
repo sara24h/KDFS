@@ -232,7 +232,7 @@ def parse_args():
     parser.add_argument(
         "--csv_file",
         type=str,
-        default="/kaggle/input/hardfakevsrealfaces/train.csv",
+        default="/kaggle/input/hardfakevsrealfaces/data.csv",
         help="Path to the CSV file for training/validation"
     )
     parser.add_argument(
