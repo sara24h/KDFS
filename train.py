@@ -43,7 +43,7 @@ class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.csv_file = args.csv_file  # مسیر data.csv
+        #self.csv_file = args.csv_file  # مسیر data.csv
         self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
