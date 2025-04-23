@@ -124,7 +124,15 @@ class Train:
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        self.teacher = eval(self.arch + "_" + self.dataset_type)(num_classes=2)
+        from models import ResNet_50_imagenet
+
+        MODEL_DICT = {
+            "ResNet_18": ResNet_18_imagenet,
+            "ResNet_34": ResNet_34_imagenet,
+            "ResNet_50": ResNet_50_imagenet,
+        }
+
+        self.teacher = MODEL_DICT[self.arch](num_classes=2)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         if self.arch in [
             "resnet_56",
