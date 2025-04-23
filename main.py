@@ -2,8 +2,8 @@ import argparse
 import time
 from train import Train
 from finetune import Finetune
-from train_ddp import TrainDDP
-from finetune_ddp import FinetuneDDP
+#from train_ddp import TrainDDP
+#from finetune_ddp import FinetuneDDP
 from test import Test
 import torch.distributed as dist
 
@@ -78,11 +78,7 @@ def parse_args():
         default="./result/",
         help="The directory where the results will be stored",
     )
-    parser.add_argument(
-        "--ddp",
-        action="store_true",
-        help="Use the distributed data parallel",
-    )
+   
     parser.add_argument(
         "--dali",
         action="store_true",
