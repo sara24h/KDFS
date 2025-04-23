@@ -16,11 +16,7 @@ from data.dataset import Dataset_hardfakevsreal
 # فرض می‌کنیم فایل‌های utils, loss, meter, scheduler وجود دارن
 from utils import utils, loss, meter, scheduler
 
-from model.student.resnet_sparse_cifar import (
-    resnet_56_sparse_cifar10,
-    resnet_110_sparse_cifar10,
-    resnet_56_sparse_cifar100,
-)
+
 from model.teacher.ResNet import  ResNet_50_imagenet
 from model.student.ResNet_sparse import (
  
@@ -39,16 +35,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 
-from model.teacher.resnet_cifar import (
-    resnet_56_cifar10,
-    resnet_110_cifar10,
-    resnet_56_cifar100,
-)
-from model.student.resnet_sparse_cifar import (
-    resnet_56_sparse_cifar10,
-    resnet_110_sparse_cifar10,
-    resnet_56_sparse_cifar100,
-)
+
 from model.teacher.ResNet import ResNet_18_imagenet, ResNet_50_imagenet
 from model.student.ResNet_sparse import (
     ResNet_18_sparse_imagenet,
