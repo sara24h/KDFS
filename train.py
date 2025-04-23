@@ -151,8 +151,7 @@ class Train:
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
-            num_classes=2,
-        )
+            )
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
