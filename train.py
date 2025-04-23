@@ -131,7 +131,7 @@ class Train:
             "ResNet_50": ResNet_50_imagenet,
         }
 
-        self.teacher = MODEL_DICT[self.arch](num_classes=2)
+        self.teacher = MODEL_DICT[self.arch]()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         if self.arch in [
             "resnet_56",
