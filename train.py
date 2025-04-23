@@ -27,6 +27,33 @@ from model.student.ResNet_sparse import (
     ResNet_50_sparse_imagenet,
 )
 
+import json
+import os
+import random
+import shutil
+import time
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+from utils import utils, loss, meter, scheduler
+
+from model.teacher.resnet_cifar import (
+    resnet_56_cifar10,
+    resnet_110_cifar10,
+    resnet_56_cifar100,
+)
+from model.student.resnet_sparse_cifar import (
+    resnet_56_sparse_cifar10,
+    resnet_110_sparse_cifar10,
+    resnet_56_sparse_cifar100,
+)
+from model.teacher.ResNet import ResNet_18_imagenet, ResNet_50_imagenet
+from model.student.ResNet_sparse import (
+    ResNet_18_sparse_imagenet,
+    ResNet_50_sparse_imagenet,
+)
 
 Flops_baselines = {
     "resnet_56": 125.49,
@@ -39,11 +66,11 @@ Flops_baselines = {
     "MobileNetV2": 327.55,
 }
 
+
 class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.csv_file = args.csv_file  # مسیر data.csv
         self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
@@ -74,15 +101,18 @@ class Train:
         self.best_prec1 = 0
 
     def result_init(self):
+        # tensorboard
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
 
         self.writer = SummaryWriter(self.result_dir)
 
+        # log
         self.logger = utils.get_logger(
             os.path.join(self.result_dir, "train_logger.log"), "train_logger"
         )
 
+        # config
         self.logger.info("train config:")
         self.logger.info(str(json.dumps(vars(self.args), indent=4)))
         utils.record_config(
@@ -108,15 +138,16 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        # استفاده از Dataset_hardfakevsreal
-        self.train_loader, self.val_loader, _ = Dataset_hardfakevsreal.get_loaders(
-            data_dir=self.dataset_dir,
-            csv_file=self.csv_file,
-            train_batch_size=self.train_batch_size,
-            eval_batch_size=self.eval_batch_size,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            ddp=False,  # فرض می‌کنیم DDP استفاده نمی‌کنیم
+        dataset = eval("Dataset_" + self.dataset_type)(
+            self.dataset_dir,
+            self.train_batch_size,
+            self.eval_batch_size,
+            self.num_workers,
+            self.pin_memory,
+        )
+        self.train_loader, self.val_loader = (
+            dataset.loader_train,
+            dataset.loader_test,
         )
         self.logger.info("Dataset has been loaded!")
 
@@ -124,14 +155,7 @@ class Train:
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        
-
-        MODEL_DICT = {
-         
-            "ResNet_50": ResNet_50_imagenet,
-        }
-
-        self.teacher = MODEL_DICT[self.arch]()
+        self.teacher = eval(self.arch + "_" + self.dataset_type)()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         if self.arch in [
             "resnet_56",
@@ -142,16 +166,14 @@ class Train:
         ]:
             self.teacher.load_state_dict(ckpt_teacher["state_dict"])
         elif self.arch in ["ResNet_18", "ResNet_50", "MobileNetV2"]:
-            self.teacher.load_state_dict(ckpt_teacher, strict=False)
+            self.teacher.load_state_dict(ckpt_teacher)
 
         self.logger.info("Building student model")
-        from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
-
-        self.student = ResNet_50_sparse_imagenet(
+        self.student = eval(self.arch + "_sparse_" + self.dataset_type)(
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
-            )
+        )
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
@@ -160,6 +182,7 @@ class Train:
         self.mask_loss = loss.MaskLoss()
 
     def define_optim(self):
+        # split weight and mask
         weight_params = map(
             lambda a: a[1],
             filter(
@@ -175,11 +198,14 @@ class Train:
             ),
         )
 
+        # optim
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
         )
+        # self.optim_mask = torch.optim.Adamax(mask_params, lr=self.mask_lr, eps=1e-7)
         self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
 
+        # scheduler
         self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
             self.optim_weight,
             T_max=self.lr_decay_T_max,
@@ -214,7 +240,7 @@ class Train:
 
         self.logger.info("=> Continue from epoch {}...".format(self.start_epoch))
 
-    def save_student_ckpt(self, is_best):
+    def save_student_ckpt(self, is_bset):
         folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -232,7 +258,7 @@ class Train:
             "scheduler_student_mask"
         ] = self.scheduler_student_mask.state_dict()
 
-        if is_best:
+        if is_bset:
             torch.save(
                 ckpt_student,
                 os.path.join(folder, self.arch + "_sparse_best.pt"),
@@ -253,7 +279,7 @@ class Train:
 
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
-        meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
+        meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")  # reconstruction error
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
 
         meter_loss = meter.AverageMeter("Loss", ":.4e")
@@ -262,6 +288,7 @@ class Train:
 
         self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
+            # train
             self.student.train()
             self.student.ticket = False
             meter_oriloss.reset()
@@ -277,6 +304,7 @@ class Train:
                 else self.warmup_start_lr
             )
 
+            # update gumbel_temperature
             self.student.update_gumbel_temperature(epoch)
             with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
                 _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
@@ -289,6 +317,7 @@ class Train:
                     logits_student, feature_list_student = self.student(images)
                     with torch.no_grad():
                         logits_teacher, feature_list_teacher = self.teacher(images)
+                    # loss
                     ori_loss = self.ori_loss(logits_student, targets)
 
                     kd_loss = (self.target_temperature**2) * self.kd_loss(
@@ -437,6 +466,7 @@ class Train:
                 + "M"
             )
 
+            # valid
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
@@ -513,7 +543,7 @@ class Train:
             self.logger.info(
                 " => Best top1 accuracy before finetune : " + str(self.best_prec1)
             )
-        self.logger.info("Train finished!")
+        self.logger.info("Trian finished!")
 
     def main(self):
         self.result_init()
