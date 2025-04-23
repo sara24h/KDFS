@@ -5,7 +5,7 @@
 arch=ResNet_50
 result_dir=result/run_resnet50_imagenet_prune1
 dataset_dir=/kaggle/input/hardfakevsrealfaces
-dataset_type=hardfakevsrealfaces
+dataset_type=hardfakevsreal
 csv_file=/kaggle/input/hardfakevsrealfaces/data.csv
 teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model.pth
 device=cuda
