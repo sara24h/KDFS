@@ -127,8 +127,7 @@ class Train:
         
 
         MODEL_DICT = {
-            "ResNet_18": ResNet_18_imagenet,
-            "ResNet_34": ResNet_34_imagenet,
+         
             "ResNet_50": ResNet_50_imagenet,
         }
 
