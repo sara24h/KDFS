@@ -11,7 +11,7 @@ from tqdm import tqdm
 import argparse
 
 # import دیتاست
-from data.dataset import Dataset_hardfakevsrealfaces
+from data.dataset import Dataset_hardfakevsreal
 
 # فرض می‌کنیم فایل‌های utils, loss, meter, scheduler وجود دارن
 from utils import utils, loss, meter, scheduler
