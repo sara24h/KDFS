@@ -145,7 +145,9 @@ class Train:
             self.teacher.load_state_dict(ckpt_teacher, strict=False)
 
         self.logger.info("Building student model")
-        self.student = eval(self.arch + "_sparse_" + self.dataset_type)(
+        from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
+
+        self.student = ResNet_50_sparse_imagenet(
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
             num_epochs=self.num_epochs,
