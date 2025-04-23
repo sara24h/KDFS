@@ -114,17 +114,17 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        dataset = eval("Dataset_" + self.dataset_type)(
-            self.dataset_dir,
-            self.train_batch_size,
-            self.eval_batch_size,
-            self.num_workers,
-            self.pin_memory,
+        dataset_class = globals()["Dataset_" + self.dataset_type]
+        train_loader, val_loader, _ = dataset_class.get_loaders(
+            data_dir=self.dataset_dir,
+            csv_file=self.csv_file,
+            train_batch_size=self.train_batch_size,
+            eval_batch_size=self.eval_batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            ddp=self.args.ddp
         )
-        self.train_loader, self.val_loader = (
-            dataset.loader_train,
-            dataset.loader_test,
-        )
+        self.train_loader, self.val_loader = train_loader, val_loader
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
