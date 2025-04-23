@@ -41,6 +41,7 @@ class TrainDDP:
         self.dataset_dir = args.dataset_dir
         self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
+        self.csv_file=args.csv_file
         self.pin_memory = args.pin_memory
         self.arch = args.arch
         self.seed = args.seed
