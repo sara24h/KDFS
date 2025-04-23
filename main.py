@@ -2,8 +2,8 @@ import argparse
 import time
 from train import Train
 from finetune import Finetune
-#from train_ddp import TrainDDP
-#from finetune_ddp import FinetuneDDP
+from train_ddp import TrainDDP
+from finetune_ddp import FinetuneDDP
 from test import Test
 import torch.distributed as dist
 
