@@ -27,8 +27,8 @@ def parse_args():
     parser.add_argument(
         "--dataset_type",
         type=str,
-        default="hardfakevsrealfaces",
-        choices=("cifar10", "cifar100", "imagenet","hardfakevsrealfaces"),
+        default="hardfakevsreal",
+        choices=("cifar10", "cifar100", "imagenet","hardfakevsreal"),
         help="The type of dataset",
     )
     parser.add_argument(
