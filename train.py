@@ -74,6 +74,7 @@ class Train:
         self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
+        self.csv_file=args.csv_file
         self.arch = args.arch
         self.device = args.device
         self.seed = args.seed
