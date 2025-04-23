@@ -44,6 +44,7 @@ class TrainDDP:
         self.pin_memory = args.pin_memory
         self.arch = args.arch
         self.seed = args.seed
+        self.csv_file = args.csv_file
         self.result_dir = args.result_dir
         self.teacher_ckpt_path = args.teacher_ckpt_path
         self.num_epochs = args.num_epochs
