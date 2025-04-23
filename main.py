@@ -256,6 +256,12 @@ def parse_args():
         default=None,
         help="The path where to load the sparsed student ckpt",
     )
+    parser.add_argument(
+        "--teacher_ckpt_path",
+        type=str,
+        default="/kaggle/input/resnet50-pth/resnet50-19c8e357.pth",
+        help="The path to the teacher model checkpoint file",
+    )
 
     return parser.parse_args()
 
