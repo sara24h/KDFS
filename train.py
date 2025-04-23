@@ -124,7 +124,7 @@ class Train:
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        from models import ResNet_50_imagenet
+        
 
         MODEL_DICT = {
             "ResNet_18": ResNet_18_imagenet,
