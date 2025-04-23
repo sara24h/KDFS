@@ -48,6 +48,7 @@ def parse_args():
         action="store_true",
         help="The pin_memory of dataloader",
     )
+    parser.add_argument("--ddp", action="store_true", help="Use the distributed data parallel")
     parser.add_argument(
         "--arch",
         type=str,
