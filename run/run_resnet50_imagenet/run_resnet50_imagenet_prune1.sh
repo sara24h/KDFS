@@ -16,7 +16,7 @@ python /kaggle/working/KDFS/main.py \
     --dataset_dir $dataset_dir \
     --dataset_type $dataset_type \
     --csv_file $csv_file \
-    --num_workers 8 \
+    --num_workers 4 \
     --pin_memory \
     --device $device \
     --arch $arch \
