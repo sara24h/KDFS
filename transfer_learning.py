@@ -11,7 +11,7 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 from data.dataset import Dataset_hardfakevsreal
-from model.teacher.ResNet import ResNet_50_imagenet
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -83,7 +83,7 @@ test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_tes
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # ساخت مدل
-model = ResNet_50_imagenet()
+model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 
 # بارگذاری وزن‌های پیش‌آموزش‌دیده
