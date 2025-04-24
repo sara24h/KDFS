@@ -1,3 +1,4 @@
+%matplotlib inline  # برای نمایش تصاویر در Kaggle
 import os
 import pandas as pd
 import torch
@@ -55,6 +56,9 @@ if not os.path.exists(teacher_dir):
 # بارگذاری داده‌ها
 csv_file = os.path.join(data_dir, 'data.csv')
 df = pd.read_csv(csv_file)
+print("CSV columns:", df.columns)
+print("Sample images_id:", df['images_id'].head().tolist())
+print("Unique labels:", df['label'].unique())
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
 
 # ذخیره test_df به یک فایل CSV موقت
@@ -80,7 +84,7 @@ test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_tes
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # ساخت مدل
-model = ResNet_50_imagenet()  # استفاده از ResNet-50 تعریف‌شده در model/teacher/ResNet.py
+model = ResNet_50_imagenet()
 model = model.to(device)
 
 # بارگذاری وزن‌های پیش‌آموزش‌دیده
@@ -102,7 +106,7 @@ for epoch in range(epochs):
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device).long()
         optimizer.zero_grad()
-        outputs, _ = model(images)  # خروجی مدل شامل output و feature_list است
+        outputs, _ = model(images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -154,12 +158,12 @@ print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * cor
 
 # نمایش 10 نمونه تصادفی از داده‌های تست
 print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
-random_indices = random.sample(range(len(test_df)), 10)  # اصلاح نام متغیر
-fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+random_indices = random.sample(range(len(test_df)), 10)
+fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
 
 with torch.no_grad():
-    for i, idx in enumerate(random_indices):  # استفاده از random_indices
+    for i, idx in enumerate(random_indices):
         row = test_df.iloc[idx]
         img_name = row['images_id']
         label_str = row['label']
@@ -170,6 +174,8 @@ with torch.no_grad():
         
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
+            axes[i].set_title("Image not found")
+            axes[i].axis('off')
             continue
         
         image = Image.open(img_path).convert('RGB')
@@ -180,12 +186,13 @@ with torch.no_grad():
         true_label = 'real' if label_str == 'real' else 'fake'
         
         axes[i].imshow(image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}')
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
         
         print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
+plt.savefig(os.path.join(teacher_dir, 'test_samples.png'))
 plt.show()
 
 # ذخیره مدل
