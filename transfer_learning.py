@@ -10,7 +10,7 @@ import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from dataset import Dataset_hardfakevsreal
+from data.dataset import Dataset_hardfakevsreal
 from model.teacher.ResNet import ResNet_50_imagenet
 
 # تعریف آرگومان‌ها
