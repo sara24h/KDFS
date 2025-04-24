@@ -1,7 +1,7 @@
 arch=ResNet_50
 dataset_dir=/kaggle/input/hardfakevsrealfaces
 dataset_type=hardfakevsreal
-ckpt_path=/kaggle/working/KDFS/result/run_resnet50_imagenet_prune1/student_model
+ckpt_path=/kaggle/working/KDFS/result/run_resnet50_imagenet_prune1/student_model/ResNet_50_sparse_best.pt
 device=0
 CUDA_VISIBLE_DEVICES=$device python main.py \
 --phase test \
