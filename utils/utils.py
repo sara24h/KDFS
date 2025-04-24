@@ -18,6 +18,10 @@ def record_config(args, filepath):
             f.write(f"{key}: {value}\n")
 
 def get_accuracy(output, target, topk=(1,)):
+    num_classes = output.size(1)  # تعداد کلاس‌های خروجی
+    topk = [k for k in topk if k <= num_classes]  # فیلتر کردن مقادیر نامعتبر
+    if not topk:
+        topk = [1]  # حداقل top-1
     maxk = max(topk)
     batch_size = target.size(0)
     _, pred = output.topk(maxk, 1, True, True)
