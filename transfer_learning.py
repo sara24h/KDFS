@@ -3,14 +3,15 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import models, transforms
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
+from dataset import Dataset_hardfakevsreal
+from model.teacher import ResNet
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -51,115 +52,64 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# **1. بارگذاری و آماده‌سازی داده‌ها**
-df = pd.read_csv(os.path.join(data_dir, 'data.csv'))
-df = df.dropna(subset=['label'])  # حذف ردیف‌های با label NaN
-
-def get_image_path(row):
-    folder = 'fake' if row['label'] == 'fake' else 'real'
-    return os.path.join(data_dir, folder, row['images_id'] + '.jpg')
-
-df['image_path'] = df.apply(get_image_path, axis=1)
-df['file_exists'] = df['image_path'].apply(os.path.isfile)
-df = df[df['file_exists']]  # حذف ردیف‌هایی که فایل تصویرشان وجود ندارد
-
-# تقسیم داده‌ها به train، validation و test
+# بارگذاری داده‌ها
+csv_file = os.path.join(data_dir, 'data.csv')
+df = pd.read_csv(csv_file)
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
-train_df, val_df = train_test_split(train_val_df, test_size=0.15 / (1 - 0.15), random_state=42, stratify=train_val_df['label'])
 
-# تعریف Dataset سفارشی
-class CustomDataset(Dataset):
-    def __init__(self, dataframe, transform=None):
-        self.dataframe = dataframe
-        self.transform = transform
+# ذخیره test_df به یک فایل CSV موقت
+test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
+test_df.to_csv(test_csv_file, index=False)
 
-    def __len__(self):
-        return len(self.dataframe)
+# تعریف پیش‌پردازش برای test (با فرض اینکه در Dataset_hardfakevsreal تعریف شده)
+val_test_transform = Dataset_hardfakevsreal(data_dir, csv_file).val_transform
 
-    def __getitem__(self, idx):
-        img_path = self.dataframe.iloc[idx]['image_path']
-        image = Image.open(img_path).convert('RGB')
-        label = 0 if self.dataframe.iloc[idx]['label'] == 'fake' else 1
-        if self.transform:
-            image = self.transform(image)
-        return image, label, img_path  # فقط تصویر تبدیل‌شده، برچسب و مسیر تصویر
+# ایجاد DataLoaderها برای train و val
+train_loader, val_loader, _ = Dataset_hardfakevsreal.get_loaders(
+    data_dir=data_dir,
+    csv_file=csv_file,
+    train_batch_size=batch_size,
+    eval_batch_size=batch_size,
+    num_workers=4,
+    pin_memory=True,
+    ddp=False
+)
 
-# تعریف پیش‌پردازش تصاویر
-train_transform = transforms.Compose([
-    transforms.Resize((img_height, img_width)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(20),
-    transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+# ایجاد test_loader
+test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_test_transform)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-val_test_transform = transforms.Compose([
-    transforms.Resize((img_height, img_width)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+# ساخت مدل
+model = ResNet()
+model.fc = nn.Linear(2048, 2)  # تغییر به 2 کلاس
+model = model.to(device)
 
-# ایجاد DataLoaderها
-train_dataset = CustomDataset(train_df, transform=train_transform)
-val_dataset = CustomDataset(val_df, transform=val_test_transform)
-test_dataset = CustomDataset(test_df, transform=val_test_transform)
+# بارگذاری وزن‌های پیش‌آموزش‌دیده
+state_dict = torch.load(base_model_weights, weights_only=True)
+state_dict.pop('fc.weight', None)
+state_dict.pop('fc.bias', None)
+model.load_state_dict(state_dict, strict=False)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-# **2. ساخت مدل**
-class CustomResNet(nn.Module):
-    def __init__(self, base_model_weights):
-        super(CustomResNet, self).__init__()
-        base_model = models.resnet50(weights=None)
-        base_model.load_state_dict(torch.load(base_model_weights, weights_only=True))
-        self.features = nn.Sequential(*list(base_model.children())[:-1])
-        for param in self.features.parameters():
-            param.requires_grad = False
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(2048, 1024)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(1024, 1)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.pool(x)
-        x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        x = self.sigmoid(x)
-        return x
-
-# ایجاد مدل
-model = CustomResNet(base_model_weights).to(device)
-
-# **3. تعریف loss و optimizer**
-criterion = nn.BCELoss()
+# تعریف loss و optimizer
+criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# **4. آموزش مدل**
+# آموزش مدل
 for epoch in range(epochs):
-    # آموزش
     model.train()
     running_loss = 0.0
     correct_train = 0
     total_train = 0
-    for images, labels, _ in train_loader:  # نادیده گرفتن img_path
-        images, labels = images.to(device), labels.to(device).float().view(-1, 1)
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device).long()
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs, _ = model(images)  # خروجی مدل شامل output و feature_list است
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
         
-        # محاسبه دقت آموزشی
-        predicted = (outputs > 0.5).float()
+        _, predicted = torch.max(outputs, 1)
         total_train += labels.size(0)
         correct_train += (predicted == labels).sum().item()
     
@@ -173,14 +123,13 @@ for epoch in range(epochs):
     correct_val = 0
     total_val = 0
     with torch.no_grad():
-        for images, labels, _ in val_loader:  # نادیده گرفتن img_path
-            images, labels = images.to(device), labels.to(device).float().view(-1, 1)
-            outputs = model(images)
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device).long()
+            outputs, _ = model(images)
             loss = criterion(outputs, labels)
             val_loss += loss.item()
             
-            # محاسبه دقت اعتبارسنجی
-            predicted = (outputs > 0.5).float()
+            _, predicted = torch.max(outputs, 1)
             total_val += labels.size(0)
             correct_val += (predicted == labels).sum().item()
     
@@ -188,57 +137,51 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}%')
 
-# **5. ارزیابی**
+# ارزیابی روی داده‌های تست
 model.eval()
 test_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for images, labels, _ in test_loader:  # نادیده گرفتن img_path
-        images, labels = images.to(device), labels.to(device).float().view(-1, 1)
-        outputs = model(images)
+    for images, labels in test_loader:
+        images, labels = images.to(device), labels.to(device).long()
+        outputs, _ = model(images)
         loss = criterion(outputs, labels)
         test_loss += loss.item()
-        predicted = (outputs > 0.5).float()
+        _, predicted = torch.max(outputs, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.4f}%')
 
-# **6. نمایش 10 نمونه تصادفی از داده‌های تست همراه با پیش‌بینی و تصویر**
-model.eval()
+# نمایش 10 نمونه تصادفی از داده‌های تست
 print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
-# انتخاب 10 نمونه تصادفی از دیتاست تست
-random_indices = random.sample(range(len(test_dataset)), 10)
-
-# تنظیمات برای نمایش تصاویر
+random_indices = random.sample(range(len(test_df)), 10)
 fig, axes = plt.subplots(2, 5, figsize=(15, 6))
 axes = axes.ravel()
 
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
-        image, label, img_path = test_dataset[idx]
-        # بارگذاری تصویر اصلی برای نمایش
-        raw_image = Image.open(img_path).convert('RGB')
-        image = image.unsqueeze(0).to(device)  # اضافه کردن بُعد batch
-        output = model(image)
-        predicted = 'real' if output.item() > 0.5 else 'fake'
-        true_label = 'real' if label == 1 else 'fake'
+        row = test_df.iloc[idx]
+        img_name = row['images_id']
+        label_str = row['label']
+        folder = 'fake' if label_str == 'fake' else 'real'
+        img_path = os.path.join(data_dir, folder, img_name + '.jpg')
         
-        # تبدیل تصویر به فرمت قابل نمایش
-        raw_image = np.array(raw_image)  # تبدیل تصویر PIL به آرایه numpy
-        if raw_image.shape[2] == 3:  # اطمینان از ترتیب صحیح کانال‌ها
-            raw_image = raw_image[:, :, ::-1]  # تبدیل RGB به BGR برای matplotlib
+        image = Image.open(img_path).convert('RGB')
+        image_transformed = val_test_transform(image).unsqueeze(0).to(device)
+        output, _ = model(image_transformed)
+        _, predicted = torch.max(output, 1)
+        predicted_label = 'real' if predicted.item() == 1 else 'fake'
+        true_label = 'real' if label_str == 'real' else 'fake'
         
-        # نمایش تصویر
-        axes[i].imshow(raw_image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted}')
+        axes[i].imshow(image)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}')
         axes[i].axis('off')
         
-        # چاپ اطلاعات متنی
-        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted}")
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
 plt.show()
 
-# **7. ذخیره مدل**
+# ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
