@@ -8,14 +8,10 @@ from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
 import random
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from data.dataset import Dataset_hardfakevsreal
 from model.teacher.ResNet import ResNet_50_imagenet
-
-# تنظیم backend غیرتعاملی برای Kaggle
-matplotlib.use('Agg')  # استفاده از backend غیرتعاملی برای ذخیره تصاویر
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -195,21 +191,19 @@ with torch.no_grad():
         image = Image.open(img_path).convert('RGB')
         image_transformed = val_test_transform(image).unsqueeze(0).to(device)
         output, _ = model(image_transformed)
-        probabilities = torch.softmax(output, dim=1).cpu().numpy()[0]
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         true_label = 'real' if label_str == 'real' else 'fake'
         
         axes[i].imshow(image)
-        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}\nProb: {probabilities[predicted.item()]:.2f}', fontsize=10)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
         
-        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}, Probabilities: {probabilities}")
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
 plt.savefig(os.path.join(teacher_dir, 'test_samples.png'))
 plt.show()
-plt.close()  # بستن شکل برای جلوگیری از مشکلات حافظه
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
