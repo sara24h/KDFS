@@ -212,57 +212,7 @@ class Train:
                 torch.save(ckpt_student, self.sparsed_student_ckpt_path)
             torch.save(ckpt_student, os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"))
 
-    def display_test_samples(self):
-        self.logger.info("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
-        random_indices = random.sample(range(len(self.test_df)), 10)
-        fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-        axes = axes.ravel()
-        self.logger.info("Sample image paths:")
-        for idx in random_indices[:3]:
-            row = self.test_df.iloc[idx]
-            img_name = row['images_id']
-            if not img_name.endswith('.jpg'):
-                img_name = img_name + '.jpg'
-            folder = 'fake' if row['label'] == 'fake' else 'real'
-            img_path = os.path.join(self.dataset_dir, folder, img_name)
-            self.logger.info(f"Path: {img_path}, Exists: {os.path.exists(img_path)}")
-        self.student.eval()
-        self.student.ticket = True
-        with torch.no_grad():
-            for i, idx in enumerate(random_indices):
-                row = self.test_df.iloc[idx]
-                img_name = row['images_id']
-                label_str = row['label']
-                if not img_name.endswith('.jpg'):
-                    img_name = img_name + '.jpg'
-                folder = 'fake' if label_str == 'fake' else 'real'
-                img_path = os.path.join(self.dataset_dir, folder, img_name)
-                if not os.path.exists(img_path):
-                    self.logger.info(f"Warning: Image not found: {img_path}")
-                    axes[i].set_title("Image not found")
-                    axes[i].axis('off')
-                    continue
-                image = Image.open(img_path).convert('RGB')
-                image_transformed = self.val_test_transform(image).unsqueeze(0).to(self.device)
-                with autocast('cuda'):
-                    output, _ = self.student(image_transformed)
-                probabilities = torch.softmax(output, dim=1).cpu().numpy()[0]
-                _, predicted = torch.max(output, 1)
-                predicted_label = 'real' if predicted.item() == 1 else 'fake'
-                true_label = 'real' if label_str == 'real' else 'fake'
-                axes[i].imshow(image)
-                axes[i].set_title(
-                    f'True: {true_label}\nPred: {predicted_label}\nProb: {probabilities[predicted.item()]:.2f}',
-                    fontsize=10
-                )
-                axes[i].axis('off')
-                self.logger.info(
-                    f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}, Probabilities: {probabilities}"
-                )
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.result_dir, f'test_samples_{self.phase}.png'))
-        self.logger.info(f"Test samples saved at: {os.path.join(self.result_dir, f'test_samples_{self.phase}.png')}")
-        plt.close()
+    
 
     def train(self):
         if self.device == "cuda":
