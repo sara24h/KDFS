@@ -30,8 +30,8 @@ python /kaggle/working/KDFS/main.py \
     --lr_decay_T_max 350 \
     --lr_decay_eta_min 5e-6 \
     --weight_decay 1e-4 \
-    --train_batch_size 256 \
-    --eval_batch_size 256 \
+    --train_batch_size 32 \
+    --eval_batch_size 32 \
     --target_temperature 3 \
     --gumbel_start_temperature 2 \
     --gumbel_end_temperature 0.1 \
@@ -46,7 +46,7 @@ python /kaggle/working/KDFS/main.py \
     --dataset_dir $dataset_dir \
     --dataset_type $dataset_type \
     --csv_file $csv_file \
-    --num_workers 8 \
+    --num_workers 4 \
     --pin_memory \
     --device $device \
     --arch $arch \
