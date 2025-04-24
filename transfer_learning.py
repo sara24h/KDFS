@@ -11,7 +11,7 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 from dataset import Dataset_hardfakevsreal
-from model.teacher import ResNet
+from model.teacher.ResNet import ResNet_50_imagenet
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -61,8 +61,8 @@ train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, st
 test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
 test_df.to_csv(test_csv_file, index=False)
 
-# تعریف پیش‌پردازش برای test (با فرض اینکه در Dataset_hardfakevsreal تعریف شده)
-val_test_transform = Dataset_hardfakevsreal(data_dir, csv_file).val_transform
+# تعریف پیش‌پردازش برای test
+val_test_transform = Dataset_hardfakevsreal(data_dir, csv_file).val_test_transform
 
 # ایجاد DataLoaderها برای train و val
 train_loader, val_loader, _ = Dataset_hardfakevsreal.get_loaders(
@@ -80,8 +80,7 @@ test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_tes
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 # ساخت مدل
-model = ResNet()
-model.fc = nn.Linear(2048, 2)  # تغییر به 2 کلاس
+model = ResNet_50_imagenet()  # استفاده از ResNet-50 تعریف‌شده در model/teacher/ResNet.py
 model = model.to(device)
 
 # بارگذاری وزن‌های پیش‌آموزش‌دیده
@@ -155,7 +154,7 @@ print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * cor
 
 # نمایش 10 نمونه تصادفی از داده‌های تست
 print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
-random_indices = random.sample(range(len(test_df)), 10)
+randomECMindices = random.sample(range(len(test_df)), 10)
 fig, axes = plt.subplots(2, 5, figsize=(15, 6))
 axes = axes.ravel()
 
@@ -185,3 +184,4 @@ plt.show()
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
+</xaiArtifact
