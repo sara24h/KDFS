@@ -290,7 +290,7 @@ class ResNet_sparse(MaskedNet):
         return out, feature_list
 
 
-def ResNet_18_sparse_imagenet(
+def ResNet_18_sparse_hardfakevsreal(
     gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
 ):
     return ResNet_sparse(
@@ -303,7 +303,7 @@ def ResNet_18_sparse_imagenet(
     )
 
 
-def ResNet_34_sparse_imagenet(
+def ResNet_34_sparse_hardfakevsreal(
     gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
 ):
     return ResNet_sparse(
@@ -316,7 +316,7 @@ def ResNet_34_sparse_imagenet(
     )
 
 
-def ResNet_50_sparse_imagenet(
+def ResNet_50_sparse_hardfakevsreal(
     gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
 ):
     return ResNet_sparse(
