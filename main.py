@@ -12,13 +12,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast  # به‌روزرسانی به torch.amp
 from data.dataset import Dataset_hardfakevsreal
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 import json
-import shutil
 import time
 
 # تنظیم متغیر محیطی برای مدیریت حافظه
@@ -128,7 +127,7 @@ class Train:
             if not os.path.exists(self.teacher_ckpt_path):
                 raise FileNotFoundError(f"Teacher checkpoint not found at: {self.teacher_ckpt_path}")
             ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-            if self.arch in ["resnet_56", "resnet_110", "VGG_16_bn", "DenseNet_40", "GoogleNet"]:
+            if self.arch in ["resnet_56", "resnet_110", "VGG_16_bn", "DenseNet_40", "GoogLeNet"]:
                 self.teacher.load_state_dict(ckpt_teacher["state_dict"])
             elif self.arch in ["ResNet_18", "ResNet_50", "MobileNetV2"]:
                 try:
@@ -190,12 +189,6 @@ class Train:
         self.student.load_state_dict(ckpt_student["student"])
         self.optim_weight.load_state_dict(ckpt_student["optim_weight"])
         self.optim_mask.load_state_dict(ckpt_student["optim_mask"])
-        self.scheduler_student_weight.load_state_dict(
-            ckpt_student["scheduler_student_weight"]
-        )
-        self.scheduler_student_mask.load_state_dict(
-            ckpt_student["scheduler_student_mask"]
-        )
         self.logger.info("=> Continue from epoch {}...".format(self.start_epoch))
 
     def save_student_ckpt(self, is_best):
@@ -208,8 +201,6 @@ class Train:
             "student": self.student.state_dict(),
             "optim_weight": self.optim_weight.state_dict(),
             "optim_mask": self.optim_mask.state_dict(),
-            "scheduler_student_weight": self.scheduler_student_weight.state_dict(),
-            "scheduler_student_mask": self.scheduler_student_mask.state_dict(),
         }
         if self.phase == 'train':
             if is_best:
@@ -252,7 +243,7 @@ class Train:
                     continue
                 image = Image.open(img_path).convert('RGB')
                 image_transformed = self.val_test_transform(image).unsqueeze(0).to(self.device)
-                with autocast():
+                with autocast('cuda'):
                     output, _ = self.student(image_transformed)
                 probabilities = torch.softmax(output, dim=1).cpu().numpy()[0]
                 _, predicted = torch.max(output, 1)
@@ -284,7 +275,7 @@ class Train:
             self.mask_loss = self.mask_loss.cuda()
         if self.resume:
             self.resume_student_ckpt()
-        scaler = GradScaler()
+        scaler = GradScaler('cuda')
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
         meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
@@ -316,7 +307,7 @@ class Train:
                     if self.device == "cuda":
                         images = images.cuda()
                         targets = targets.cuda()
-                    with autocast():
+                    with autocast('cuda'):
                         logits_student, feature_list_student = self.student(images)
                         if self.phase == 'train':
                             with torch.no_grad():
@@ -412,7 +403,7 @@ class Train:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda()
-                        with autocast():
+                        with autocast('cuda'):
                             logits_student, _ = self.student(images)
                         prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
@@ -469,7 +460,6 @@ def parse_args():
         help="train, finetune or test",
     )
 
-    # common
     parser.add_argument(
         "--dataset_dir", type=str, default="/kaggle/input/hardfakevsrealfaces", help="The dataset path"
     )
@@ -534,7 +524,6 @@ def parse_args():
         help="Use dali",
     )
 
-    # train
     parser.add_argument(
         "--teacher_ckpt_path",
         type=str,
@@ -615,7 +604,6 @@ def parse_args():
         help="Compress rate of the student model",
     )
 
-    # finetune
     parser.add_argument(
         "--finetune_student_ckpt_path",
         type=str,
@@ -683,7 +671,6 @@ def parse_args():
         help="The path where to save the sparsed student ckpt in finetune",
     )
 
-    # test
     parser.add_argument(
         "--test_batch_size", type=int, default=16, help="Batch size for test"
     )
