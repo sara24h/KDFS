@@ -22,7 +22,7 @@ class Test:
     def dataload(self):
         _, self.val_loader = Dataset_hardfakevsreal.get_loaders(
             data_dir=self.dataset_dir,
-            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),  # Adjust as needed
+            csv_file=os.path.join(self.dataset_dir, 'data.csv'),  # Adjust as needed
             train_batch_size=self.test_batch_size,  # Not used for testing
             eval_batch_size=self.test_batch_size,
             num_workers=self.num_workers,
