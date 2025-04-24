@@ -184,4 +184,3 @@ plt.show()
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
-</xaiArtifact
