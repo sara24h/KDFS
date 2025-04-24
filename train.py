@@ -24,7 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 
-from model.teacher.ResNet import ResNet_50_imagenet
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import (
 
     ResNet_50_sparse_imagenet,
