@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from data.dataset import Dataset_hardfakevsreal
-from model.student.ResNet_sparse import ResNet_50_sparse_imagenet  # Reverted to sparse
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Reverted to sparse
 from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 
@@ -79,7 +79,7 @@ class Finetune:
 
     def build_model(self):
         self.logger.info("==> Building sparse student model for fine-tuning..")
-        self.student = ResNet_50_sparse_imagenet().to(self.device)
+        self.student = ResNet_50_sparse_hardfakevsreal().to(self.device)
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
         self.student.load_state_dict(ckpt_student["student"], strict=False)
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
