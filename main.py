@@ -646,7 +646,9 @@ def main():
             finetune = Finetune(args=args)
             finetune.main()
         elif args.phase == "test":
-            raise NotImplementedError("Test phase is not implemented in this version.")
+            test = Test(args=args)
+            test.main()
+
 
 if __name__ == "__main__":
     main()
