@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from data.dataset import Dataset_hardfakevsreal  # Your custom dataset
-from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, meter
 from get_flops_and_params import get_flops_and_params
 
@@ -34,7 +34,7 @@ class Test:
     def build_model(self):
         print("==> Building student model..")
         print("Loading sparse student model")
-        self.student = ResNet_50_sparse_imagenet()  # Initialize without Gumbel params for testing
+        self.student = ResNet_50_sparse_hardfakevsreal()  # Initialize without Gumbel params for testing
         ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu")
         self.student.load_state_dict(ckpt_student["student"])
 
