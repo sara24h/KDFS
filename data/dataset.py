@@ -32,7 +32,17 @@ class Dataset_hardfakevsreal(Dataset):
         return image, label
 
     @staticmethod
+    def get_val_test_transform():
+        """Returns the validation/test transform as a static method."""
+        return transforms.Compose([
+            transforms.CenterCrop(300),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    @staticmethod
     def get_loaders(data_dir, csv_file, train_batch_size, eval_batch_size, num_workers, pin_memory, ddp=False, test_csv_file=None):
+        """Returns train, validation, and test DataLoaders."""
         train_transform = transforms.Compose([
             transforms.RandomCrop(300, padding=30),
             transforms.RandomHorizontalFlip(),
@@ -41,20 +51,19 @@ class Dataset_hardfakevsreal(Dataset):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-        val_test_transform = transforms.Compose([
-            transforms.CenterCrop(300),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        val_test_transform = Dataset_hardfakevsreal.get_val_test_transform()
 
+        # Create dataset
         dataset = Dataset_hardfakevsreal(data_dir, csv_file)
         train_size = int(0.8 * len(dataset))
         val_size = len(dataset) - train_size
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
+        # Apply transforms to datasets
         train_dataset.dataset = Dataset_hardfakevsreal(data_dir, csv_file, transform=train_transform)
         val_dataset.dataset = Dataset_hardfakevsreal(data_dir, csv_file, transform=val_test_transform)
 
+        # Create DataLoaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             train_loader = DataLoader(
@@ -82,4 +91,14 @@ class Dataset_hardfakevsreal(Dataset):
         )
 
         test_loader = None
+        if test_csv_file:
+            test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_test_transform)
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=eval_batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory
+            )
+
         return train_loader, val_loader, test_loader
