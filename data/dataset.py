@@ -10,7 +10,7 @@ class Dataset_hardfakevsreal(Dataset):
         self.data_dir = data_dir
         self.transform = transform
         self.data = pd.read_csv(csv_file)
-        self.label_map = {'Fake': 0, 'Real': 1}
+        self.label_map = {'fake': 0, 'real': 1}
 
     def __len__(self):
         return len(self.data)
