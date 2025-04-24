@@ -20,16 +20,17 @@ class Test:
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
 
     def dataload(self):
-        _, self.val_loader = Dataset_hardfakevsreal.get_loaders(
+        _, self.val_loader, _ = Dataset_hardfakevsreal.get_loaders(
             data_dir=self.dataset_dir,
-            csv_file=os.path.join(self.dataset_dir, 'data.csv'),  # Adjust as needed
-            train_batch_size=self.test_batch_size,  # Not used for testing
+            csv_file=os.path.join(self.dataset_dir, 'data.csv'),
+            train_batch_size=self.test_batch_size,
             eval_batch_size=self.test_batch_size,
-            num_workers=self.num_workers,
+            num_workers=4,  # کاهش کارگرها برای جلوگیری از هشدار
             pin_memory=self.pin_memory,
             ddp=False
         )
         print("Dataset has been loaded!")
+         
 
     def build_model(self):
         print("==> Building student model..")
