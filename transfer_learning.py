@@ -62,7 +62,7 @@ test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
 test_df.to_csv(test_csv_file, index=False)
 
 # تعریف پیش‌پردازش برای test
-val_test_transform = Dataset_hardfakevsreal(data_dir, csv_file).val_test_transform
+val_test_transform = Dataset_hardfakevsreal.get_val_test_transform()
 
 # ایجاد DataLoaderها برای train و val
 train_loader, val_loader, _ = Dataset_hardfakevsreal.get_loaders(
