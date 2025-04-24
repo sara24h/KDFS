@@ -178,7 +178,8 @@ class ResNet_pruned(nn.Module):
         )
         num = num + coef * num_blocks[3]
 
-        self.avgpool = nn.Sequential(nn.AvgPool2d(7))
+        # تغییر این خط
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # به جای nn.Sequential(nn.AvgPool2d(7))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
     def _make_layer(self, block, planes, num_blocks, stride, masks=[]):
