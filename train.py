@@ -158,7 +158,6 @@ class Train:
         self.mask_loss = loss.MaskLoss()
 
     def define_optim(self):
-        # split weight and mask
         weight_params = map(
             lambda a: a[1],
             filter(
@@ -173,20 +172,14 @@ class Train:
                 self.student.named_parameters(),
             ),
         )
-
-        # optim
         self.optim_weight = torch.optim.Adamax(
             weight_params, lr=self.lr, weight_decay=self.weight_decay, eps=1e-7
         )
-        # self.optim_mask = torch.optim.Adamax(mask_params, lr=self.mask_lr, eps=1e-7)
         self.optim_mask = torch.optim.Adamax(mask_params, lr=self.lr, eps=1e-7)
-
-        # scheduler
         self.scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
             self.optim_weight,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
-            last_epoch=-1,
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
@@ -194,7 +187,6 @@ class Train:
             self.optim_mask,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
-            last_epoch=-1,
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
