@@ -53,7 +53,7 @@ python /kaggle/working/KDFS/main.py \
     --seed 3407 \
     --result_dir $result_dir \
     --finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_last.pt" \
-    --finetune_num_epochs 3 \
+    --finetune_num_epochs 6 \
     --finetune_lr 4e-6 \
     --finetune_warmup_steps 5 \
     --finetune_warmup_start_lr 4e-8 \
