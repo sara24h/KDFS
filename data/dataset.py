@@ -10,20 +10,31 @@ class Dataset_hardfakevsreal(Dataset):
         self.data_dir = data_dir
         self.transform = transform
         self.data = pd.read_csv(csv_file)
-        self.label_map = {'fake': 0, 'real': 1}
+        self.label_map = {'fake': 0, 'real': 1}  # مطابق با فایل CSV
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = self.data.iloc[idx, 0]
-        label_str = self.data.iloc[idx, 1]
+        img_name = self.data.iloc[idx]['images_id']
+        label_str = self.data.iloc[idx]['label']
+        
+        if label_str not in self.label_map:
+            raise KeyError(f"Label '{label_str}' not found in label_map. Available labels: {list(self.label_map.keys())}")
+        
         label = self.label_map[label_str]
 
-        if label_str == 'Fake':
+        # افزودن پسوند .jpg اگر لازم باشد
+        if not img_name.endswith('.jpg'):
+            img_name = img_name + '.jpg'
+
+        if label_str == 'fake':
             img_path = os.path.join(self.data_dir, 'fake', img_name)
         else:
             img_path = os.path.join(self.data_dir, 'real', img_name)
+
+        if not os.path.exists(img_path):
+            raise FileNotFoundError(f"Image file not found: {img_path}")
 
         image = Image.open(img_path).convert('RGB')
         if self.transform:
