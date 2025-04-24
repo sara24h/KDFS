@@ -1,7 +1,7 @@
 import torch
 from thop import profile
-from model.student.ResNet_sparse import ResNet_50_sparse_imagenet
-from model.pruned_model.ResNet_pruned import ResNet_50_pruned_imagenet
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
 
 # مقادیر پایه برای ResNet-50
 Flops_baseline = 4134  # در میلیون
@@ -23,7 +23,7 @@ def get_flops_and_params(args):
 
     # ساخت مدل sparse
     print("==> Building sparse student model..")
-    student = ResNet_50_sparse_imagenet()
+    student = ResNet_50_sparse_hardfakevsreal()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu")
     student.load_state_dict(ckpt_student["student"])
     print("Sparse student model loaded!")
@@ -38,7 +38,7 @@ def get_flops_and_params(args):
     masks = [torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1) for mask_weight in mask_weights]
 
     # ساخت مدل pruned
-    pruned_model = ResNet_50_pruned_imagenet(masks=masks)
+    pruned_model = ResNet_50_pruned_hardfakevsreal(masks=masks)
     if device == "cuda":
         pruned_model = pruned_model.cuda()
 
