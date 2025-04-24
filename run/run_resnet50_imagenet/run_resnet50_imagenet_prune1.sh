@@ -53,13 +53,13 @@ python /kaggle/working/KDFS/main.py \
     --seed 3407 \
     --result_dir $result_dir \
     --finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_last.pt" \
-    --finetune_num_epochs 20 \
+    --finetune_num_epochs 3 \
     --finetune_lr 4e-6 \
     --finetune_warmup_steps 5 \
     --finetune_warmup_start_lr 4e-8 \
     --finetune_lr_decay_T_max 20 \
     --finetune_lr_decay_eta_min 4e-8 \
     --weight_decay 2e-5 \
-    --finetune_train_batch_size 256 \
-    --finetune_eval_batch_size 256 \
+    --finetune_train_batch_size 16 \
+    --finetune_eval_batch_size 16 \
     --sparsed_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_best.pt"
