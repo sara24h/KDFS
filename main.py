@@ -384,7 +384,7 @@ class Train:
                 self.save_student_ckpt(False)
             self.logger.info(f" => Best top1 accuracy before {'finetune' if self.phase == 'train' else 'final'} : {self.best_prec1}")
         self.logger.info(f"{self.phase.capitalize()} finished!")
-        self.display_test_samples()
+        
 
     def main(self):
         self.result_init()
