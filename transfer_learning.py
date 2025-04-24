@@ -154,17 +154,23 @@ print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * cor
 
 # نمایش 10 نمونه تصادفی از داده‌های تست
 print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
-randomECMindices = random.sample(range(len(test_df)), 10)
+random_indices = random.sample(range(len(test_df)), 10)  # اصلاح نام متغیر
 fig, axes = plt.subplots(2, 5, figsize=(15, 6))
 axes = axes.ravel()
 
 with torch.no_grad():
-    for i, idx in enumerate(random_indices):
+    for i, idx in enumerate(random_indices):  # استفاده از random_indices
         row = test_df.iloc[idx]
         img_name = row['images_id']
         label_str = row['label']
+        if not img_name.endswith('.jpg'):
+            img_name = img_name + '.jpg'
         folder = 'fake' if label_str == 'fake' else 'real'
-        img_path = os.path.join(data_dir, folder, img_name + '.jpg')
+        img_path = os.path.join(data_dir, folder, img_name)
+        
+        if not os.path.exists(img_path):
+            print(f"Warning: Image not found: {img_path}")
+            continue
         
         image = Image.open(img_path).convert('RGB')
         image_transformed = val_test_transform(image).unsqueeze(0).to(device)
