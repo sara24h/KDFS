@@ -131,7 +131,7 @@ class Train:
         self.logger.info("==> Building model..")
 
         self.logger.info("Loading teacher model")
-        self.teacher = eval(self.arch + "_" + "imagenet")()
+        self.teacher = eval(self.arch + "_" + "hardfakevsreal")()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         if self.arch in [
             "resnet_56",
