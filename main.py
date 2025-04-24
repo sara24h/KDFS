@@ -181,6 +181,7 @@ class Train:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
+        
 
     def resume_student_ckpt(self):
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
@@ -486,6 +487,12 @@ def parse_args():
         "--pin_memory",
         action="store_true",
         help="The pin_memory of dataloader",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="load the model from the specified checkpoint",
     )
     parser.add_argument("--ddp", action="store_true", help="Use the distributed data parallel")
     parser.add_argument(
