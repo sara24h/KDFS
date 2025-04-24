@@ -27,7 +27,7 @@ from utils import utils, loss, meter, scheduler
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import (
 
-    ResNet_50_sparse_imagenet,
+    ResNet_50_sparse_hardfakevsreal,
 )
 
 Flops_baselines = {
