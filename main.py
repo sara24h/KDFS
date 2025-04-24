@@ -19,7 +19,7 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 import json
 import time
-
+from test import Test
 # تنظیم متغیر محیطی برای مدیریت حافظه
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
