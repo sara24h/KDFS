@@ -1,4 +1,3 @@
-%matplotlib inline  # برای نمایش تصاویر در Kaggle
 import os
 import pandas as pd
 import torch
@@ -161,6 +160,17 @@ print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
 random_indices = random.sample(range(len(test_df)), 10)
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
+
+# دیباگ مسیرهای تصاویر
+print("Sample image paths:")
+for idx in random_indices[:3]:
+    row = test_df.iloc[idx]
+    img_name = row['images_id']
+    if not img_name.endswith('.jpg'):
+        img_name = img_name + '.jpg'
+    folder = 'fake' if row['label'] == 'fake' else 'real'
+    img_path = os.path.join(data_dir, folder, img_name)
+    print(f"Path: {img_path}, Exists: {os.path.exists(img_path)}")
 
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
