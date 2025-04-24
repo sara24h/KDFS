@@ -159,5 +159,5 @@ def ResNet_34_imagenet():
     return ResNet(block=BasicBlock, num_blocks=[3, 4, 6, 3], num_classes=2)
 
 
-def ResNet_50_imagenet():
+def ResNet_50_hardfakevsreal():
     return ResNet(block=Bottleneck, num_blocks=[3, 4, 6, 3], num_classes=2)
