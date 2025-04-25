@@ -5,14 +5,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
-from PIL import Image
+import PIL.Image  # وارد کردن صریح PIL.Image
 import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
 from data.dataset import Dataset_hardfakevsreal
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from IPython.display import Image, display
+from IPython.display import Image as IPImage, display  # استفاده از نام IPImage برای جلوگیری از تداخل
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -177,7 +177,7 @@ with torch.no_grad():
             axes[i].axis('off')
             continue
         
-        image = Image.open(img_path).convert('RGB')
+        image = PIL.Image.open(img_path).convert('RGB')  # استفاده از PIL.Image
         image_transformed = val_test_transform(image).unsqueeze(0).to(device)
         
         output, _ = model(image_transformed)
@@ -197,7 +197,7 @@ plt.savefig(file_path)
 print(f"تصاویر در مسیر {file_path} ذخیره شدند")
 
 # نمایش تصویر در محیط Kaggle
-display(Image(filename=file_path))
+display(IPImage(filename=file_path))  # استفاده از IPImage برای نمایش
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
