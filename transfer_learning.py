@@ -37,7 +37,7 @@ def parse_args():
 # دریافت آرگومان‌ها
 args = parse_args()
 
-# تنظیم پارامترها از آرگومان‌ها
+# تنظیم پارامترها
 data_dir = args.data_dir
 base_model_weights = args.base_model_weights
 teacher_dir = args.teacher_dir
@@ -55,19 +55,16 @@ if not os.path.exists(teacher_dir):
 # بارگذاری داده‌ها
 csv_file = os.path.join(data_dir, 'data.csv')
 df = pd.read_csv(csv_file)
-print("CSV columns:", df.columns)
-print("Sample images_id:", df['images_id'].head().tolist())
-print("Unique labels:", df['label'].unique())
 train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
 
-# ذخیره test_df به یک فایل CSV موقت
+# ذخیره مجموعه تست در یک فایل CSV موقت
 test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
 test_df.to_csv(test_csv_file, index=False)
 
-# تعریف پیش‌پردازش برای test
+# تعریف پیش‌پردازش برای تست
 val_test_transform = Dataset_hardfakevsreal.get_val_test_transform()
 
-# ایجاد DataLoaderها برای train و val
+# ایجاد DataLoaderها برای آموزش و اعتبارسنجی
 train_loader, val_loader, _ = Dataset_hardfakevsreal.get_loaders(
     data_dir=data_dir,
     csv_file=csv_file,
@@ -78,7 +75,7 @@ train_loader, val_loader, _ = Dataset_hardfakevsreal.get_loaders(
     ddp=False
 )
 
-# ایجاد test_loader
+# ایجاد DataLoader برای تست
 test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_test_transform)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
@@ -92,11 +89,11 @@ state_dict.pop('fc.weight', None)
 state_dict.pop('fc.bias', None)
 model.load_state_dict(state_dict, strict=False)
 
-# تعریف loss و optimizer
+# تعریف تابع خطا و بهینه‌ساز
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# آموزش مدل
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -161,24 +158,15 @@ random_indices = random.sample(range(len(test_df)), 10)
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
 
-# دیباگ مسیرهای تصاویر
-print("Sample image paths:")
-for idx in random_indices[:3]:
-    row = test_df.iloc[idx]
-    img_name = row['images_id']
-    if not img_name.endswith('.jpg'):
-        img_name = img_name + '.jpg'
-    folder = 'fake' if row['label'] == 'fake' else 'real'
-    img_path = os.path.join(data_dir, folder, img_name)
-    print(f"Path: {img_path}, Exists: {os.path.exists(img_path)}")
-
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
         row = test_df.iloc[idx]
         img_name = row['images_id']
         label_str = row['label']
+        
         if not img_name.endswith('.jpg'):
             img_name = img_name + '.jpg'
+        
         folder = 'fake' if label_str == 'fake' else 'real'
         img_path = os.path.join(data_dir, folder, img_name)
         
@@ -190,6 +178,7 @@ with torch.no_grad():
         
         image = Image.open(img_path).convert('RGB')
         image_transformed = val_test_transform(image).unsqueeze(0).to(device)
+        
         output, _ = model(image_transformed)
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
