@@ -23,7 +23,7 @@ python /kaggle/working/KDFS/main.py \
     --seed 3407 \
     --result_dir $result_dir \
     --teacher_ckpt_path $teacher_ckpt_path \
-    --num_epochs 3 \
+    --num_epochs $NUM_EPOCHS \
     --lr 5e-4 \
     --warmup_steps 30 \
     --warmup_start_lr 1e-4 \
