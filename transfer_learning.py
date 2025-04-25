@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from data.dataset import Dataset_hardfakevsreal
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from IPython.display import Image, display
 
 # تعریف آرگومان‌ها
 def parse_args():
@@ -191,8 +192,12 @@ with torch.no_grad():
         print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
-plt.savefig(os.path.join(teacher_dir, 'test_samples.png'))
-plt.show()
+file_path = os.path.join(teacher_dir, 'test_samples.png')
+plt.savefig(file_path)
+print(f"تصاویر در مسیر {file_path} ذخیره شدند")
+
+# نمایش تصویر در محیط Kaggle
+display(Image(filename=file_path))
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
