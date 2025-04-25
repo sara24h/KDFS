@@ -1,6 +1,6 @@
 import torch
 from thop import profile
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from ResNet import ResNet_50_hardfakevsreal
 def calculate_flops_params(model, input_size=(1, 3, 300, 300), device='cuda'):
     """
     محاسبه FLOPs و تعداد پارامترهای یک مدل PyTorch.
