@@ -15,7 +15,7 @@ def calculate_flops_params(model, input_size=(1, 3, 300, 300), device='cuda'):
     """
     # تنظیم دستگاه
     device = torch.device(device if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
+    model = ResNet_50_hardfakevsreal().to(device)
     
     # ایجاد ورودی نمونه
     input_tensor = torch.randn(input_size).to(device)
