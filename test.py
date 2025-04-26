@@ -74,12 +74,12 @@ class Test:
             Params,
             Params_reduction,
         ) = get_flops_and_params(args=self.args)
-        print(
-            f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%"
-        )
-        print(
-            f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%"
-        )
+        #print(
+         #   f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%"
+        #)
+        #print(
+         #   f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%"
+        #)
 
     def main(self):
         self.dataload()
