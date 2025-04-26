@@ -9,7 +9,7 @@ from .layer import SoftMaskedConv2d
 
 class MaskedNet(nn.Module):
     def __init__(
-        self, gumbel_start_temperature=2, gumbel_end_temperature=0.1, num_epochs=350
+        self, gumbel_start_temperature=2, gumbel_end_temperature=0.1, num_epochs=3
     ):
         super().__init__()
         self.gumbel_start_temperature = gumbel_start_temperature
@@ -213,10 +213,10 @@ class ResNet_sparse(MaskedNet):
         self,
         block,
         num_blocks,
-        num_classes=10,
+        num_classes=2,
         gumbel_start_temperature=2,
         gumbel_end_temperature=0.1,
-        num_epochs=350,
+        num_epochs=3,
     ):
         super().__init__(
             gumbel_start_temperature,
@@ -233,7 +233,7 @@ class ResNet_sparse(MaskedNet):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-        self.avgpool = nn.Sequential(nn.AvgPool2d(7))
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         # convert feature
