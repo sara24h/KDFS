@@ -4,8 +4,8 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
 
 # مقادیر پایه برای ResNet-50
-Flops_baseline = 4134  # در میلیون
-Params_baseline = 25.5  # در میلیون
+Flops_baseline = 7690  # در میلیون
+Params_baseline = 23.51  # در میلیون
 
 def get_flops_and_params(args):
     """
