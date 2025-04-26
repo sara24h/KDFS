@@ -34,7 +34,7 @@ Flops_baselines = {
     "resnet_56": 125.49,
     "resnet_110": 252.89,
     "ResNet_18": 1820,
-    "ResNet_50": 4134,
+    "ResNet_50": 7690,
     "VGG_16_bn": 313.73,
     "DenseNet_40": 282.00,
     "GoogLeNet": 1520,
