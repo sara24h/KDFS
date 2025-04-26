@@ -321,25 +321,17 @@ class Train:
             self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
             self.logger.info(
                 f"[{self.phase.capitalize()}] "
-                "Epoch {0} : "
-                "Gumbel_temperature {gumbel_temperature:.2f} "
-                "LR {lr:.6f} "
-                "OriLoss {ori_loss:.4f} "
-                f"{'KDLoss {kd_loss:.4f} ' if self.phase == 'train' else ''}"
-                f"{'RCLoss {rc_loss:.4f} ' if self.phase == 'train' else ''}"
-                f"{'MaskLoss {mask_loss:.6f} ' if self.phase == 'train' else ''}"
-                "TotalLoss {total_loss:.4f} "
-                "Prec@1 {top1:.2f}".format(
-                    epoch,
-                    gumbel_temperature=self.student.gumbel_temperature,
-                    lr=lr,
-                    ori_loss=meter_oriloss.avg,
-                    kd_loss=meter_kdloss.avg if self.phase == 'train' else 0,
-                    rc_loss=meter_rcloss.avg if self.phase == 'train' else 0,
-                    mask_loss=meter_maskloss.avg if self.phase == 'train' else 0,
-                    total_loss=meter_loss.avg,
-                    top1=meter_top1.avg,
-                )
+                f"Epoch {epoch} : "
+                f"Gumbel_temperature {self.student.gumbel_temperature:.2f} "
+                f"LR {lr:.6f} "
+                f"OriLoss {meter_oriloss.avg:.4f} "
+                + (f"KDLoss {meter_kdloss.avg:.4f} " if self.phase == 'train' else "")
+                + (f"RCLoss {meter_rcloss.avg:.4f} " if self.phase == 'train' else "")
+                + (f"MaskLoss {meter_maskloss.avg:.6f} " if self.phase == 'train' else "")
+                + f"TotalLoss {meter_loss.avg:.4f} "
+                + f"Prec@1 {meter_top1.avg:.2f}"
+             )
+
             )
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
             self.logger.info(f"[{self.phase.capitalize()} mask avg] Epoch {epoch} : {masks}")
