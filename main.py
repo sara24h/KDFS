@@ -342,8 +342,8 @@ class Train:
                 )
             )
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
-            self.logger.info(f"[{self.phase.capitalize()} mask avg] Epoch {0} : {1}".format(epoch, masks))
-            self.logger.info(f"[{self.phase.capitalize()} model Flops] Epoch {0} : {1:.2f}M".format(epoch, Flops.item() / (10**6)))
+            self.logger.info(f"[{self.phase.capitalize()} mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(f"[{self.phase.capitalize()} model Flops] Epoch {epoch} : {Flops.item() / 1e6:.2f}M")
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
@@ -374,8 +374,8 @@ class Train:
                 )
             )
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
-            self.logger.info(f"[Val mask avg] Epoch {0} : {1}".format(epoch, masks))
-            self.logger.info(f"[Val model Flops] Epoch {0} : {1:.2f}M".format(epoch, Flops.item() / (10**6)))
+            self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item() / 1e6:.2f}M")
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
