@@ -332,7 +332,7 @@ class Train:
                 + f"Prec@1 {meter_top1.avg:.2f}"
              )
 
-            )
+            
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
             self.logger.info(f"[{self.phase.capitalize()} mask avg] Epoch {epoch} : {masks}")
             self.logger.info(f"[{self.phase.capitalize()} model Flops] Epoch {epoch} : {Flops.item() / 1e6:.2f}M")
@@ -357,14 +357,8 @@ class Train:
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
             self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
-            self.logger.info(
-                f"[Val] "
-                "Epoch {0} : "
-                "Prec@1 {top1:.2f}".format(
-                    epoch,
-                    top1=meter_top1.avg,
-                )
-            )
+            self.logger.info(f"[Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}")
+
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
             self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
             self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item() / 1e6:.2f}M")
