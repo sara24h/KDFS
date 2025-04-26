@@ -201,3 +201,11 @@ display(IPImage(filename=file_path))  # استفاده از IPImage برای ن�
 
 # ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
+
+from ptflops import get_model_complexity_info
+
+flops, params = get_model_complexity_info(model, (3, 300, 300), as_strings=True, print_per_layer_stat=True)
+
+print('FLOPs:', flops)
+print('Parameters:', params)
+
