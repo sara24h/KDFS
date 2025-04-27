@@ -27,7 +27,7 @@ python /kaggle/working/KDFS/main.py \
     --lr 5e-4 \
     --warmup_steps 30 \
     --warmup_start_lr 1e-4 \
-    --lr_decay_T_max 350 \
+    --lr_decay_T_max 200 \
     --lr_decay_eta_min 5e-6 \
     --weight_decay 5e-4 \
     --train_batch_size 32 \
