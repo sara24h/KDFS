@@ -24,7 +24,7 @@ python /kaggle/working/KDFS/main.py \
     --result_dir $result_dir \
     --teacher_ckpt_path $teacher_ckpt_path \
     --num_epochs 100 \
-    --lr 8e-5 \
+    --lr 4e-5 \
     --warmup_steps 30 \
     --warmup_start_lr 1e-4 \
     --lr_decay_T_max 200 \
