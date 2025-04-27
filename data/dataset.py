@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from torchvision import transforms
 import torch
 
@@ -10,7 +10,7 @@ class Dataset_hardfakevsreal(Dataset):
         self.data_dir = data_dir
         self.transform = transform
         self.data = pd.read_csv(csv_file)
-        self.label_map = {'fake': 0, 'real': 1}  
+        self.label_map = {'fake': 0, 'real': 1}
 
     def __len__(self):
         return len(self.data)
@@ -43,34 +43,46 @@ class Dataset_hardfakevsreal(Dataset):
 
     @staticmethod
     def get_val_test_transform():
-        """Returns the validation/test transform as a static method."""
+        """Validation/Test transforms."""
         return transforms.Compose([
-            transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
+            transforms.CenterCrop(300),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalization for ResNet50
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                 std=[0.229, 0.224, 0.225])
+        ])
+
+    @staticmethod
+    def get_train_transform():
+        """Training transforms."""
+        return transforms.Compose([
+            transforms.RandomCrop(300, padding=30),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                 std=[0.229, 0.224, 0.225])
         ])
 
     @staticmethod
     def get_loaders(data_dir, csv_file, train_batch_size, eval_batch_size, num_workers, pin_memory, ddp=False, test_csv_file=None):
         """Returns train, validation, and test DataLoaders."""
-        train_transform = transforms.Compose([
-            transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
-            transforms.RandomCrop(32, padding=4),               # Random crop with padding to 32
-            transforms.RandomHorizontalFlip(),                  # Random horizontal flip
-            transforms.ToTensor(),                              # Convert to tensor
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalization for ResNet50
-        ])
-        
+        train_transform = Dataset_hardfakevsreal.get_train_transform()
         val_test_transform = Dataset_hardfakevsreal.get_val_test_transform()
 
-        dataset = Dataset_hardfakevsreal(data_dir, csv_file)
-        train_size = int(0.8 * len(dataset))
-        val_size = len(dataset) - train_size
-        train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+        # Step 1: Dataset without transform just for splitting
+        base_dataset = Dataset_hardfakevsreal(data_dir, csv_file)
+        train_size = int(0.8 * len(base_dataset))
+        val_size = len(base_dataset) - train_size
 
-        train_dataset.dataset = Dataset_hardfakevsreal(data_dir, csv_file, transform=train_transform)
-        val_dataset.dataset = Dataset_hardfakevsreal(data_dir, csv_file, transform=val_test_transform)
+        # Split indices
+        train_indices, val_indices = torch.utils.data.random_split(range(len(base_dataset)), [train_size, val_size])
 
+        # Step 2: Create final datasets with transform
+        train_dataset = Subset(Dataset_hardfakevsreal(data_dir, csv_file, transform=train_transform), train_indices)
+        val_dataset = Subset(Dataset_hardfakevsreal(data_dir, csv_file, transform=val_test_transform), val_indices)
+
+        # Step 3: Create DataLoaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             train_loader = DataLoader(
