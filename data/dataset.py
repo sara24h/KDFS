@@ -45,7 +45,7 @@ class Dataset_hardfakevsreal(Dataset):
     def get_val_test_transform():
         """Returns the validation/test transform as a static method."""
         return transforms.Compose([
-            #transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
+            transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # Normalization for ResNet50
         ])
@@ -54,7 +54,7 @@ class Dataset_hardfakevsreal(Dataset):
     def get_loaders(data_dir, csv_file, train_batch_size, eval_batch_size, num_workers, pin_memory, ddp=False, test_csv_file=None):
         """Returns train, validation, and test DataLoaders."""
         train_transform = transforms.Compose([
-            #transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
+            transforms.Resize((224, 224)),  # Resize to 224x224 for ResNet50
             transforms.RandomCrop(32, padding=4),               # Random crop with padding to 32
             transforms.RandomHorizontalFlip(),                  # Random horizontal flip
             transforms.ToTensor(),                              # Convert to tensor
