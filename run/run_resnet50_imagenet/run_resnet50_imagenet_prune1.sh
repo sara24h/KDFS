@@ -24,10 +24,10 @@ python /kaggle/working/KDFS/main.py \
     --result_dir $result_dir \
     --teacher_ckpt_path $teacher_ckpt_path \
     --num_epochs 100 \
-    --lr 4e-5 \
+    --lr 3e-5 \
     --warmup_steps 30 \
-    --warmup_start_lr 1e-4 \
-    --lr_decay_T_max 200 \
+    --warmup_start_lr 1e-6 \
+    --lr_decay_T_max 100 \
     --lr_decay_eta_min 5e-6 \
     --weight_decay 5e-4 \
     --train_batch_size 32 \
@@ -35,8 +35,8 @@ python /kaggle/working/KDFS/main.py \
     --target_temperature 3 \
     --gumbel_start_temperature 2 \
     --gumbel_end_temperature 0.1 \
-    --coef_kdloss 0.5 \
-    --coef_rcloss 100 \
+    --coef_kdloss 1 \
+    --coef_rcloss 50 \
     --coef_maskloss 1.0 \
     --compress_rate 0.4 \
 && \
