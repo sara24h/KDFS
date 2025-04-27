@@ -29,7 +29,7 @@ python /kaggle/working/KDFS/main.py \
     --warmup_start_lr 1e-4 \
     --lr_decay_T_max 350 \
     --lr_decay_eta_min 5e-6 \
-    --weight_decay 1e-4 \
+    --weight_decay 5e-4 \
     --train_batch_size 32 \
     --eval_batch_size 32 \
     --target_temperature 3 \
