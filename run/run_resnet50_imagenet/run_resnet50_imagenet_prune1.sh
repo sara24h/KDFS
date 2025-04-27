@@ -38,7 +38,7 @@ python /kaggle/working/KDFS/main.py \
     --coef_kdloss 0.5 \
     --coef_rcloss 100 \
     --coef_maskloss 1.0 \
-    --compress_rate 0.68 \
+    --compress_rate 0.4 \
 && \
 # Run finetuning
 python /kaggle/working/KDFS/main.py \
