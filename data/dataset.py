@@ -37,17 +37,15 @@ class Dataset_hardfakevsreal(Dataset):
         return image, label
 
     @staticmethod
-   
     def get_train_transform():
         return transforms.Compose([
             transforms.RandomCrop(300, padding=30),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(15),
+            transforms.ToTensor(),
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
             transforms.RandomErasing(p=0.3, scale=(0.02, 0.33)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
     @staticmethod
@@ -55,8 +53,7 @@ class Dataset_hardfakevsreal(Dataset):
         return transforms.Compose([
             transforms.CenterCrop(300),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
     @staticmethod
@@ -64,47 +61,33 @@ class Dataset_hardfakevsreal(Dataset):
                     train_batch_size, eval_batch_size,
                     num_workers, pin_memory,
                     ddp=False, test_csv_file=None, seed=42):
-        # تعریف ترنسفورم‌ها
         train_tf = Dataset_hardfakevsreal.get_train_transform()
         val_tf = Dataset_hardfakevsreal.get_val_test_transform()
-
-        # دیتاست پایه (بدون ترنسفورم)
         base_dataset = Dataset_hardfakevsreal(data_dir, csv_file, transform=None)
         num_samples = len(base_dataset)
-
-        # شافل تصادفی ایندکس‌ها
         torch.manual_seed(seed)
         indices = torch.randperm(num_samples).tolist()
         split = int(0.8 * num_samples)
         train_idx, val_idx = indices[:split], indices[split:]
-
-        # ساخت دیتاست با ترنسفورم و زیرمجموعه‌ی ایندکس‌ها
         train_dataset = Subset(Dataset_hardfakevsreal(data_dir, csv_file, transform=train_tf), train_idx)
-        val_dataset   = Subset(Dataset_hardfakevsreal(data_dir, csv_file, transform=val_tf),   val_idx)
-
-        # Optional چاپ اندازه‌ها برای دیباگ
+        val_dataset = Subset(Dataset_hardfakevsreal(data_dir, csv_file, transform=val_tf), val_idx)
         print(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
-
-        # DataLoaderها
         if ddp:
             sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             train_loader = DataLoader(train_dataset, batch_size=train_batch_size,
-                                      sampler=sampler, num_workers=num_workers,
-                                      pin_memory=pin_memory)
+                                     sampler=sampler, num_workers=num_workers,
+                                     pin_memory=pin_memory)
         else:
             train_loader = DataLoader(train_dataset, batch_size=train_batch_size,
-                                      shuffle=True, num_workers=num_workers,
-                                      pin_memory=pin_memory)
-
+                                     shuffle=True, num_workers=num_workers,
+                                     pin_memory=pin_memory)
         val_loader = DataLoader(val_dataset, batch_size=eval_batch_size,
-                                shuffle=False, num_workers=num_workers,
-                                pin_memory=pin_memory)
-
+                               shuffle=False, num_workers=num_workers,
+                               pin_memory=pin_memory)
         test_loader = None
         if test_csv_file:
             test_ds = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_tf)
             test_loader = DataLoader(test_ds, batch_size=eval_batch_size,
-                                     shuffle=False, num_workers=num_workers,
-                                     pin_memory=pin_memory)
-
+                                    shuffle=False, num_workers=num_workers,
+                                    pin_memory=pin_memory)
         return train_loader, val_loader, test_loader
