@@ -10,11 +10,11 @@ import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from data.dataset import Dataset_hardfakevsreal
+from data.dataset import Dataset_hardfakevsreal, FaceDataset
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from IPython.display import Image as IPImage, display
 
-# تعریف آرگومان‌ها برای انعطاف‌پذیری بیشتر
+# تعریف آرگومان‌ها
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -71,24 +71,40 @@ df = pd.read_csv(csv_file)
 train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
 val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
 
-# ذخیره مجموعه‌های داده در فایل‌های CSV موقت
-train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
+# ذخیره دیتافریم‌های اعتبارسنجی و تست
 val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
 test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
-train_df.to_csv(train_csv_file, index=False)
 val_df.to_csv(val_csv_file, index=False)
 test_df.to_csv(test_csv_file, index=False)
 
-# تعریف پیش‌پردازش‌ها
-train_transform = Dataset_hardfakevsreal.get_train_transform()
-val_test_transform = Dataset_hardfakevsreal.get_val_test_transform()
+# ایجاد دیتاست آموزش و اعتبارسنجی با Dataset_hardfakevsreal
+train_dataset = Dataset_hardfakevsreal(
+    csv_file=csv_file,
+    root_dir=data_dir,
+    train_batch_size=batch_size,
+    eval_batch_size=batch_size,
+    num_workers=4,
+    pin_memory=True,
+    ddp=False
+)
 
-# ایجاد DataLoaderها
-train_dataset = Dataset_hardfakevsreal(data_dir, train_csv_file, transform=train_transform)
-val_dataset = Dataset_hardfakevsreal(data_dir, val_csv_file, transform=val_test_transform)
-test_dataset = Dataset_hardfakevsreal(data_dir, test_csv_file, transform=val_test_transform)
+# دسترسی به تبدیل val_test_transform از یک نمونه موقت
+temp_dataset = Dataset_hardfakevsreal(
+    csv_file=csv_file,
+    root_dir=data_dir,
+    train_batch_size=batch_size,
+    eval_batch_size=batch_size,
+    num_workers=0,  # برای سرعت بیشتر در دسترسی به تبدیل
+    pin_memory=False
+)
+val_test_transform = temp_dataset.loader_test.dataset.transform  # تبدیل تست از دیتاست اعتبارسنجی
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+# ایجاد دیتاست‌های اعتبارسنجی و تست
+val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
+test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
+
+# ایجاد دیتالودرها
+train_loader = train_dataset.loader_train
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
@@ -165,8 +181,6 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# نمایش 10 نمونه تصادفی از داده‌های تست
-print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
 random_indices = random.sample(range(len(test_df)), min(10, len(test_df)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
