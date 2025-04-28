@@ -39,6 +39,7 @@ python /kaggle/working/KDFS/main.py \
     --coef_rcloss 1000 \
     --coef_maskloss 0 \
     --compress_rate 0.6 \
+    $@ \
 && \
 # Run finetuning
 python /kaggle/working/KDFS/main.py \
@@ -63,3 +64,4 @@ python /kaggle/working/KDFS/main.py \
     --finetune_train_batch_size 8 \
     --finetune_eval_batch_size 8 \
     --sparsed_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_best.pt"
+    $@ \
