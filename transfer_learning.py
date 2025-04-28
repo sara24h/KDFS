@@ -77,6 +77,10 @@ def create_full_image_path(row):
 
 df['images_id'] = df.apply(create_full_image_path, axis=1)
 
+# ذخیره دیتافریم اصلاح‌شده برای استفاده در Dataset_hardfakevsreal
+train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
+df.to_csv(train_csv_file, index=False)
+
 # تقسیم داده‌ها به آموزش، اعتبارسنجی و تست (70% آموزش، 15% اعتبارسنجی، 15% تست)
 train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
 val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
@@ -89,7 +93,7 @@ test_df.to_csv(test_csv_file, index=False)
 
 # ایجاد دیتاست آموزش با Dataset_hardfakevsreal
 train_dataset = Dataset_hardfakevsreal(
-    csv_file=csv_file,
+    csv_file=train_csv_file,  # استفاده از دیتافریم اصلاح‌شده
     root_dir=data_dir,
     train_batch_size=batch_size,
     eval_batch_size=batch_size,
@@ -100,7 +104,7 @@ train_dataset = Dataset_hardfakevsreal(
 
 # دسترسی به تبدیل val_test_transform از یک نمونه موقت
 temp_dataset = Dataset_hardfakevsreal(
-    csv_file=csv_file,
+    csv_file=train_csv_file,  # استفاده از دیتافریم اصلاح‌شده
     root_dir=data_dir,
     train_batch_size=batch_size,
     eval_batch_size=batch_size,
