@@ -37,7 +37,7 @@ python /kaggle/working/KDFS/main.py \
     --gumbel_end_temperature 0.1 \
     --coef_kdloss 0.05 \
     --coef_rcloss 1000 \
-    --coef_maskloss 0 \
+    --coef_maskloss 10000 \
     --compress_rate 0.6 \
     $@ \
 && \
