@@ -318,7 +318,7 @@ class Train:
                             Flops_baseline = Flops_baselines[self.arch]
                             Flops = self.student.get_flops()
                             mask_loss = self.mask_loss(
-                                Flops, Fl tantaseline * (10 ** 6), self.compress_rate
+                                Flops, Fl tantaseline * (10 ** 6), self.compress_rate,
                             )
                             total_loss = (
                                 ori_loss
