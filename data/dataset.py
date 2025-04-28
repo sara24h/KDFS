@@ -34,7 +34,7 @@ class Dataset_hardfakevsreal:
         num_workers=8,
         pin_memory=True,
         ddp=False,
-        n_splits=5,  # تعداد foldها
+        n_splits=5,
     ):
         self.csv_file = csv_file
         self.root_dir = root_dir
@@ -45,7 +45,6 @@ class Dataset_hardfakevsreal:
         self.ddp = ddp
         self.n_splits = n_splits
 
-        # تحولات
         self.transform_train = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
@@ -56,30 +55,23 @@ class Dataset_hardfakevsreal:
         ])
 
         self.transform_test = transforms.Compose([
-            transforms.RandomHorizontalFlip(p=0.5),  # همسان‌سازی با آموزش
+            transforms.RandomHorizontalFlip(p=0.5),
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
         ])
 
-        # بارگذاری داده‌ها
         self.full_data = pd.read_csv(csv_file)
         self.full_data = self.full_data.sample(frac=1, random_state=3407).reset_index(drop=True)
-
-        # تعریف KFold
         self.kf = KFold(n_splits=n_splits, shuffle=True, random_state=3407)
 
     def get_fold_dataloaders(self, fold_idx):
-        """بازگرداندن دیتالودرهای آموزش و ولیدیشن برای fold مشخص"""
-        # دریافت ایندکس‌های آموزش و ولیدیشن
         train_idx, val_idx = list(self.kf.split(self.full_data))[fold_idx]
         train_data = self.full_data.iloc[train_idx]
         val_data = self.full_data.iloc[val_idx]
 
-        # ایجاد دیتاست‌ها
         train_dataset = FaceDataset(train_data, self.root_dir, transform=self.transform_train)
         val_dataset = FaceDataset(val_data, self.root_dir, transform=self.transform_test)
 
-        # ایجاد دیتالودرها
         if self.ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             train_loader = DataLoader(
@@ -107,18 +99,3 @@ class Dataset_hardfakevsreal:
         )
 
         return train_loader, val_loader
-
-if __name__ == "__main__":
-    dataset = Dataset_hardfakevsreal(
-        csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
-        root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=32,
-        eval_batch_size=32,
-        n_splits=5,
-    )
-    # تست دیتالودرها برای هر fold
-    for fold_idx in range(dataset.n_splits):
-        train_loader, val_loader = dataset.get_fold_dataloaders(fold_idx)
-        print(f"Fold {fold_idx + 1}:")
-        print(f"  Train loader length: {len(train_loader)}")
-        print(f"  Validation loader length: {len(val_loader)}")
