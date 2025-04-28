@@ -21,7 +21,10 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 from test import Test
 
+
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
+
 
 matplotlib.use('Agg')
 
@@ -29,7 +32,7 @@ Flops_baselines = {
     "resnet_56": 125.49,
     "resnet_110": 252.89,
     "ResNet_18": 1820,
-    "ResNet_50": 4134,
+    "ResNet_50": 7690,
     "VGG_16_bn": 313.73,
     "DenseNet_40": 282.00,
     "GoogLeNet": 1520,
@@ -38,6 +41,7 @@ Flops_baselines = {
 
 
 class Train:
+    
     def __init__(self, args):
         self.args = args
         self.phase = args.phase
@@ -73,6 +77,7 @@ class Train:
         self.best_prec1 = 0
 
     def result_init(self):
+       
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
         self.writer = SummaryWriter(self.result_dir)
@@ -85,6 +90,7 @@ class Train:
         self.logger.info(f"--------- {self.phase.capitalize()} -----------")
 
     def setup_seed(self):
+        
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
@@ -99,6 +105,7 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
+       
         dataset_class = globals()[f"Dataset_{self.dataset_type}"]
         df = pd.read_csv(self.csv_file)
 
@@ -159,6 +166,7 @@ class Train:
         self.logger.info("Dataset and test loader have been loaded!")
 
     def build_model(self):
+        """ساخت مدل‌های teacher و student."""
         self.logger.info("==> Building model..")
         if self.phase == 'train':
             self.logger.info("Loading teacher model")
@@ -182,12 +190,14 @@ class Train:
         )
 
     def define_loss(self):
+   
         self.ori_loss = nn.CrossEntropyLoss()
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
     def define_optim(self):
+      
         weight_params = [
             p[1] for p in self.student.named_parameters() if p[1].requires_grad and "mask" not in p[0]
         ]
@@ -214,6 +224,7 @@ class Train:
         )
 
     def resume_student_ckpt(self):
+       
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
         self.best_prec1 = ckpt_student["best_prec1"]
         self.start_epoch = ckpt_student["start_epoch"]
@@ -223,6 +234,7 @@ class Train:
         self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
 
     def save_student_ckpt(self, is_best):
+    
         folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
@@ -237,12 +249,13 @@ class Train:
             if is_best:
                 torch.save(ckpt_student, os.path.join(folder, f"{self.arch}_sparse_best.pt"))
             torch.save(ckpt_student, os.path.join(folder, f"{self.arch}_sparse_last.pt"))
-        else:  # finetune
+        else:  
             if is_best:
                 torch.save(ckpt_student, self.sparsed_student_ckpt_path)
             torch.save(ckpt_student, os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"))
 
     def train(self):
+      
         if self.device == "cuda":
             torch.cuda.empty_cache()
             if self.phase == 'train':
@@ -252,6 +265,8 @@ class Train:
             self.kd_loss = self.kd_loss.cuda()
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
+            self.logger.info(f"Teacher device: {next(self.teacher.parameters()).device}")
+            self.logger.info(f"Student device: {next(self.student.parameters()).device}")
         if self.resume:
             self.resume_student_ckpt()
         scaler = GradScaler('cuda')
@@ -292,18 +307,18 @@ class Train:
                                 logits_teacher, feature_list_teacher = self.teacher(images)
                             ori_loss = self.ori_loss(logits_student, targets)
                             kd_loss = (self.target_temperature ** 2) * self.kd_loss(
-                                logits_teacher / self.target_temperature,
+                                logarithms_teacher / self.target_temperature,
                                 logits_student / self.target_temperature,
                             )
-                            rc_loss = torch.tensor(0)
+                            rc_loss = torch.tensor(0, device='cuda' if self.device == 'cuda' else 'cpu')
                             for i in range(len(feature_list_student)):
-                                rc_loss += self.rc_loss(
-                                    feature_list_student[i], feature_list_teacher[i]
-                                )
+                                feature_student = feature_list_student[i].cuda() if self.device == 'cuda' else feature_list_student[i]
+                                feature_teacher = feature_list_teacher[i].cuda() if self.device == 'cuda' else feature_list_teacher[i]
+                                rc_loss += self.rc_loss(feature_student, feature_teacher)
                             Flops_baseline = Flops_baselines[self.arch]
                             Flops = self.student.get_flops()
                             mask_loss = self.mask_loss(
-                                Flops, Flops_baseline * (10 ** 6), self.compress_rate
+                                Flops, Fl tantaseline * (10 ** 6), self.compress_rate
                             )
                             total_loss = (
                                 ori_loss
@@ -404,6 +419,9 @@ class Train:
         self.logger.info(f"{self.phase.capitalize()} finished!")
 
     def main(self):
+       
+        if self.device == "cuda":
+            torch.cuda.empty_cache()  
         self.result_init()
         self.setup_seed()
         self.dataload()
@@ -414,11 +432,13 @@ class Train:
 
 
 class Finetune(Train):
+   
     def __init__(self, args):
         super().__init__(args)
 
 
 def parse_args():
+    
     desc = "Pytorch implementation of KDFS"
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
@@ -518,12 +538,12 @@ def parse_args():
     parser.add_argument(
         "--num_epochs",
         type=int,
-        default=3,
+        default=100,
         help="The num of epochs to train.",
     )
     parser.add_argument(
         "--lr",
-        default=5e-4,
+        default=0.004,
         type=float,
         help="The initial learning rate of model",
     )
@@ -535,50 +555,50 @@ def parse_args():
     )
     parser.add_argument(
         "--warmup_start_lr",
-        default=1e-4,
+        default=4e-05,
         type=float,
         help="The steps of warmup",
     )
     parser.add_argument(
         "--lr_decay_T_max",
-        default=350,
+        default=250,
         type=int,
         help="T_max of CosineAnnealingLR",
     )
     parser.add_argument(
         "--lr_decay_eta_min",
-        default=5e-6,
+        default=4e-05,
         type=float,
         help="eta_min of CosineAnnealingLR",
     )
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=1e-4,
+        default=2e-05,
         help="Weight decay",
     )
     parser.add_argument(
         "--train_batch_size",
         type=int,
-        default=16,
+        default=64,
         help="Batch size for training",
     )
     parser.add_argument(
         "--eval_batch_size",
         type=int,
-        default=16,
+        default=64,
         help="Batch size for validation",
     )
     parser.add_argument(
         "--target_temperature",
         type=float,
-        default=3,
+        default=3.0,
         help="temperature of soft targets",
     )
     parser.add_argument(
         "--gumbel_start_temperature",
         type=float,
-        default=2,
+        default=1.0,
         help="Gumbel-softmax temperature at the start of training",
     )
     parser.add_argument(
@@ -590,25 +610,25 @@ def parse_args():
     parser.add_argument(
         "--coef_kdloss",
         type=float,
-        default=0.5,
+        default=0.05,
         help="Coefficient of kd loss",
     )
     parser.add_argument(
         "--coef_rcloss",
         type=float,
-        default=100,
+        default=1000.0,
         help="Coefficient of reconstruction loss",
     )
     parser.add_argument(
         "--coef_maskloss",
         type=float,
-        default=1.0,
+        default=10000.0,
         help="Coefficient of mask loss",
     )
     parser.add_argument(
         "--compress_rate",
         type=float,
-        default=0.68,
+        default=0.6,
         help="Compress rate of the student model",
     )
     parser.add_argument(
@@ -687,6 +707,7 @@ def parse_args():
 
 
 def main():
+  
     args = parse_args()
     if args.ddp:
         raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
