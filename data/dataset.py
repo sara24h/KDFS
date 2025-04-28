@@ -38,9 +38,9 @@ class Dataset_hardfakevsreal(Dataset):
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-            transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+            transforms.ToTensor(),  # تبدیل به تنسور قبل از RandomErasing
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),  # بعد از ToTensor
         ])
 
         transform_test = transforms.Compose([
