@@ -38,15 +38,16 @@ class Dataset_hardfakevsreal(Dataset):
         ddp=False,
     ):
   
-       transform_train = transforms.Compose([
+        transform_train = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),  # چرخش افقی
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),  # تنوع رنگ
             transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),  # چرخش و جابجایی
             transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),  # حذف تصادفی
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
-            ]),
-        ])
+                ),
+            ]
+        )
 
      
         transform_test = transforms.Compose([        
