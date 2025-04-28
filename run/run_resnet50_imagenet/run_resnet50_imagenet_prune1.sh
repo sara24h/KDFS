@@ -29,7 +29,7 @@ python /kaggle/working/KDFS/main.py \
     --warmup_start_lr 4e-5 \
     --lr_decay_T_max 250 \
     --lr_decay_eta_min 4e-5 \
-    --weight_decay 1e-4 \
+    --weight_decay 2e-5 \
     --train_batch_size 64 \
     --eval_batch_size 64 \
     --target_temperature 3 \
@@ -37,7 +37,7 @@ python /kaggle/working/KDFS/main.py \
     --gumbel_end_temperature 0.1 \
     --coef_kdloss 0.05 \
     --coef_rcloss 1000 \
-    --coef_maskloss 100 \
+    --coef_maskloss 10 \
     --compress_rate 0.6 \
 && \
 # Run finetuning
