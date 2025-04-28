@@ -12,14 +12,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from torch.amp import GradScaler, autocast  # به‌روزرسانی به torch.amp
-from data.dataset import Dataset_hardfakevsreal
+from torch.amp import GradScaler, autocast
+from data.dataset import Dataset_hardfakevsreal, FaceDataset  # اضافه کردن FaceDataset
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 import json
 import time
 from test import Test
+
 # تنظیم متغیر محیطی برای مدیریت حافظه
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -97,24 +98,66 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        dataset_class = globals()["Dataset_" + self.dataset_type]
-        train_loader, val_loader, _ = dataset_class.get_loaders(
-            data_dir=self.dataset_dir,
-            csv_file=self.csv_file,
+        # بارگذاری داده‌ها
+        df = pd.read_csv(self.csv_file)
+
+        # اصلاح دیتافریم برای شامل شدن مسیر کامل تصاویر
+        def create_full_image_path(row):
+            folder = 'fake' if row['label'] == 'fake' else 'real'
+            img_name = row['images_id']
+            if not img_name.endswith('.jpg'):
+                img_name += '.jpg'
+            return os.path.join(folder, img_name)
+
+        df['images_id'] = df.apply(create_full_image_path, axis=1)
+
+        # ذخیره دیتافریم اصلاح‌شده
+        train_csv_file = os.path.join(self.result_dir, 'train_data.csv')
+        df.to_csv(train_csv_file, index=False)
+
+        # تقسیم داده‌ها به آموزش، اعتبارسنجی و تست (70% آموزش، 15% اعتبارسنجی، 15% تست)
+        train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
+        val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
+
+        # ذخیره دیتافریم‌های اعتبارسنجی و تست
+        val_csv_file = os.path.join(self.result_dir, 'val_data.csv')
+        test_csv_file = os.path.join(self.result_dir, 'test_data.csv')
+        val_df.to_csv(val_csv_file, index=False)
+        test_df.to_csv(test_csv_file, index=False)
+
+        # ایجاد دیتاست آموزش
+        dataset = Dataset_hardfakevsreal(
+            csv_file=train_csv_file,
+            root_dir=self.dataset_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             ddp=self.args.ddp
         )
-        self.train_loader, self.val_loader = train_loader, val_loader
-        df = pd.read_csv(self.csv_file)
-        train_val_df, test_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df['label'])
-        test_csv_file = os.path.join(self.result_dir, 'test_data.csv')
-        test_df.to_csv(test_csv_file, index=False)
-        val_test_transform = dataset_class.get_val_test_transform()
-        test_dataset = dataset_class(self.dataset_dir, test_csv_file, transform=val_test_transform)
-        self.test_loader = DataLoader(test_dataset, batch_size=self.eval_batch_size, shuffle=False, num_workers=self.num_workers, pin_memory=self.pin_memory)
+
+        # گرفتن دیتالودرهای آموزش و اعتبارسنجی
+        self.train_loader = dataset.loader_train
+        self.val_loader = dataset.loader_test
+
+        # ایجاد دیتاست تست
+        temp_dataset = Dataset_hardfakevsreal(
+            csv_file=train_csv_file,
+            root_dir=self.dataset_dir,
+            train_batch_size=self.eval_batch_size,
+            eval_batch_size=self.eval_batch_size,
+            num_workers=0,
+            pin_memory=False
+        )
+        val_test_transform = temp_dataset.loader_test.dataset.transform
+        test_dataset = FaceDataset(test_df, self.dataset_dir, transform=val_test_transform)
+        self.test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.eval_batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory
+        )
         self.test_df = test_df
         self.val_test_transform = val_test_transform
         self.logger.info("Dataset and test loader have been loaded!")
@@ -181,7 +224,6 @@ class Train:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
-        
 
     def resume_student_ckpt(self):
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
@@ -211,8 +253,6 @@ class Train:
             if is_best:
                 torch.save(ckpt_student, self.sparsed_student_ckpt_path)
             torch.save(ckpt_student, os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"))
-
-    
 
     def train(self):
         if self.device == "cuda":
@@ -330,9 +370,8 @@ class Train:
                 + (f"MaskLoss {meter_maskloss.avg:.6f} " if self.phase == 'train' else "")
                 + f"TotalLoss {meter_loss.avg:.4f} "
                 + f"Prec@1 {meter_top1.avg:.2f}"
-             )
+            )
 
-            
             masks = [round(m.mask.mean().item(), 2) for _, m in enumerate(self.student.mask_modules)]
             self.logger.info(f"[{self.phase.capitalize()} mask avg] Epoch {epoch} : {masks}")
             self.logger.info(f"[{self.phase.capitalize()} model Flops] Epoch {epoch} : {Flops.item() / 1e6:.2f}M")
@@ -370,7 +409,6 @@ class Train:
                 self.save_student_ckpt(False)
             self.logger.info(f" => Best top1 accuracy before {'finetune' if self.phase == 'train' else 'final'} : {self.best_prec1}")
         self.logger.info(f"{self.phase.capitalize()} finished!")
-        
 
     def main(self):
         self.result_init()
@@ -404,7 +442,7 @@ def parse_args():
         "--dataset_type",
         type=str,
         default="hardfakevsreal",
-        choices=("cifar10", "cifar100", "imagenet","hardfakevsreal"),
+        choices=("cifar10", "cifar100", "imagenet", "hardfakevsreal"),
         help="The type of dataset",
     )
     parser.add_argument(
@@ -634,7 +672,6 @@ def main():
         elif args.phase == "test":
             test = Test(args=args)
             test.main()
-
 
 if __name__ == "__main__":
     main()
