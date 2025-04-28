@@ -67,6 +67,16 @@ if not os.path.exists(teacher_dir):
 # بارگذاری داده‌ها
 df = pd.read_csv(csv_file)
 
+# اصلاح دیتافریم برای شامل شدن مسیر کامل تصاویر
+def create_full_image_path(row):
+    folder = 'fake' if row['label'] == 'fake' else 'real'
+    img_name = row['images_id']
+    if not img_name.endswith('.jpg'):
+        img_name += '.jpg'
+    return os.path.join(folder, img_name)
+
+df['images_id'] = df.apply(create_full_image_path, axis=1)
+
 # تقسیم داده‌ها به آموزش، اعتبارسنجی و تست (70% آموزش، 15% اعتبارسنجی، 15% تست)
 train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
 val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
@@ -77,7 +87,7 @@ test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
 val_df.to_csv(val_csv_file, index=False)
 test_df.to_csv(test_csv_file, index=False)
 
-# ایجاد دیتاست آموزش و اعتبارسنجی با Dataset_hardfakevsreal
+# ایجاد دیتاست آموزش با Dataset_hardfakevsreal
 train_dataset = Dataset_hardfakevsreal(
     csv_file=csv_file,
     root_dir=data_dir,
@@ -94,10 +104,10 @@ temp_dataset = Dataset_hardfakevsreal(
     root_dir=data_dir,
     train_batch_size=batch_size,
     eval_batch_size=batch_size,
-    num_workers=0,  # برای سرعت بیشتر در دسترسی به تبدیل
+    num_workers=0,
     pin_memory=False
 )
-val_test_transform = temp_dataset.loader_test.dataset.transform  # تبدیل تست از دیتاست اعتبارسنجی
+val_test_transform = temp_dataset.loader_test.dataset.transform
 
 # ایجاد دیتاست‌های اعتبارسنجی و تست
 val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
@@ -181,6 +191,8 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
+# نمایش 10 نمونه تصادفی از داده‌های تست
+print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
 random_indices = random.sample(range(len(test_df)), min(10, len(test_df)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -191,11 +203,7 @@ with torch.no_grad():
         img_name = row['images_id']
         label_str = row['label']
         
-        if not img_name.endswith('.jpg'):
-            img_name += '.jpg'
-        
-        folder = 'fake' if label_str == 'fake' else 'real'
-        img_path = os.path.join(data_dir, folder, img_name)
+        img_path = os.path.join(data_dir, img_name)
         
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
