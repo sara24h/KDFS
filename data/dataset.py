@@ -7,7 +7,6 @@ from PIL import Image
 
 
 class FaceDataset(Dataset):
-
     def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
         self.root_dir = root_dir
@@ -17,14 +16,21 @@ class FaceDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    
     def __getitem__(self, idx):
-        img_name = self.data_frame.iloc[idx]['images_id'] 
+        img_name = self.data.iloc[idx]['images_id']
         img_path = os.path.join(self.root_dir, img_name)
         if not os.path.exists(img_path):
             raise FileNotFoundError(f"File not found: {img_path}")
-        image = Image.open(img_path).convert('RGB')
-        label = 1 if self.data_frame.iloc[idx]['label'] == 'real' else 0
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except Exception as e:
+            raise RuntimeError(f"Error loading image {img_path}: {str(e)}")
+        
+        label = self.label_map[self.data.iloc[idx]['label']]
+        
+        if self.transform:
+            image = self.transform(image)
+        
         return image, label
 
 
