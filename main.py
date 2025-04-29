@@ -22,7 +22,7 @@ import time
 from test import Test
 from finetune import Finetune
 import torch.distributed as dist
-
+from train import Train
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
