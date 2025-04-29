@@ -46,7 +46,7 @@ class Dataset_hardfakevsreal(Dataset):
         ])
 
         transform_test = transforms.Compose([
-            transforms.Resize((224, 224)),  # Ensure compatibility with ResNet-50
+            transforms.Resize((300, 300)),  # Ensure compatibility with ResNet-50
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
