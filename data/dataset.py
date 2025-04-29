@@ -18,22 +18,9 @@ class FaceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = self.data['images_id'].iloc[idx]
-    
-        if not img_name.endswith(('.jpg', '.png')):
-            img_name = img_name + '.jpg' 
-
-        label = self.data['label'].iloc[idx]
-        subfolder = 'fake' if label == 'fake' else 'real'  
-        img_path = os.path.join(self.root_dir, subfolder, img_name)
-    
-        try:
-            image = Image.open(img_path).convert('RGB')
-        except FileNotFoundError:
-            print(f"File not found: {img_path}")
-            raise
-    
-        label = self.label_map[label]
+        img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
+        image = Image.open(img_name).convert('RGB')
+        label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
             image = self.transform(image)
         return image, label
