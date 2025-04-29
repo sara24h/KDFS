@@ -49,11 +49,19 @@ def parse_args():
         default="/kaggle/input/hardfakevsrealfaces/data.csv", 
         help="The path to the CSV file"
     )
+  
     parser.add_argument(
-        "--root_dir", 
-        type=str, 
-        default="/kaggle/input/hardfakevsrealfaces", 
-        help="The directory containing the images"
+        "--dataset_dir",
+        type=str,
+        default="/kaggle/input/hardfakevsrealfaces",
+        help="The directory containing the dataset",
+    )
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="hardfakevsreal",
+        choices=("hardfakevsreal",),
+        help="The type of dataset",
     )
     parser.add_argument(
         "--num_workers",
