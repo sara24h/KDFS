@@ -17,12 +17,14 @@ class FaceDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
+    
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
-        image = Image.open(img_name).convert('RGB')
-        label = self.label_map[self.data['label'].iloc[idx]]
-        if self.transform:
-            image = self.transform(image)
+        img_name = self.data_frame.iloc[idx]['images_id'] 
+        img_path = os.path.join(self.root_dir, img_name)
+        if not os.path.exists(img_path):
+            raise FileNotFoundError(f"File not found: {img_path}")
+        image = Image.open(img_path).convert('RGB')
+        label = 1 if self.data_frame.iloc[idx]['label'] == 'real' else 0
         return image, label
 
 
