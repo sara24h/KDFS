@@ -7,7 +7,6 @@ from PIL import Image
 
 
 class FaceDataset(Dataset):
-
     def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
         self.root_dir = root_dir
@@ -27,7 +26,6 @@ class FaceDataset(Dataset):
 
 
 class Dataset_hardfakevsreal(Dataset):
-    
     def __init__(
         self,
         csv_file,
@@ -38,26 +36,34 @@ class Dataset_hardfakevsreal(Dataset):
         pin_memory=True,
         ddp=False,
     ):
-       
         transform_train = transforms.Compose([
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-            
         ])
 
-     
         transform_test = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
-       
+        # Load and preprocess the CSV file
         full_data = pd.read_csv(csv_file)
+        
+        # Modify images_id to include folder and .jpg extension
+        def create_full_image_path(row):
+            folder = 'fake' if row['label'] == 'fake' else 'real'
+            img_name = row['images_id']
+            if not img_name.endswith('.jpg'):
+                img_name += '.jpg'
+            return os.path.join(folder, img_name)
+        
+        full_data['images_id'] = full_data.apply(create_full_image_path, axis=1)
+        
+        # Shuffle and split the data
         full_data = full_data.sample(frac=1).reset_index(drop=True)
-
         train_size = int(0.8 * len(full_data))
         train_data = full_data[:train_size]
         val_data = full_data[train_size:]
@@ -65,7 +71,6 @@ class Dataset_hardfakevsreal(Dataset):
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
 
-     
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset, shuffle=True
@@ -86,7 +91,6 @@ class Dataset_hardfakevsreal(Dataset):
                 pin_memory=pin_memory,
             )
 
-        
         self.loader_test = DataLoader(
             val_dataset,
             batch_size=eval_batch_size,
