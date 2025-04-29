@@ -4,6 +4,7 @@ import torchvision.transforms as transforms
 import os
 import pandas as pd
 from PIL import Image
+from sklearn.model_selection import train_test_split
 
 
 class FaceDataset(Dataset):
@@ -38,12 +39,14 @@ class Dataset_hardfakevsreal(Dataset):
         pin_memory=True,
         ddp=False,
     ):
+        # Define transforms
         transform_train = transforms.Compose([
             transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomCrop(300, padding=4),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.RandomCrop(300, padding=8),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
@@ -69,19 +72,45 @@ class Dataset_hardfakevsreal(Dataset):
 
         full_data['images_id'] = full_data.apply(create_full_image_path, axis=1)
 
-        # Debug: Print the first few image paths
+        # Debug: Print data statistics
         print("Sample image paths:")
         print(full_data['images_id'].head())
+        print(f"Total dataset size: {len(full_data)}")
+        print(f"Duplicate rows: {full_data.duplicated().sum()}")
+        print(f"Label distribution:\n{full_data['label'].value_counts()}")
+        print(f"Unique labels: {full_data['label'].unique()}")
 
-        # Shuffle and split the data
-        full_data = full_data.sample(frac=1).reset_index(drop=True)
-        train_size = int(0.8 * len(full_data))
-        train_data = full_data[:train_size]
-        val_data = full_data[train_size:]
+        # Check for missing images
+        missing_images = []
+        for img_path in full_data['images_id']:
+            full_path = os.path.join(root_dir, img_path)
+            if not os.path.exists(full_path):
+                missing_images.append(full_path)
+        if missing_images:
+            print(f"Missing images: {len(missing_images)}")
+            print("Sample missing images:", missing_images[:5])
 
+        # Shuffle and split the data with stratified sampling
+        train_data, val_data = train_test_split(
+            full_data,
+            test_size=0.2,
+            stratify=full_data['label'],
+            random_state=3407
+        )
+        train_data = train_data.reset_index(drop=True)
+        val_data = val_data.reset_index(drop=True)
+
+        # Debug: Print train and validation statistics
+        print(f"Train dataset size: {len(train_data)}")
+        print(f"Validation dataset size: {len(val_data)}")
+        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
+        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+
+        # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
 
+        # Create data loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset, shuffle=True
@@ -110,6 +139,18 @@ class Dataset_hardfakevsreal(Dataset):
             pin_memory=pin_memory,
         )
 
+        # Debug: Print loader sizes
+        print(f"Train loader batches: {len(self.loader_train)}")
+        print(f"Validation loader batches: {len(self.loader_test)}")
+
+        # Test a sample batch
+        try:
+            sample = next(iter(self.loader_train))
+            print(f"Sample batch image shape: {sample[0].shape}")
+            print(f"Sample batch labels: {sample[1]}")
+        except Exception as e:
+            print(f"Error loading sample batch: {e}")
+
 
 if __name__ == "__main__":
     dataset = Dataset_hardfakevsreal(
@@ -118,5 +159,3 @@ if __name__ == "__main__":
         train_batch_size=32,
         eval_batch_size=32,
     )
-    print(f"Train loader length: {len(dataset.loader_train)}")
-    print(f"Validation loader length: {len(dataset.loader_test)}")
