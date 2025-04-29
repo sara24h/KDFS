@@ -307,9 +307,7 @@ class Train:
                     self.optim_weight.step()
                     self.optim_mask.step()
 
-                    prec1, prec5 = utils.get_accuracy(
-                        logits_student, targets, topk=(1, 5)
-                    )
+                    prec1 = utils.get_accuracy(output, target, topk=(1,))[0]  # Only top-1 accuracy
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
