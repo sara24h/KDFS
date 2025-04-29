@@ -20,7 +20,8 @@ from utils import utils, loss, meter, scheduler
 import json
 import time
 from test import Test
-
+from train import Train
+from finetune import Finetune
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
