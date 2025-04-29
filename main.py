@@ -20,7 +20,7 @@ from utils import utils, loss, meter, scheduler
 import json
 import time
 from test import Test
-from finetune import Test
+from finetune import Finetune
 import torch.distributed as dist
 
 
