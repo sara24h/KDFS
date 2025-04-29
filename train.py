@@ -123,7 +123,7 @@ class Train:
 
         self.logger.info("Loading teacher model")
         self.teacher = eval(self.arch + "_" + "hardfakevsreal")()
-        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         if self.arch in [
             "resnet_56",
             "resnet_110",
@@ -243,7 +243,7 @@ class Train:
 
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-        meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
+       # meter_top5 = meter.AverageMeter("Acc@5", ":6.2f")
 
         self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
@@ -307,7 +307,7 @@ class Train:
                     self.optim_weight.step()
                     self.optim_mask.step()
 
-                    prec1 = utils.get_accuracy(output, target, topk=(1,))[0]  # Only top-1 accuracy
+                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]  # Use correct variables
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
@@ -321,7 +321,7 @@ class Train:
 
                     meter_loss.update(total_loss.item(), n)
                     meter_top1.update(prec1.item(), n)
-                    meter_top5.update(prec5.item(), n)
+                    #meter_top5.update(prec5.item(), n)
 
                     _tqdm.set_postfix(
                         loss="{:.4f}".format(meter_loss.avg),
@@ -365,11 +365,11 @@ class Train:
                 meter_top1.avg,
                 global_step=epoch,
             )
-            self.writer.add_scalar(
-                "train/acc/top5",
-                meter_top5.avg,
-                global_step=epoch,
-            )
+            #self.writer.add_scalar(
+             #   "train/acc/top5",
+              #  meter_top5.avg,
+               # global_step=epoch,
+            #)
 
             self.writer.add_scalar(
                 "train/lr/lr",
@@ -398,7 +398,7 @@ class Train:
                 "RCLoss {rc_loss:.4f} "
                 "MaskLoss {mask_loss:.6f} "
                 "TotalLoss {total_loss:.4f} "
-                "Prec@(1,5) {top1:.2f}, {top5:.2f}".format(
+                "Prec@(1) {top1:.2f}".format(
                     epoch,
                     gumbel_temperature=self.student.gumbel_temperature,
                     lr=lr,
@@ -408,7 +408,7 @@ class Train:
                     mask_loss=meter_maskloss.avg,
                     total_loss=meter_loss.avg,
                     top1=meter_top1.avg,
-                    top5=meter_top5.avg,
+                    #top5=meter_top5.avg,
                 )
             )
 
@@ -427,7 +427,7 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            meter_top5.reset()
+            #meter_top5.reset()
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
@@ -436,16 +436,14 @@ class Train:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
-                        prec1, prec5 = utils.get_accuracy(
-                            logits_student, targets, topk=(1, 5)
-                        )
+                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
-                        meter_top5.update(prec5.item(), n)
+                        #meter_top5.update(prec5.item(), n)
 
                         _tqdm.set_postfix(
                             top1="{:.4f}".format(meter_top1.avg),
-                            top5="{:.4f}".format(meter_top5.avg),
+                            #top5="{:.4f}".format(meter_top5.avg),
                         )
                         _tqdm.update(1)
                         time.sleep(0.01)
@@ -457,11 +455,11 @@ class Train:
                 meter_top1.avg,
                 global_step=epoch,
             )
-            self.writer.add_scalar(
-                "val/acc/top5",
-                meter_top5.avg,
-                global_step=epoch,
-            )
+            #self.writer.add_scalar(
+             #   "val/acc/top5",
+              #  meter_top5.avg,
+               # global_step=epoch,
+            #)
 
             self.writer.add_scalar(
                 "val/Flops",
@@ -472,10 +470,10 @@ class Train:
             self.logger.info(
                 "[Val] "
                 "Epoch {0} : "
-                "Prec@(1,5) {top1:.2f}, {top5:.2f}".format(
+                "Prec@(1) {top1:.2f}".format(
                     epoch,
                     top1=meter_top1.avg,
-                    top5=meter_top5.avg,
+                    #top5=meter_top5.avg,
                 )
             )
 
