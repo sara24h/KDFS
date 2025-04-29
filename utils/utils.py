@@ -62,7 +62,8 @@ def get_compress_rates(cprate_str):
 def get_accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
-        maxk = max(topk)
+        num_classes = output.size(1)  # Number of output classes
+        maxk = min(max(topk), num_classes)  # Ensure maxk doesn't exceed num_classes
         batch_size = target.size(0)
 
         _, pred = output.topk(maxk, 1, True, True)
@@ -71,6 +72,9 @@ def get_accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res[0]  # فقط Top-1 را برگردانید
+            if k <= num_classes:  # Only compute accuracy for valid k
+                correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
+                res.append(correct_k.mul_(100.0 / batch_size))
+            else:
+                res.append(torch.tensor([0.0]).to(output.device))  # Return 0 for invalid k
+        return res
