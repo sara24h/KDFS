@@ -317,7 +317,7 @@ def ResNet_34_sparse_hardfakevsreal(
 
 
 def ResNet_50_sparse_hardfakevsreal(
-    gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
+    gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=20
 ):
     return ResNet_sparse(
         block=Bottleneck_sparse,
