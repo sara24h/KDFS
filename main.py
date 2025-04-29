@@ -56,13 +56,13 @@ def parse_args():
         default="/kaggle/input/hardfakevsrealfaces",
         help="The directory containing the dataset",
     )
-     parser.add_argument(
+    parser.add_argument(
          "--root_dir", 
          type=str, 
          default="/kaggle/input/hardfakevsrealfaces", 
          help="The directory containing the images",
      
-     )
+    )
     parser.add_argument(
         "--dataset_type",
         type=str,
