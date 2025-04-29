@@ -18,6 +18,8 @@ class FaceDataset(Dataset):
 
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
+        if not os.path.exists(img_name):
+            raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
@@ -37,6 +39,7 @@ class Dataset_hardfakevsreal(Dataset):
         ddp=False,
     ):
         transform_train = transforms.Compose([
+            transforms.Resize((224, 224)),  # Ensure compatibility with ResNet-50
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
@@ -45,23 +48,30 @@ class Dataset_hardfakevsreal(Dataset):
         ])
 
         transform_test = transforms.Compose([
+            transforms.Resize((224, 224)),  # Ensure compatibility with ResNet-50
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
         # Load and preprocess the CSV file
         full_data = pd.read_csv(csv_file)
-        
+
         # Modify images_id to include folder and .jpg extension
         def create_full_image_path(row):
             folder = 'fake' if row['label'] == 'fake' else 'real'
             img_name = row['images_id']
+            # Remove any existing folder prefixes to avoid duplication
+            img_name = os.path.basename(img_name)
             if not img_name.endswith('.jpg'):
                 img_name += '.jpg'
             return os.path.join(folder, img_name)
-        
+
         full_data['images_id'] = full_data.apply(create_full_image_path, axis=1)
-        
+
+        # Debug: Print the first few image paths
+        print("Sample image paths:")
+        print(full_data['images_id'].head())
+
         # Shuffle and split the data
         full_data = full_data.sample(frac=1).reset_index(drop=True)
         train_size = int(0.8 * len(full_data))
