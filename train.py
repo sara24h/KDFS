@@ -102,15 +102,19 @@ class Train:
 
     def dataload(self):
         dataset_class = globals()["Dataset_" + self.dataset_type]
-        train_loader, val_loader, _ = dataset_class.get_loaders(
-            data_dir=self.dataset_dir,
+   
+        dataset_instance = dataset_class(
             csv_file=self.csv_file,
+            root_dir=self.dataset_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             ddp=self.args.ddp
         )
+    
+        train_loader = dataset_instance.loader_train
+        val_loader = dataset_instance.loader_test
         self.train_loader, self.val_loader = train_loader, val_loader
         self.logger.info("Dataset has been loaded!")
 
