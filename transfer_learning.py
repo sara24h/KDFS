@@ -13,10 +13,8 @@ import numpy as np
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 
-# فرض می‌کنیم این کلاس‌ها در data/dataset.py تعریف شده‌اند
+# Import classes from dataset.py
 from data.dataset import FaceDataset, Dataset_selector
-
-# فرض می‌کنیم مدل ResNet در این مسیر تعریف شده است
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 def parse_args():
@@ -93,10 +91,7 @@ else:
 # تعریف دیتالودرها
 train_loader = dataset.loader_train
 val_loader = dataset.loader_test
-
-# برای مجموعه تست، از همان دیتالودر اعتبارسنجی استفاده می‌کنیم یا می‌توانیم یک نمونه جدید بسازیم
-# در اینجا، برای ساده‌سازی، از val_loader به عنوان test_loader استفاده می‌کنیم
-test_loader = val_loader
+test_loader = val_loader  # برای ساده‌سازی، از val_loader به‌عنوان test_loader استفاده می‌کنیم
 
 # تعریف مدل
 model = ResNet_50_hardfakevsreal()
@@ -170,8 +165,6 @@ with torch.no_grad():
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 # نمایش نمونه‌های تست
-# برای نمایش، نیاز به دسترسی به DataFrame اصلی داریم که در Dataset_selector ساخته شده است
-# فرض می‌کنیم val_data از Dataset_selector قابل دسترسی است
 val_data = dataset.loader_test.dataset.data  # DataFrame اعتبارسنجی
 transform_test = dataset.loader_test.dataset.transform
 
