@@ -14,7 +14,7 @@ from data.dataset import Dataset_hardfakevsreal, FaceDataset
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from IPython.display import Image as IPImage, display
 
-# تعریف آرگومان‌ها
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -37,10 +37,10 @@ def parse_args():
                         help='Learning rate for the optimizer')
     return parser.parse_args()
 
-# دریافت آرگومان‌ها
+
 args = parse_args()
 
-# تنظیم پارامترها
+
 data_dir = args.data_dir
 csv_file = os.path.join(data_dir, args.csv_file)
 base_model_weights = args.base_model_weights
@@ -60,14 +60,14 @@ if not os.path.exists(csv_file):
 if not os.path.exists(base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {base_model_weights} not found!")
 
-# ایجاد دایرکتوری برای ذخیره مدل
+
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# بارگذاری داده‌ها
+
 df = pd.read_csv(csv_file)
 
-# اصلاح دیتافریم برای شامل شدن مسیر کامل تصاویر
+
 def create_full_image_path(row):
     folder = 'fake' if row['label'] == 'fake' else 'real'
     img_name = row['images_id']
@@ -77,23 +77,22 @@ def create_full_image_path(row):
 
 df['images_id'] = df.apply(create_full_image_path, axis=1)
 
-# ذخیره دیتافریم اصلاح‌شده برای استفاده در Dataset_hardfakevsreal
+
 train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
 df.to_csv(train_csv_file, index=False)
 
-# تقسیم داده‌ها به آموزش، اعتبارسنجی و تست (70% آموزش، 15% اعتبارسنجی، 15% تست)
+
 train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
 val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
 
-# ذخیره دیتافریم‌های اعتبارسنجی و تست
+
 val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
 test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
 val_df.to_csv(val_csv_file, index=False)
 test_df.to_csv(test_csv_file, index=False)
 
-# ایجاد دیتاست آموزش با Dataset_hardfakevsreal
 train_dataset = Dataset_hardfakevsreal(
-    csv_file=train_csv_file,  # استفاده از دیتافریم اصلاح‌شده
+    csv_file=train_csv_file,
     root_dir=data_dir,
     train_batch_size=batch_size,
     eval_batch_size=batch_size,
@@ -102,9 +101,9 @@ train_dataset = Dataset_hardfakevsreal(
     ddp=False
 )
 
-# دسترسی به تبدیل val_test_transform از یک نمونه موقت
+
 temp_dataset = Dataset_hardfakevsreal(
-    csv_file=train_csv_file,  # استفاده از دیتافریم اصلاح‌شده
+    csv_file=train_csv_file, 
     root_dir=data_dir,
     train_batch_size=batch_size,
     eval_batch_size=batch_size,
@@ -113,30 +112,30 @@ temp_dataset = Dataset_hardfakevsreal(
 )
 val_test_transform = temp_dataset.loader_test.dataset.transform
 
-# ایجاد دیتاست‌های اعتبارسنجی و تست
+
 val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
 test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
 
-# ایجاد دیتالودرها
+
 train_loader = train_dataset.loader_train
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# ساخت مدل
+
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 
-# بارگذاری وزن‌های پیش‌آموزش‌دیده
+
 state_dict = torch.load(base_model_weights, weights_only=True)
 state_dict.pop('fc.weight', None)
 state_dict.pop('fc.bias', None)
 model.load_state_dict(state_dict, strict=False)
 
-# تعریف تابع خطا و بهینه‌ساز
+
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# حلقه آموزش
+
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -159,7 +158,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-    # اعتبارسنجی
+   
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -179,7 +178,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# ارزیابی روی داده‌های تست
+
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -195,8 +194,7 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# نمایش 10 نمونه تصادفی از داده‌های تست
-print("\nنمایش 10 نمونه تصادفی از داده‌های تست:")
+
 random_indices = random.sample(range(len(test_df)), min(10, len(test_df)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -232,15 +230,13 @@ with torch.no_grad():
 plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
-print(f"تصاویر در مسیر {file_path} ذخیره شدند")
 
-# نمایش تصویر در محیط Kaggle
 display(IPImage(filename=file_path))
 
-# ذخیره مدل
+
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# محاسبه FLOPs و پارامترها
+
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
