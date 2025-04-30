@@ -14,11 +14,16 @@ from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 from torch.amp import GradScaler, autocast
 
+# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 class Train:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.dataset_mode = args.dataset_mode  # اصلاح از dataset_type به dataset_mode
+        self.dataset_mode = args.dataset_mode
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
@@ -123,8 +128,21 @@ class Train:
         self.logger.info("==> Building teacher and student models..")
         self.teacher = ResNet_50_hardfakevsreal().to(self.device)
         self.student = ResNet_50_sparse_hardfakevsreal().to(self.device)
-        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
-        self.teacher.load_state_dict(ckpt_teacher["teacher"], strict=True)
+
+        # بررسی وجود فایل چک‌پوینت معلم
+        if not os.path.exists(self.teacher_ckpt_path):
+            raise FileNotFoundError(f"Teacher checkpoint not found at {self.teacher_ckpt_path}")
+
+        # بارگذاری فایل چک‌پوینت معلم
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
+        
+        # مدیریت حالت‌های مختلف فایل چک‌پوینت
+        if isinstance(ckpt_teacher, dict) and "teacher" in ckpt_teacher:
+            state_dict = ckpt_teacher["teacher"]
+        else:
+            state_dict = ckpt_teacher  # فرض می‌کنیم فایل مستقیماً state_dict است
+
+        self.teacher.load_state_dict(state_dict, strict=True)
         self.teacher.eval()
 
     def define_loss(self):
@@ -164,7 +182,7 @@ class Train:
         )
 
     def resume_ckpt(self):
-        ckpt = torch.load(self.resume, map_location="cpu")
+        ckpt = torch.load(self.resume, map_location="cpu", weights_only=True)
         self.best_prec1 = ckpt["best_prec1"]
         self.start_epoch = ckpt["start_epoch"]
         self.student.load_state_dict(ckpt["student"])
