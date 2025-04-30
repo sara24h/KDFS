@@ -44,9 +44,6 @@ def parse_args():
 
 args = parse_args()
 
-# Set image_id_column for hardfakevsreal; not used for rvf10k
-image_id_column = 'images_id' if args.dataset_type == 'hardfakevsreal' else None
-
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
 img_height = args.img_height
@@ -56,25 +53,23 @@ epochs = args.epochs
 lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Check if directories exist and create teacher_dir if needed
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# Dataset and DataLoader setup
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
     if not os.path.exists(csv_file):
         raise FileNotFoundError(f"CSV file {csv_file} not found!")
     
     df = pd.read_csv(csv_file)
-    # Verify images_id column exists
+    image_id_column = 'images_id'
     if image_id_column not in df.columns:
         raise ValueError(f"Column '{image_id_column}' not found in CSV file. Available columns: {df.columns}")
     
     def create_full_image_path(row):
-        folder = 'fake' if row['label_str'] == 'fake' else 'real'
+        folder = 'fake' if row['label'] == 'fake' else 'real'
         img_name = row[image_id_column]
         if not img_name.endswith('.jpg'):
             img_name += '.jpg'
@@ -86,8 +81,8 @@ if args.dataset_type == 'hardfakevsreal':
 
     train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
     df.to_csv(train_csv_file, index=False)
-    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label_str'])
-    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label_str'])
+    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
+    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
 
     val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
     test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
@@ -101,7 +96,6 @@ if args.dataset_type == 'hardfakevsreal':
         num_workers=4,
         pin_memory=True,
         ddp=False,
-        image_id_column=image_id_column
     )
     temp_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
@@ -109,12 +103,11 @@ if args.dataset_type == 'hardfakevsreal':
         batch_size=batch_size,
         num_workers=0,
         pin_memory=False,
-        image_id_column=image_id_column
     )
     val_test_transform = temp_dataset.loader_test.dataset.transform
 
-    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform, image_id_column=image_id_column)
-    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform, image_id_column=image_id_column)
+    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
+    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
 
     train_loader = train_dataset.loader_train
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
@@ -128,17 +121,17 @@ elif args.dataset_type == 'rvf10k':
     if not os.path.exists(valid_csv_file):
         raise FileNotFoundError(f"Valid CSV file {valid_csv_file} not found!")
     
-    # Verify id column in train and valid CSVs
-    train_df = pd.read_csv(train_csv_file)
-    valid_df = pd.read_csv(valid_csv_file)
-    if 'id' not in train_df.columns:
-        raise ValueError(f"Column 'id' not found in train CSV. Available columns: {train_df.columns}")
-    if 'id' not in valid_df.columns:
-        raise ValueError(f"Column 'id' not found in valid CSV. Available columns: {valid_df.columns}")
+    train_df = pd.read_csv(train_csv_file).rename(columns={'id': 'images_id'})
+    valid_df = pd.read_csv(valid_csv_file).rename(columns={'id': 'images_id'})
+    
+    temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
+    temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
+    train_df.to_csv(temp_train_csv, index=False)
+    valid_df.to_csv(temp_valid_csv, index=False)
     
     dataset = FakeVsReal10kDataset(
-        train_csv_file=train_csv_file,
-        valid_csv_file=valid_csv_file,
+        train_csv_file=temp_train_csv,
+        valid_csv_file=temp_valid_csv,
         root_dir=data_dir,
         batch_size=batch_size,
         num_workers=4,
@@ -150,11 +143,9 @@ elif args.dataset_type == 'rvf10k':
     val_loader = dataset.loader_valid
     test_loader = dataset.loader_test
 
-# Check pretrained weights
 if not os.path.exists(args.base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
 
-# Model setup
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 state_dict = torch.load(args.base_model_weights, weights_only=True)
@@ -165,7 +156,6 @@ model.load_state_dict(state_dict, strict=False)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# Training loop
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -207,7 +197,6 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# Test evaluation
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -223,7 +212,6 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# Display test samples
 random_indices = random.sample(range(len(test_loader.dataset)), min(10, len(test_loader.dataset)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -251,10 +239,8 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-# Save model
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# Model complexity
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
