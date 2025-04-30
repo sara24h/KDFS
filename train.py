@@ -232,17 +232,21 @@ class Train:
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        Flops_baseline = 7690
-        Flops = 7690
+        # Initialize as tensors
+        Flops_baseline = torch.tensor(7690.0, dtype=torch.float, device=self.device)
+        Flops = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         
         if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None:
             try:
                 Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
-                self.logger.info(f"Calculated Flops: {Flops:.2f}M, Flops_baseline: {Flops_baseline:.2f}M")
+                # Ensure Flops and Flops_baseline are tensors
+                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                self.logger.info(f"Calculated Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
             except Exception as e:
                 self.logger.warning(f"Failed to calculate Flops: {str(e)}. Using default values.")
         else:
-            self.logger.info(f"No sparsed_student_ckpt_path provided. Using default Flops: {Flops:.2f}M, Flops_baseline: {Flops_baseline:.2f}M")
+            self.logger.info(f"No sparsed_student_ckpt_path provided. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
@@ -372,12 +376,15 @@ class Train:
                 Params,
                 Params_reduction,
             ) = get_flops_and_params(self.args)
+            # Convert to tensors for logging
+            Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+            Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
             self.logger.info(
                 f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
                 f"Params reduction: {Params_reduction:.2f}%"
             )
             self.logger.info(
-                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+                f"Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
                 f"Flops reduction: {Flops_reduction:.2f}%"
             )
         except Exception as e:
