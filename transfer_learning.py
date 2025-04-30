@@ -10,7 +10,7 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 from IPython.display import Image as IPImage, display
-from dataset import FaceDataset, FakeVsReal10kDataset, collate_fn
+from data.dataset import FaceDataset, FakeVsReal10kDataset, collate_fn
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
