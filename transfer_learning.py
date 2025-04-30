@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument('--img_width', type=int, default=300,
                         help='Width of input images')
     parser.add_argument('--batch_size', type=int, default=32,
-                        help='Batch size for training')
+                        help='Batch size for training, validation, and test')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
@@ -59,7 +59,7 @@ if not os.path.exists(data_dir):
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# انتخاب دیتاست و ساخت لودرها
+
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
     if not os.path.exists(csv_file):
@@ -87,8 +87,7 @@ if args.dataset_type == 'hardfakevsreal':
     train_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
         root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
+        batch_size=batch_size,  
         num_workers=4,
         pin_memory=True,
         ddp=False
@@ -96,8 +95,7 @@ if args.dataset_type == 'hardfakevsreal':
     temp_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
         root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
+        batch_size=batch_size, 
         num_workers=0,
         pin_memory=False
     )
@@ -122,9 +120,7 @@ elif args.dataset_type == 'rvf10k':
         train_csv_file=train_csv_file,
         valid_csv_file=valid_csv_file,
         root_dir=data_dir,
-        train_batch_size=batch_size,
-        valid_batch_size=batch_size,
-        test_batch_size=batch_size,
+        batch_size=batch_size, 
         num_workers=4,
         pin_memory=True,
         ddp=False,
@@ -207,7 +203,7 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# نمایش نمونه‌های تست
+
 random_indices = random.sample(range(len(test_loader.dataset)), min(10, len(test_loader.dataset)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -222,7 +218,7 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
-
+ 
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
@@ -238,7 +234,6 @@ display(IPImage(filename=file_path))
 
 
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
-
 
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
