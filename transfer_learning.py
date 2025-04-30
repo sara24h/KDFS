@@ -3,15 +3,14 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from data.dataset import Dataset_hardfakevsreal, FakeVsReal10kDataset, FaceDataset
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from IPython.display import Image as IPImage, display
 
 def parse_args():
@@ -58,6 +57,47 @@ if not os.path.exists(data_dir):
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
+# Define transforms
+transform_train = transforms.Compose([
+    transforms.Resize((300, 300)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomCrop(300, padding=8),
+    transforms.RandomRotation(20),
+    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
+
+transform_test = transforms.Compose([
+    transforms.Resize((300, 300)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
+
+# Dataset class
+class FaceDataset(Dataset):
+    def __init__(self, data, root_dir, transform=None):
+        self.data = data
+        self.root_dir = root_dir
+        self.transform = transform
+        self.label_map = {'real': 1, 'fake': 0}  # For string labels
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
+        if not os.path.exists(img_name):
+            raise FileNotFoundError(f"Image not found: {img_name}")
+        image = Image.open(img_name).convert('RGB')
+        label = self.data['label'].iloc[idx]
+        if isinstance(label, str):
+            label = self.label_map[label]
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+    def __len__(self):
+        return len(self.data)
+
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
     if not os.path.exists(csv_file):
@@ -89,27 +129,11 @@ if args.dataset_type == 'hardfakevsreal':
     val_df.to_csv(val_csv_file, index=False)
     test_df.to_csv(test_csv_file, index=False)
 
-    train_dataset = Dataset_hardfakevsreal(
-        csv_file=train_csv_file,
-        root_dir=data_dir,
-        batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False,
-    )
-    temp_dataset = Dataset_hardfakevsreal(
-        csv_file=train_csv_file,
-        root_dir=data_dir,
-        batch_size=batch_size,
-        num_workers=0,
-        pin_memory=False,
-    )
-    val_test_transform = temp_dataset.loader_test.dataset.transform
+    train_dataset = FaceDataset(train_df, data_dir, transform=transform_train)
+    val_dataset = FaceDataset(val_df, data_dir, transform=transform_test)
+    test_dataset = FaceDataset(test_df, data_dir, transform=transform_test)
 
-    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
-    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
-
-    train_loader = train_dataset.loader_train
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
@@ -124,31 +148,40 @@ elif args.dataset_type == 'rvf10k':
     train_df = pd.read_csv(train_csv_file).rename(columns={'id': 'images_id'})
     valid_df = pd.read_csv(valid_csv_file).rename(columns={'id': 'images_id'})
     
-    temp_train_csv = os.path.join(teacher_dir, 'temp_train.csv')
-    temp_valid_csv = os.path.join(teacher_dir, 'temp_valid.csv')
-    train_df.to_csv(temp_train_csv, index=False)
-    valid_df.to_csv(temp_valid_csv, index=False)
-    
-    dataset = FakeVsReal10kDataset(
-        train_csv_file=temp_train_csv,
-        valid_csv_file=temp_valid_csv,
-        root_dir=data_dir,
-        batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False,
-        test_split_ratio=0.33
-    )
-    train_loader = dataset.loader_train
-    val_loader = dataset.loader_valid
-    test_loader = dataset.loader_test
+    def create_full_image_path(row, folder_type):
+        folder = 'real' if row['label'] == 1 else 'fake'
+        img_name = os.path.basename(row['images_id'])
+        if not img_name.endswith('.jpg'):
+            img_name += '.jpg'
+        return os.path.join(folder_type, folder, img_name)
 
-if not os.path.exists(args.base_model_weights):
-    raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
+    train_df['images_id'] = train_df.apply(lambda row: create_full_image_path(row, 'train'), axis=1)
+    valid_df['images_id'] = valid_df.apply(lambda row: create_full_image_path(row, 'valid'), axis=1)
+
+    val_df, test_df = train_test_split(valid_df, test_size=0.33, random_state=42, stratify=valid_df['label'])
+
+    train_dataset = FaceDataset(train_df, data_dir, transform=transform_train)
+    val_dataset = FaceDataset(val_df, data_dir, transform=transform_test)
+    test_dataset = FaceDataset(test_df, data_dir, transform=transform_test)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+
+# Simplified ResNet model (replace with actual ResNet_50_hardfakevsreal if available)
+class ResNet_50_hardfakevsreal(nn.Module):
+    def __init__(self):
+        super(ResNet_50_hardfakevsreal, self).__init__()
+        self.resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=False)
+        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, 2)
+    
+    def forward(self, x):
+        features = self.resnet(x)
+        return features, features
 
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
-state_dict = torch.load(args.base_model_weights, weights_only=True)
+state_dict = torch.load(args.base_model_weights, map_location=device, weights_only=True)
 state_dict.pop('fc.weight', None)
 state_dict.pop('fc.bias', None)
 model.load_state_dict(state_dict, strict=False)
@@ -156,6 +189,7 @@ model.load_state_dict(state_dict, strict=False)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
+# Training loop
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -197,6 +231,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
+# Test evaluation
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -212,6 +247,7 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
+# Display test samples
 random_indices = random.sample(range(len(test_loader.dataset)), min(10, len(test_loader.dataset)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -239,8 +275,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
+# Save model
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
+# Model complexity
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
