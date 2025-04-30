@@ -10,12 +10,12 @@ rvf10k_valid_csv=/kaggle/input/rvf10k/valid.csv
 teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model.pth
 device=cuda
 
-
+# تنظیم متغیرهای محیطی برای CUDA
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-
+# بررسی وجود فایل‌های چک‌پوینت و CSV
 if [ ! -f "$teacher_ckpt_path" ]; then
     echo "Error: Teacher checkpoint not found at $teacher_ckpt_path"
     exit 1
@@ -33,7 +33,7 @@ if [ ! -d "$dataset_dir" ]; then
     exit 1
 fi
 
-
+# ایجاد دایرکتوری نتایج
 mkdir -p $result_dir
 
 # Run training
