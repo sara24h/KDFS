@@ -26,8 +26,6 @@ def parse_args():
                         help='Name of the train CSV file in data_dir (default: train.csv, used for rvf10k)')
     parser.add_argument('--valid_csv', type=str, default='valid.csv',
                         help='Name of the valid CSV file in data_dir (default: valid.csv, used for rvf10k)')
-    parser.add_argument('--image_id_column', type=str, default='id',
-                        help='Name of the column containing image IDs in CSV files (default: id)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
                         help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
@@ -46,6 +44,9 @@ def parse_args():
 
 args = parse_args()
 
+# Set image_id_column based on dataset_type
+image_id_column = 'images_id' if args.dataset_type == 'hardfakevsreal' else 'id'
+
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
 img_height = args.img_height
@@ -53,27 +54,33 @@ img_width = args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
-image_id_column = args.image_id_column
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# بررسی وجود دایرکتوری و ساخت آن در صورت نیاز
+# Check if directories exist and create teacher_dir if needed
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# انتخاب دیتاست و ساخت لودرها
+# Dataset and DataLoader setup
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
     if not os.path.exists(csv_file):
         raise FileNotFoundError(f"CSV file {csv_file} not found!")
     
     df = pd.read_csv(csv_file)
+    # Verify images_id column exists
+    if image_id_column not in df.columns:
+        raise ValueError(f"Column '{image_id_column}' not found in CSV file. Available columns: {df.columns}")
+    
     def create_full_image_path(row):
         folder = 'fake' if row['label_str'] == 'fake' else 'real'
-        img_name = os.path.basename(row[image_id_column])
+        img_name = row[image_id_column]
         if not img_name.endswith('.jpg'):
             img_name += '.jpg'
+        full_path = os.path.join(data_dir, folder, img_name)
+        if not os.path.exists(full_path):
+            print(f"Warning: Image not found: {full_path}")
         return os.path.join(folder, img_name)
     df[image_id_column] = df.apply(create_full_image_path, axis=1)
 
@@ -121,6 +128,14 @@ elif args.dataset_type == 'rvf10k':
     if not os.path.exists(valid_csv_file):
         raise FileNotFoundError(f"Valid CSV file {valid_csv_file} not found!")
     
+    # Verify id column in train and valid CSVs
+    train_df = pd.read_csv(train_csv_file)
+    valid_df = pd.read_csv(valid_csv_file)
+    if image_id_column not in train_df.columns:
+        raise ValueError(f"Column '{image_id_column}' not found in train CSV. Available columns: {train_df.columns}")
+    if image_id_column not in valid_df.columns:
+        raise ValueError(f"Column '{image_id_column}' not found in valid CSV. Available columns: {valid_df.columns}")
+    
     dataset = FakeVsReal10kDataset(
         train_csv_file=train_csv_file,
         valid_csv_file=valid_csv_file,
@@ -136,11 +151,11 @@ elif args.dataset_type == 'rvf10k':
     val_loader = dataset.loader_valid
     test_loader = dataset.loader_test
 
-# بررسی وجود فایل وزن‌های پیش‌آموخته
+# Check pretrained weights
 if not os.path.exists(args.base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
 
-# آماده‌سازی مدل
+# Model setup
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 state_dict = torch.load(args.base_model_weights, weights_only=True)
@@ -151,7 +166,7 @@ model.load_state_dict(state_dict, strict=False)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# حلقه آموزش
+# Training loop
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -193,7 +208,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# ارزیابی روی مجموعه تست
+# Test evaluation
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -209,7 +224,7 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# نمایش نمونه‌های تست
+# Display test samples
 random_indices = random.sample(range(len(test_loader.dataset)), min(10, len(test_loader.dataset)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -224,7 +239,6 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
-        # تبدیل تصویر به فرمت قابل نمایش
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
@@ -238,10 +252,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-# ذخیره مدل
+# Save model
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# محاسبه پیچیدگی مدل
+# Model complexity
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
