@@ -44,8 +44,8 @@ def parse_args():
 
 args = parse_args()
 
-# Set image_id_column based on dataset_type
-image_id_column = 'images_id' if args.dataset_type == 'hardfakevsreal' else 'id'
+# Set image_id_column for hardfakevsreal; not used for rvf10k
+image_id_column = 'images_id' if args.dataset_type == 'hardfakevsreal' else None
 
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
@@ -131,10 +131,10 @@ elif args.dataset_type == 'rvf10k':
     # Verify id column in train and valid CSVs
     train_df = pd.read_csv(train_csv_file)
     valid_df = pd.read_csv(valid_csv_file)
-    if image_id_column not in train_df.columns:
-        raise ValueError(f"Column '{image_id_column}' not found in train CSV. Available columns: {train_df.columns}")
-    if image_id_column not in valid_df.columns:
-        raise ValueError(f"Column '{image_id_column}' not found in valid CSV. Available columns: {valid_df.columns}")
+    if 'id' not in train_df.columns:
+        raise ValueError(f"Column 'id' not found in train CSV. Available columns: {train_df.columns}")
+    if 'id' not in valid_df.columns:
+        raise ValueError(f"Column 'id' not found in valid CSV. Available columns: {valid_df.columns}")
     
     dataset = FakeVsReal10kDataset(
         train_csv_file=train_csv_file,
@@ -144,8 +144,7 @@ elif args.dataset_type == 'rvf10k':
         num_workers=4,
         pin_memory=True,
         ddp=False,
-        test_split_ratio=0.33,
-        image_id_column=image_id_column
+        test_split_ratio=0.33
     )
     train_loader = dataset.loader_train
     val_loader = dataset.loader_valid
