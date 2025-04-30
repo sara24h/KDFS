@@ -147,7 +147,7 @@ class Train:
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
-        self.kd_loss = loss.KDLoss(temperature=self.target_temperature)
+        self.kd_loss = loss.KDLoss()  # حذف آرگومان temperature
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
