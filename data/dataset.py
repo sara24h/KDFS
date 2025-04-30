@@ -8,20 +8,43 @@ from sklearn.model_selection import train_test_split
 
 
 class FaceDataset(Dataset):
+    """Dataset class for loading face images with real/fake labels."""
+    
     def __init__(self, data_frame, root_dir, transform=None):
+        """
+        Initialize the FaceDataset.
+        
+        Args:
+            data_frame (pd.DataFrame): DataFrame containing image IDs and labels.
+            root_dir (str): Root directory containing the image files.
+            transform (callable, optional): Transformations to apply to the images.
+        """
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
         self.label_map = {'real': 1, 'fake': 0}
 
     def __len__(self):
+        """Return the total number of samples in the dataset."""
         return len(self.data)
 
     def __getitem__(self, idx):
+        """
+        Get a sample from the dataset.
+        
+        Args:
+            idx (int): Index of the sample.
+            
+        Returns:
+            tuple: (image, label) where image is the transformed image tensor and label is the class index.
+        """
         img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
         if not os.path.exists(img_name):
             raise FileNotFoundError(f"Image not found: {img_name}")
-        image = Image.open(img_name).convert('RGB')
+        try:
+            image = Image.open(img_name).convert('RGB')
+        except Exception as e:
+            raise ValueError(f"Error loading image {img_name}: {e}")
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
             image = self.transform(image)
@@ -29,17 +52,29 @@ class FaceDataset(Dataset):
 
 
 class Dataset_hardfakevsreal(Dataset):
+    """Dataset class for the HardFakeVsReal dataset, splitting a single CSV into train and validation sets."""
+    
     def __init__(
         self,
         csv_file,
         root_dir,
-        train_batch_size,
-        eval_batch_size,
+        batch_size,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        # Define transforms
+        """
+        Initialize the HardFakeVsReal dataset.
+        
+        Args:
+            csv_file (str): Path to the CSV file containing image IDs and labels.
+            root_dir (str): Root directory containing the image files.
+            batch_size (int): Batch size for both training and validation.
+            num_workers (int): Number of workers for data loading.
+            pin_memory (bool): Whether to use pinned memory for faster GPU transfer.
+            ddp (bool): Whether to use Distributed Data Parallel (DDP).
+        """
+        # Define transformations
         transform_train = transforms.Compose([
             transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -63,9 +98,7 @@ class Dataset_hardfakevsreal(Dataset):
         # Modify images_id to include folder and .jpg extension
         def create_full_image_path(row):
             folder = 'fake' if row['label'] == 'fake' else 'real'
-            img_name = row['images_id']
-            # Remove any existing folder prefixes to avoid duplication
-            img_name = os.path.basename(img_name)
+            img_name = os.path.basename(row['images_id'])
             if not img_name.endswith('.jpg'):
                 img_name += '.jpg'
             return os.path.join(folder, img_name)
@@ -73,8 +106,7 @@ class Dataset_hardfakevsreal(Dataset):
         full_data['images_id'] = full_data.apply(create_full_image_path, axis=1)
 
         # Debug: Print data statistics
-        print("Sample image paths:")
-        print(full_data['images_id'].head())
+        print("Sample image paths:", full_data['images_id'].head().tolist())
         print(f"Total dataset size: {len(full_data)}")
         print(f"Duplicate rows: {full_data.duplicated().sum()}")
         print(f"Label distribution:\n{full_data['label'].value_counts()}")
@@ -117,7 +149,7 @@ class Dataset_hardfakevsreal(Dataset):
             )
             self.loader_train = DataLoader(
                 train_dataset,
-                batch_size=train_batch_size,
+                batch_size=batch_size,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 sampler=train_sampler,
@@ -125,7 +157,7 @@ class Dataset_hardfakevsreal(Dataset):
         else:
             self.loader_train = DataLoader(
                 train_dataset,
-                batch_size=train_batch_size,
+                batch_size=batch_size,
                 shuffle=True,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
@@ -133,7 +165,7 @@ class Dataset_hardfakevsreal(Dataset):
 
         self.loader_test = DataLoader(
             val_dataset,
-            batch_size=eval_batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
@@ -152,63 +184,34 @@ class Dataset_hardfakevsreal(Dataset):
             print(f"Error loading sample batch: {e}")
 
 
-if __name__ == "__main__":
-    dataset = Dataset_hardfakevsreal(
-        csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
-        root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=32,
-        eval_batch_size=32,
-    )
-
-
-
-import torch
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-import os
-import pandas as pd
-from PIL import Image
-from sklearn.model_selection import train_test_split
-
-class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None):
-        self.data = data_frame
-        self.root_dir = root_dir
-        self.transform = transform
-        self.label_map = {'real': 1, 'fake': 0}
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
-        if not os.path.exists(img_name):
-            raise FileNotFoundError(f"Image not found: {img_name}")
-        try:
-            image = Image.open(img_name).convert('RGB')
-        except Exception as e:
-            raise ValueError(f"Error loading image {img_name}: {e}")
-        label = self.label_map[self.data['label'].iloc[idx]]
-        if self.transform:
-            image = self.transform(image)
-        return image, label
-
-
 class FakeVsReal10kDataset:
+    """Dataset class for the RVF10k dataset, using separate train and valid CSV files and creating a test split."""
+    
     def __init__(
         self,
         train_csv_file,
         valid_csv_file,
         root_dir,
-        train_batch_size=32,
-        valid_batch_size=32,
-        test_batch_size=32,
+        batch_size,
         num_workers=8,
         pin_memory=True,
         ddp=False,
-        test_split_ratio=0.33,  # نسبت دیتاست تست از دیتاست اعتبارسنجی
+        test_split_ratio=0.33,
     ):
-        # تعریف تبدیلات
+        """
+        Initialize the RVF10k dataset.
+        
+        Args:
+            train_csv_file (str): Path to the training CSV file.
+            valid_csv_file (str): Path to the validation CSV file.
+            root_dir (str): Root directory containing the image files.
+            batch_size (int): Batch size for training, validation, and test.
+            num_workers (int): Number of workers for data loading.
+            pin_memory (bool): Whether to use pinned memory for faster GPU transfer.
+            ddp (bool): Whether to use Distributed Data Parallel (DDP).
+            test_split_ratio (float): Ratio of validation data to use as test data.
+        """
+        # Define transformations
         transform_train = transforms.Compose([
             transforms.Resize((300, 300)),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -226,11 +229,11 @@ class FakeVsReal10kDataset:
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
-        # بارگذاری فایل‌های CSV
+        # Load CSV files
         train_data = pd.read_csv(train_csv_file)
         valid_data = pd.read_csv(valid_csv_file)
 
-        # تقسیم دیتاست اعتبارسنجی به اعتبارسنجی و تست
+        # Split validation data into validation and test
         valid_data, test_data = train_test_split(
             valid_data,
             test_size=test_split_ratio,
@@ -240,11 +243,10 @@ class FakeVsReal10kDataset:
         valid_data = valid_data.reset_index(drop=True)
         test_data = test_data.reset_index(drop=True)
 
-        # اصلاح مسیر تصاویر
+        # Modify image paths
         def create_full_image_path(row, folder_type):
             folder = 'fake' if row['label'] == 'fake' else 'real'
-            img_name = row['images_id']
-            img_name = os.path.basename(img_name)  # حذف پیشوندهای احتمالی
+            img_name = os.path.basename(row['images_id'])
             if not img_name.endswith('.jpg'):
                 img_name += '.jpg'
             return os.path.join(folder_type, folder, img_name)
@@ -257,9 +259,9 @@ class FakeVsReal10kDataset:
         )
         test_data['images_id'] = test_data.apply(
             lambda row: create_full_image_path(row, 'valid'), axis=1
-        )  # تست از پوشه valid استفاده می‌کند
+        )
 
-        # دیباگ: چاپ آمار دیتاست‌ها
+        # Debug: Print dataset statistics
         for name, data in [('Train', train_data), ('Validation', valid_data), ('Test', test_data)]:
             print(f"\n{name} dataset statistics:")
             print("Sample image paths:", data['images_id'].head().tolist())
@@ -268,7 +270,7 @@ class FakeVsReal10kDataset:
             print(f"Label distribution:\n{data['label'].value_counts()}")
             print(f"Unique labels: {data['label'].unique()}")
 
-            # بررسی تصاویر گم‌شده
+            # Check for missing images
             missing_images = []
             for img_path in data['images_id']:
                 full_path = os.path.join(root_dir, img_path)
@@ -280,19 +282,19 @@ class FakeVsReal10kDataset:
             else:
                 print("No missing images.")
 
-        # ایجاد دیتاست‌ها
+        # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         valid_dataset = FaceDataset(valid_data, root_dir, transform=transform_eval)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_eval)
 
-        # ایجاد دیتالودرها
+        # Create data loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset, shuffle=True
             )
             self.loader_train = DataLoader(
                 train_dataset,
-                batch_size=train_batch_size,
+                batch_size=batch_size,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
                 sampler=train_sampler,
@@ -300,7 +302,7 @@ class FakeVsReal10kDataset:
         else:
             self.loader_train = DataLoader(
                 train_dataset,
-                batch_size=train_batch_size,
+                batch_size=batch_size,
                 shuffle=True,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
@@ -308,7 +310,7 @@ class FakeVsReal10kDataset:
 
         self.loader_valid = DataLoader(
             valid_dataset,
-            batch_size=valid_batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
@@ -316,13 +318,13 @@ class FakeVsReal10kDataset:
 
         self.loader_test = DataLoader(
             test_dataset,
-            batch_size=test_batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
 
-        # دیباگ: چاپ اطلاعات دیتالودرها
+        # Debug: Print loader information
         print(f"\nTrain loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_valid)}")
         print(f"Test loader batches: {len(self.loader_test)}")
@@ -335,12 +337,11 @@ class FakeVsReal10kDataset:
 
 
 if __name__ == "__main__":
+    # Example usage for testing
     dataset = FakeVsReal10kDataset(
         train_csv_file='/kaggle/input/rvf10k/train.csv',
         valid_csv_file='/kaggle/input/rvf10k/valid.csv',
         root_dir='/kaggle/input/rvf10k',
-        train_batch_size=32,
-        valid_batch_size=32,
-        test_batch_size=32,
-        test_split_ratio=0.33,  # 33% از دیتاست اعتبارسنجی برای تست
+        batch_size=32,
+        test_split_ratio=0.33,
     )
