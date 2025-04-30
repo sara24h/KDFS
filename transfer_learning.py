@@ -17,8 +17,8 @@ def parse_args():
     parser.add_argument('--data_dir', type=str, required=True, help='Path to the dataset directory containing images and CSV file')
     parser.add_argument('--dataset_type', type=str, choices=['hardfakevsreal', 'rvf10k'], default='rvf10k', help='Type of dataset to use: hardfakevsreal or rvf10k')
     parser.add_argument('--csv_file', type=str, default='data.csv', help='Name of the CSV file in data_dir (default: data.csv, used for hardfakevsreal)')
-    parser.add_argument('--train_csv', type=str, default='rvf10k/train.csv', help='Name of the train CSV file in data_dir (default: rvf10k/train.csv, used for rvf10k)')
-    parser.add_argument('--valid_csv', type=str, default='rvf10k/valid.csv', help='Name of the valid CSV file in data_dir (default: rvf10k/valid.csv, used for rvf10k)')
+    parser.add_argument('--train_csv', type=str, default='train.csv', help='Name of the train CSV file in data_dir (default: train.csv, used for rvf10k)')
+    parser.add_argument('--valid_csv', type=str, default='valid.csv', help='Name of the valid CSV file in data_dir (default: valid.csv, used for rvf10k)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth', help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir', help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300, help='Height of input images')
@@ -48,6 +48,24 @@ if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
+
+# Define transforms for hardfakevsreal (used later)
+transform_train = transforms.Compose([
+    transforms.Resize((300, 300)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomCrop(300, padding=8),
+    transforms.RandomRotation(20),
+    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
+
+transform_test = transforms.Compose([
+    transforms.Resize((300, 300)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
 
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
