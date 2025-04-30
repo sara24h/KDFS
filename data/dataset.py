@@ -6,7 +6,6 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
-
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
@@ -26,7 +25,6 @@ class FaceDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         return image, label
-
 
 class Dataset_selector(Dataset):
     def __init__(
@@ -78,7 +76,7 @@ class Dataset_selector(Dataset):
 
             def create_image_path(row):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['images_id']
+                img_name = row['images_id']  # ستون images_id برای hardfake
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
@@ -105,12 +103,13 @@ class Dataset_selector(Dataset):
 
             def create_image_path(row, split='train'):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['images_id']
+                img_name = row['id']  # ستون id برای rvf10k
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
                 return os.path.join(split, folder, img_name)
 
+            # تغییر ستون id به images_id برای سازگاری با FaceDataset
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
 
             # Load rvf10k valid data
