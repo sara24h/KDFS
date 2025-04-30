@@ -147,9 +147,16 @@ class Train:
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
-        self.kd_loss = loss.KnowledgeDistillationLoss(temperature=self.target_temperature)
-        self.rc_loss = loss.ReconstructionLoss()
+        self.kd_loss = loss.KDLoss(temperature=self.target_temperature)
+        self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
+
+        # انتقال معیارهای ضرر به دستگاه مناسب
+        if self.device == "cuda":
+            self.ori_loss = self.ori_loss.cuda()
+            self.kd_loss = self.kd_loss.cuda()
+            self.rc_loss = self.rc_loss.cuda()
+            self.mask_loss = self.mask_loss.cuda()
 
     def define_optim(self):
         weight_params = [p for n, p in self.student.named_parameters() if p.requires_grad and "mask" not in n]
@@ -219,10 +226,7 @@ class Train:
         if self.device == "cuda":
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
-            self.ori_loss = self.ori_loss.cuda()
-            self.kd_loss = self.kd_loss.cuda()
-            self.rc_loss = self.rc_loss.cuda()
-            self.mask_loss = self.mask_loss.cuda()
+            # معیارهای ضرر در define_loss به دستگاه منتقل شده‌اند
 
         if self.resume:
             self.resume_ckpt()
@@ -233,6 +237,9 @@ class Train:
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.4e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        # محاسبه Flops_baseline و Flops برای MaskLoss
+        Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
@@ -259,7 +266,7 @@ class Train:
                         ori_loss = self.ori_loss(logits_student, targets)
                         kd_loss = self.kd_loss(logits_student, logits_teacher)
                         rc_loss = self.rc_loss(features_student, features_teacher)
-                        mask_loss = self.mask_loss(self.student.mask_modules)
+                        mask_loss = self.mask_loss(Flops, Flops_baseline, self.compress_rate)
                         total_loss = (
                             ori_loss +
                             self.coef_kdloss * kd_loss +
