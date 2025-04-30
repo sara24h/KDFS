@@ -26,8 +26,8 @@ def parse_args():
                         help='Name of the train CSV file in data_dir (default: train.csv, used for rvf10k)')
     parser.add_argument('--valid_csv', type=str, default='valid.csv',
                         help='Name of the valid CSV file in data_dir (default: valid.csv, used for rvf10k)')
-    parser.add_argument('--image_id_column', type=str, default='path',
-                        help='Name of the column containing image paths or IDs in CSV files (default: path)')
+    parser.add_argument('--image_id_column', type=str, default='id',
+                        help='Name of the column containing image IDs in CSV files (default: id)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
                         help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
@@ -71,7 +71,7 @@ if args.dataset_type == 'hardfakevsreal':
     df = pd.read_csv(csv_file)
     def create_full_image_path(row):
         folder = 'fake' if row['label_str'] == 'fake' else 'real'
-        img_name = row[image_id_column]
+        img_name = os.path.basename(row[image_id_column])
         if not img_name.endswith('.jpg'):
             img_name += '.jpg'
         return os.path.join(folder, img_name)
@@ -224,7 +224,7 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
-
+        # تبدیل تصویر به فرمت قابل نمایش
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
@@ -238,10 +238,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-
+# ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-
+# محاسبه پیچیدگی مدل
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
