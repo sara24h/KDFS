@@ -7,15 +7,20 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from data.dataset import Dataset_hardfakevsreal
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal  # Reverted to sparse
+from data.dataset import Dataset_selector
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
+
+# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 class Finetune:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
+        self.dataset_mode = args.dataset_mode
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
@@ -32,17 +37,19 @@ class Finetune:
         self.finetune_lr_decay_T_max = args.finetune_lr_decay_T_max
         self.finetune_lr_decay_eta_min = args.finetune_lr_decay_eta_min
         self.finetune_weight_decay = args.finetune_weight_decay
-        self.finetune_resume = args.finetune_resume
+        self.finetune_resume = args.resume  # استفاده از resume به جای finetune_resume
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
 
     def result_init(self):
+        if not os.path.exists(self.result_dir):
+            os.makedirs(self.result_dir)
         self.writer = SummaryWriter(self.result_dir)
         self.logger = utils.get_logger(
             os.path.join(self.result_dir, "finetune_logger.log"), "finetune_logger"
         )
-        self.logger.info("finetune config:")
+        self.logger.info("Finetune config:")
         self.logger.info(str(json.dumps(vars(self.args), indent=4)))
         utils.record_config(
             self.args,
@@ -51,7 +58,6 @@ class Finetune:
         self.logger.info("--------- Finetune -----------")
 
     def setup_seed(self):
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -66,35 +72,62 @@ class Finetune:
 
     def dataload(self):
         self.logger.info("==> Loading datasets..")
-        self.train_loader, self.val_loader = Dataset_hardfakevsreal.get_loaders(
-            data_dir=self.dataset_dir,
-            csv_file=os.path.join(self.dataset_dir, 'dataset.csv'),
+        if self.dataset_mode not in ['hardfake', 'rvf10k']:
+            raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
+        
+        if self.dataset_mode == 'hardfake':
+            hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
+            hardfake_root_dir = self.dataset_dir
+            rvf10k_train_csv = None
+            rvf10k_valid_csv = None
+            rvf10k_root_dir = None
+        else:  # rvf10k
+            hardfake_csv_file = None
+            hardfake_root_dir = None
+            rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            rvf10k_root_dir = self.dataset_dir
+
+        if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
+            raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
+        if self.dataset_mode == 'rvf10k':
+            if not os.path.exists(rvf10k_train_csv):
+                raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
+            if not os.path.exists(rvf10k_valid_csv):
+                raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
+
+        dataset_instance = Dataset_selector(
+            dataset_mode=self.dataset_mode,
+            hardfake_csv_file=hardfake_csv_file,
+            hardfake_root_dir=hardfake_root_dir,
+            rvf10k_train_csv=rvf10k_train_csv,
+            rvf10k_valid_csv=rvf10k_valid_csv,
+            rvf10k_root_dir=rvf10k_root_dir,
             train_batch_size=self.finetune_train_batch_size,
             eval_batch_size=self.finetune_eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             ddp=False
         )
-        self.logger.info("Dataset has been loaded!")
+
+        self.train_loader = dataset_instance.loader_train
+        self.val_loader = dataset_instance.loader_test
+        self.logger.info(f"{self.dataset_mode} dataset loaded! Train batches: {len(self.train_loader)}, Val batches: {len(self.val_loader)}")
 
     def build_model(self):
         self.logger.info("==> Building sparse student model for fine-tuning..")
-        self.student = ResNet_50_sparse_hardfakevsreal().to(self.device)
+        self.student = ResNet_50_sparse_hardfakevsreal()
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
-        self.student.load_state_dict(ckpt_student["student"], strict=False)
-        self.best_prec1_before_finetune = ckpt_student["best_prec1"]
+        state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
+        self.student.load_state_dict(state_dict, strict=False)
+        self.best_prec1_before_finetune = ckpt_student.get("best_prec1", 0.0)
+        self.student.to(self.device)
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
 
     def define_optim(self):
-        weight_params = map(
-            lambda a: a[1],
-            filter(
-                lambda p: p[1].requires_grad and "mask" not in p[0],
-                self.student.named_parameters(),
-            ),
-        )
+        weight_params = [p for n, p in self.student.named_parameters() if p.requires_grad and "mask" not in n]
         self.finetune_optim_weight = torch.optim.Adamax(
             weight_params,
             lr=self.finetune_lr,
@@ -105,19 +138,16 @@ class Finetune:
             self.finetune_optim_weight,
             T_max=self.finetune_lr_decay_T_max,
             eta_min=self.finetune_lr_decay_eta_min,
-            last_epoch=-1,
             warmup_steps=self.finetune_warmup_steps,
             warmup_start_lr=self.finetune_warmup_start_lr,
         )
 
     def resume_student_ckpt(self):
-        ckpt_student = torch.load(self.finetune_resume)
+        ckpt_student = torch.load(self.finetune_resume, map_location="cpu")
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.load_state_dict(ckpt_student["student"])
-        self.finetune_optim_weight.load_state_dict(
-            ckpt_student["finetune_optim_weight"]
-        )
+        self.finetune_optim_weight.load_state_dict(ckpt_student["finetune_optim_weight"])
         self.finetune_scheduler_student_weight.load_state_dict(
             ckpt_student["finetune_scheduler_student_weight"]
         )
@@ -139,6 +169,11 @@ class Finetune:
                 ckpt_student,
                 os.path.join(folder, f"finetune_{self.arch}_sparse_best.pt"),
             )
+        if self.sparsed_student_ckpt_path:
+            torch.save(
+                ckpt_student,
+                self.sparsed_student_ckpt_path
+            )
         torch.save(
             ckpt_student,
             os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"),
@@ -146,8 +181,8 @@ class Finetune:
 
     def finetune(self):
         if self.device == "cuda":
-            self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
+
         if self.finetune_resume:
             self.resume_student_ckpt()
 
@@ -167,13 +202,11 @@ class Finetune:
                 else self.finetune_warmup_start_lr
             )
 
-            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
-                _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+            with tqdm(total=len(self.train_loader), ncols=100, desc=f"Finetune Epoch {epoch}/{self.finetune_num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
                     self.finetune_optim_weight.zero_grad()
-                    if self.device == "cuda":
-                        images = images.cuda()
-                        targets = targets.cuda()
+                    images = images.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
                     logits_student, _ = self.student(images)
                     ori_loss = self.ori_loss(logits_student, targets)
                     total_loss = ori_loss
@@ -186,10 +219,7 @@ class Finetune:
                     meter_loss.update(total_loss.item(), n)
                     meter_top1.update(prec1.item(), n)
 
-                    _tqdm.set_postfix(
-                        loss="{:.4f}".format(meter_loss.avg),
-                        top1="{:.4f}".format(meter_top1.avg),
-                    )
+                    _tqdm.set_postfix(loss=f"{meter_loss.avg:.4f}", top1=f"{meter_top1.avg:.4f}")
                     _tqdm.update(1)
                     time.sleep(0.01)
 
@@ -201,7 +231,7 @@ class Finetune:
             self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch)
 
             self.logger.info(
-                f"[Finetune_train] Epoch {epoch} : "
+                f"[Finetune_train] Epoch {epoch}: "
                 f"LR {finetune_lr:.6f} "
                 f"OriLoss {meter_oriloss.avg:.4f} "
                 f"TotalLoss {meter_loss.avg:.4f} "
@@ -212,29 +242,26 @@ class Finetune:
             self.student.ticket = True
             meter_top1.reset()
             with torch.no_grad():
-                with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+                with tqdm(total=len(self.val_loader), ncols=100, desc=f"Finetune Val Epoch {epoch}/{self.finetune_num_epochs}") as _tqdm:
                     for images, targets in self.val_loader:
-                        if self.device == "cuda":
-                            images = images.cuda()
-                            targets = targets.cuda()
+                        images = images.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
                         logits_student, _ = self.student(images)
                         prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
-
-                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
+                        _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
                         _tqdm.update(1)
                         time.sleep(0.01)
 
             self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch)
 
             self.logger.info(
-                f"[Finetune_val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
+                f"[Finetune_val] Epoch {epoch}: Prec@1 {meter_top1.avg:.2f}"
             )
 
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(f"[Finetune Mask avg] Epoch {epoch}: {masks}")
 
             self.start_epoch += 1
             if self.best_prec1_after_finetune < meter_top1.avg:
@@ -244,14 +271,14 @@ class Finetune:
                 self.save_student_ckpt(False)
 
             self.logger.info(
-                f" => Best top1 accuracy before finetune : {self.best_prec1_before_finetune}"
+                f" => Best top1 accuracy before finetune: {self.best_prec1_before_finetune:.2f}"
             )
             self.logger.info(
-                f" => Best top1 accuracy after finetune : {self.best_prec1_after_finetune}"
+                f" => Best top1 accuracy after finetune: {self.best_prec1_after_finetune:.2f}"
             )
 
         self.logger.info("Finetune finished!")
-        self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
+        self.logger.info(f"Best top1 accuracy: {self.best_prec1_after_finetune:.2f}")
         (
             Flops_baseline,
             Flops,
@@ -261,10 +288,12 @@ class Finetune:
             Params_reduction,
         ) = get_flops_and_params(self.args)
         self.logger.info(
-            f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%"
+            f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+            f"Params reduction: {Params_reduction:.2f}%"
         )
         self.logger.info(
-            f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%"
+            f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+            f"Flops reduction: {Flops_reduction:.2f}%"
         )
 
     def main(self):
