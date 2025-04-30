@@ -6,7 +6,6 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
-
 class FaceDataset(Dataset):
     """Dataset class for loading face images with real/fake labels."""
     
@@ -49,7 +48,6 @@ class FaceDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         return image, label
-
 
 class Dataset_hardfakevsreal(Dataset):
     """Dataset class for the HardFakeVsReal dataset, splitting a single CSV into train and validation sets."""
@@ -182,7 +180,6 @@ class Dataset_hardfakevsreal(Dataset):
             print(f"Sample batch labels: {sample[1]}")
         except Exception as e:
             print(f"Error loading sample batch: {e}")
-
 
 class FakeVsReal10kDataset:
     """Dataset class for the RVF10k dataset, using separate train and valid CSV files and creating a test split."""
@@ -335,9 +332,7 @@ class FakeVsReal10kDataset:
         except Exception as e:
             print(f"Error loading sample batch: {e}")
 
-
 if __name__ == "__main__":
-    # Example usage for testing
     dataset = FakeVsReal10kDataset(
         train_csv_file='/kaggle/input/rvf10k/train.csv',
         valid_csv_file='/kaggle/input/rvf10k/valid.csv',
