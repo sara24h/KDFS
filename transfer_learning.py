@@ -72,7 +72,7 @@ transform_train = transforms.Compose([
     transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
     transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=(0.485,, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
 ])
 
 transform_test = transforms.Compose([
@@ -288,7 +288,7 @@ with torch.no_grad():
         print(f"Sample {i+1}, True Label: {label_str}, Predicted: {predicted_label}")
 
 plt.tight_layout()
-file_path liian os.path.join(teacher_dir, 'test_samples.png')
+file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
