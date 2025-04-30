@@ -19,24 +19,20 @@ class RCLoss(nn.Module):
 
     @staticmethod
     def rc(x):
-        # Normalize the mean of squared features
         return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
 
     def forward(self, x, y):
-        # x and y are lists of feature tensors from student and teacher
         if not isinstance(x, list) or not isinstance(y, list):
             raise ValueError("Expected x and y to be lists of feature tensors")
         if len(x) != len(y):
             raise ValueError(f"Feature lists have different lengths: {len(x)} vs {len(y)}")
 
-        # Compute RC loss for each pair of corresponding features
         loss = 0.0
         for x_i, y_i in zip(x, y):
             if x_i.shape != y_i.shape:
                 raise ValueError(f"Feature shapes mismatch: {x_i.shape} vs {y_i.shape}")
             loss += (self.rc(x_i) - self.rc(y_i)).pow(2).mean()
         
-        # Average the loss over all feature pairs
         return loss / len(x)
 
 class MaskLoss(nn.Module):
@@ -44,6 +40,10 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
 
     def forward(self, Flops, Flops_baseline, compress_rate):
+        # Convert inputs to tensors if they aren't already
+        Flops = torch.tensor(Flops, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
+        Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
+        compress_rate = torch.tensor(compress_rate, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
         return torch.pow(Flops / Flops_baseline - compress_rate, 2)
 
 class CrossEntropyLabelSmooth(nn.Module):
