@@ -239,7 +239,6 @@ class Train:
         if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None:
             try:
                 Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
-                # Ensure Flops and Flops_baseline are tensors
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
                 self.logger.info(f"Calculated Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
@@ -262,6 +261,15 @@ class Train:
             self.student.update_gumbel_temperature(epoch - 1)
             gumbel_temperature = self.student.gumbel_temperature
 
+            # Update Flops based on current model state
+            try:
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student)
+                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                self.logger.info(f"Epoch {epoch} Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+
             with tqdm(total=len(self.train_loader), ncols=100, desc=f"Train Epoch {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
@@ -273,7 +281,7 @@ class Train:
                         logits_teacher, features_teacher = self.teacher(images)
                         logits_student, features_student = self.student(images, gumbel_temperature=gumbel_temperature)
                         ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = self.kd_loss(logits_student, logits_teacher)
+                        kd_loss = self.kd_loss(logits_teacher, logits_student)  # Fixed argument order
                         rc_loss = self.rc_loss(features_student, features_teacher)
                         mask_loss = self.mask_loss(Flops, Flops_baseline, self.compress_rate)
                         total_loss = (
@@ -339,6 +347,9 @@ class Train:
                         targets = targets.to(self.device, non_blocking=True)
                         logits_student, _ = self.student(images)
                         prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                        # Debug: Log some predictions
+                        preds = torch.argmax(logits_student, dim=1)
+                        self.logger.debug(f"Val batch preds: {preds[:5].tolist()}, targets: {targets[:5].tolist()}")
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
                         _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
@@ -375,8 +386,7 @@ class Train:
                 Params_baseline,
                 Params,
                 Params_reduction,
-            ) = get_flops_and_params(self.args)
-            # Convert to tensors for logging
+            ) = get_flops_and_params(self.args, model=self.student)
             Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
             Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
             self.logger.info(
