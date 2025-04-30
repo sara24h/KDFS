@@ -53,7 +53,7 @@ epochs = args.epochs
 lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# بررسی وجود دایرکتوری و ساخت آن در صورت نیاز
+
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
@@ -134,11 +134,11 @@ elif args.dataset_type == 'rvf10k':
     val_loader = dataset.loader_valid
     test_loader = dataset.loader_test
 
-# بررسی وجود فایل وزن‌های پیش‌آموخته
+
 if not os.path.exists(args.base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
 
-# آماده‌سازی مدل
+
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 state_dict = torch.load(args.base_model_weights, weights_only=True)
@@ -149,7 +149,7 @@ model.load_state_dict(state_dict, strict=False)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-# حلقه آموزش
+
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -191,7 +191,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# ارزیابی روی مجموعه تست
+
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -222,7 +222,7 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
-        # تبدیل تصویر به فرمت قابل نمایش
+
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
@@ -236,10 +236,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-# ذخیره مدل
+
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# محاسبه پیچیدگی مدل
+
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
