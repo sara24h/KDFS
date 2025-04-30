@@ -147,7 +147,7 @@ class Train:
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
-        self.kd_loss = loss.KDLoss()  # حذف آرگومان temperature
+        self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
@@ -238,8 +238,19 @@ class Train:
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        # محاسبه Flops_baseline و Flops برای MaskLoss
-        Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
+        # تنظیم مقادیر پیش‌فرض برای Flops و Flops_baseline
+        Flops_baseline = 7690  # در میلیون، از get_flops_and_params.py
+        Flops = 7690  # مقدار پیش‌فرض (بدون هرس در ابتدای آموزش)
+        
+        # اگر چک‌پوینت دانش‌آموز وجود داشته باشد، Flops را محاسبه کن
+        if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None:
+            try:
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
+                self.logger.info(f"Calculated Flops: {Flops:.2f}M, Flops_baseline: {Flops_baseline:.2f}M")
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate Flops: {str(e)}. Using default values.")
+        else:
+            self.logger.info(f"No sparsed_student_ckpt_path provided. Using default Flops: {Flops:.2f}M, Flops_baseline: {Flops_baseline:.2f}M")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
@@ -358,22 +369,26 @@ class Train:
 
         self.logger.info("Training finished!")
         self.logger.info(f"Best top1 accuracy: {self.best_prec1:.2f}")
-        (
-            Flops_baseline,
-            Flops,
-            Flops_reduction,
-            Params_baseline,
-            Params,
-            Params_reduction,
-        ) = get_flops_and_params(self.args)
-        self.logger.info(
-            f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
-            f"Params reduction: {Params_reduction:.2f}%"
-        )
-        self.logger.info(
-            f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
-            f"Flops reduction: {Flops_reduction:.2f}%"
-        )
+        # محاسبه نهایی Flops و Params
+        try:
+            (
+                Flops_baseline,
+                Flops,
+                Flops_reduction,
+                Params_baseline,
+                Params,
+                Params_reduction,
+            ) = get_flops_and_params(self.args)
+            self.logger.info(
+                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                f"Params reduction: {Params_reduction:.2f}%"
+            )
+            self.logger.info(
+                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+                f"Flops reduction: {Flops_reduction:.2f}%"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to calculate final Flops and Params: {str(e)}. Using default values.")
 
     def main(self):
         self.result_init()
