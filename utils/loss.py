@@ -40,10 +40,11 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
 
     def forward(self, Flops, Flops_baseline, compress_rate):
-        # Convert inputs to tensors if they aren't already
-        Flops = torch.tensor(Flops, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
-        Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
-        compress_rate = torch.tensor(compress_rate, dtype=torch.float, device='cuda' if torch.cuda.is_available() else 'cpu')
+        # Convert to tensors only if not already tensors
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        Flops = Flops.clone().detach().to(dtype=torch.float, device=device) if isinstance(Flops, torch.Tensor) else torch.tensor(Flops, dtype=torch.float, device=device)
+        Flops_baseline = Flops_baseline.clone().detach().to(dtype=torch.float, device=device) if isinstance(Flops_baseline, torch.Tensor) else torch.tensor(Flops_baseline, dtype=torch.float, device=device)
+        compress_rate = compress_rate.clone().detach().to(dtype=torch.float, device=device) if isinstance(compress_rate, torch.Tensor) else torch.tensor(compress_rate, dtype=torch.float, device=device)
         return torch.pow(Flops / Flops_baseline - compress_rate, 2)
 
 class CrossEntropyLabelSmooth(nn.Module):
