@@ -48,14 +48,44 @@ def parse_args():
         "--dataset_type",
         type=str,
         default="hardfakevsreal",
-        choices=("cifar10", "cifar100", "imagenet", "hardfakevsreal"),
-        help="The type of dataset",
+        choices=["hardfakevsreal", "FakeVsReal10kDataset"],
+        help="Type of dataset: hardfakevsreal or FakeVsReal10kDataset"
     )
     parser.add_argument(
         "--csv_file",
         type=str,
         default="/kaggle/input/hardfakevsrealfaces/data.csv",
         help="The path to the CSV file",
+    )
+    parser.add_argument(
+        "--train_csv_file",
+        type=str,
+        default="/kaggle/input/rvf10k/train.csv",
+        help="Path to train CSV file (for FakeVsReal10kDataset)"
+    )
+    parser.add_argument(
+        "--valid_csv_file",
+        type=str,
+        default="/kaggle/input/rvf10k/valid.csv",
+        help="Path to valid CSV file (for FakeVsReal10kDataset)"
+    )
+    parser.add_argument(
+        "--train_batch_size",
+        type=int,
+        default=32,
+        help="Batch size for training"
+    )
+    parser.add_argument(
+        "--eval_batch_size",
+        type=int,
+        default=32,
+        help="Batch size for evaluation"
+    )
+    parser.add_argument(
+        "--test_batch_size",
+        type=int,
+        default=32,
+        help="Batch size for testing"
     )
     parser.add_argument(
         "--num_workers",
@@ -263,6 +293,43 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+def load_dataset(args):
+    if args.dataset_type == "hardfakevsreal":
+        if args.csv_file is None:
+            raise ValueError("CSV file path is required for hardfakevsreal dataset")
+        dataset = Dataset_hardfakevsreal(
+            csv_file=args.csv_file,
+            root_dir=args.dataset_dir,
+            train_batch_size=args.train_batch_size,
+            eval_batch_size=args.eval_batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            ddp=args.ddp
+        )
+        train_loader = dataset.loader_train
+        valid_loader = dataset.loader_test  # در این دیتاست، loader_test برای اعتبارسنجی است
+        test_loader = None
+    elif args.dataset_type == "FakeVsReal10kDataset":
+        if args.train_csv_file is None or args.valid_csv_file is None:
+            raise ValueError("Train and valid CSV files are required for FakeVsReal10kDataset")
+        dataset = FakeVsReal10kDataset(
+            train_csv_file=args.train_csv_file,
+            valid_csv_file=args.valid_csv_file,
+            root_dir=args.dataset_dir,
+            train_batch_size=args.train_batch_size,
+            valid_batch_size=args.eval_batch_size,
+            test_batch_size=args.test_batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            ddp=args.ddp
+        )
+        train_loader = dataset.loader_train
+        valid_loader = dataset.loader_valid
+        test_loader = dataset.loader_test
+    else:
+        raise ValueError(f"Unknown dataset type: {args.dataset_type}")
+    return train_loader, valid_loader, test_loader
 
 def main():
     args = parse_args()
