@@ -50,7 +50,13 @@ img_width = args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+# Check GPU availability
+if torch.cuda.is_available():
+    print(f"GPU is available: {torch.cuda.get_device_name(0)}")
+else:
+    print("GPU is not available, using CPU")
 
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
@@ -66,7 +72,7 @@ transform_train = transforms.Compose([
     transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
     transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    transforms.Normalize(mean=(0.485,, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
 ])
 
 transform_test = transforms.Compose([
@@ -168,11 +174,11 @@ elif args.dataset_type == 'rvf10k':
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-# Simplified ResNet model (replace with actual ResNet_50_hardfakevsreal if available)
+# Simplified ResNet model
 class ResNet_50_hardfakevsreal(nn.Module):
     def __init__(self):
         super(ResNet_50_hardfakevsreal, self).__init__()
-        self.resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=False)
+        self.resnet = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', weights=None)
         self.resnet.fc = nn.Linear(self.resnet.fc.in_features, 2)
     
     def forward(self, x):
@@ -181,7 +187,15 @@ class ResNet_50_hardfakevsreal(nn.Module):
 
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
-state_dict = torch.load(args.base_model_weights, map_location=device, weights_only=True)
+
+# Check model device
+print(f"Model is on: {next(model.parameters()).device}")
+
+if not os.path.exists(args.base_model_weights):
+    raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
+
+# Load weights to CPU to avoid device mismatch
+state_dict = torch.load(args.base_model_weights, map_location='cpu', weights_only=True)
 state_dict.pop('fc.weight', None)
 state_dict.pop('fc.bias', None)
 model.load_state_dict(state_dict, strict=False)
@@ -195,8 +209,11 @@ for epoch in range(epochs):
     running_loss = 0.0
     correct_train = 0
     total_train = 0
-    for images, labels in train_loader:
+    for i, (images, labels) in enumerate(train_loader):
         images, labels = images.to(device), labels.to(device).long()
+        # Check data device (optional, remove after verification)
+        if i == 0:
+            print(f"Epoch {epoch+1}, Batch 1 - Images are on: {images.device}")
         optimizer.zero_grad()
         outputs, _ = model(images)
         loss = criterion(outputs, labels)
@@ -271,7 +288,7 @@ with torch.no_grad():
         print(f"Sample {i+1}, True Label: {label_str}, Predicted: {predicted_label}")
 
 plt.tight_layout()
-file_path = os.path.join(teacher_dir, 'test_samples.png')
+file_path liian os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
