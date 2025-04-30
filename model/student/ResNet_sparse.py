@@ -163,9 +163,9 @@ class BasicBlock_sparse(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket):
-        out = F.relu(self.bn1(self.conv1(x, ticket)))
-        out = self.bn2(self.conv2(out, ticket))
+    def forward(self, x, ticket, gumbel_temperature=None):
+        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature=gumbel_temperature)))
+        out = self.bn2(self.conv2(out, ticket, gumbel_temperature=gumbel_temperature))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -199,10 +199,10 @@ class Bottleneck_sparse(nn.Module):
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket):
-        out = F.relu(self.bn1(self.conv1(x, ticket)))
-        out = F.relu(self.bn2(self.conv2(out, ticket)))
-        out = self.bn3(self.conv3(out, ticket))
+    def forward(self, x, ticket, gumbel_temperature=None):
+        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature=gumbel_temperature)))
+        out = F.relu(self.bn2(self.conv2(out, ticket, gumbel_temperature=gumbel_temperature)))
+        out = self.bn3(self.conv3(out, ticket, gumbel_temperature=gumbel_temperature))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -241,10 +241,10 @@ class ResNet_sparse(MaskedNet):
             expansion = 1
         elif block == Bottleneck_sparse:
             expansion = 4
-        self.covert1 = nn.Conv2d(64 * expansion, 64 * expansion, kernel_size=1)
-        self.covert2 = nn.Conv2d(128 * expansion, 128 * expansion, kernel_size=1)
-        self.covert3 = nn.Conv2d(256 * expansion, 256 * expansion, kernel_size=1)
-        self.covert4 = nn.Conv2d(512 * expansion, 512 * expansion, kernel_size=1)
+        self.shortcut1 = nn.Conv2d(64 * expansion, 64 * expansion, kernel_size=1)
+        self.shortcut2 = nn.Conv2d(128 * expansion, 128 * expansion, kernel_size=1)
+        self.shortcut3 = nn.Conv2d(256 * expansion, 256 * expansion, kernel_size=1)
+        self.shortcut4 = nn.Conv2d(512 * expansion, 512 * expansion, kernel_size=1)
 
         self.mask_modules = [m for m in self.modules() if type(m) == SoftMaskedConv2d]
 
@@ -262,27 +262,27 @@ class ResNet_sparse(MaskedNet):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, gumbel_temperature=None):
         feature_list = []
 
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.maxpool(out)
 
         for block in self.layer1:
-            out = block(out, self.ticket)
-        feature_list.append(self.covert1(out))
+            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
+        feature_list.append(self.shortcut1(out))
 
         for block in self.layer2:
-            out = block(out, self.ticket)
-        feature_list.append(self.covert2(out))
+            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
+        feature_list.append(self.shortcut2(out))
 
         for block in self.layer3:
-            out = block(out, self.ticket)
-        feature_list.append(self.covert3(out))
+            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
+        feature_list.append(self.shortcut3(out))
 
         for block in self.layer4:
-            out = block(out, self.ticket)
-        feature_list.append(self.covert4(out))
+            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
+        feature_list.append(self.shortcut4(out))
 
         out = self.avgpool(out)
         out = out.view(out.size(0), -1)
