@@ -18,7 +18,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file')
-    parser.add_argument('--dataset_type', type=str, choices=['hardfakevsreal', 'rvf10k'], default='hardfakevsreal',
+    parser.add_argument('--dataset_type', type=str, choices=['hardfakevsreal', 'rvf10k'], default='rvf10k',
                         help='Type of dataset to use: hardfakevsreal or rvf10k')
     parser.add_argument('--csv_file', type=str, default='data.csv',
                         help='Name of the CSV file in data_dir (default: data.csv, used for hardfakevsreal)')
@@ -87,7 +87,7 @@ if args.dataset_type == 'hardfakevsreal':
     train_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
         root_dir=data_dir,
-        batch_size=batch_size,  
+        batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
         ddp=False
@@ -95,7 +95,7 @@ if args.dataset_type == 'hardfakevsreal':
     temp_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
         root_dir=data_dir,
-        batch_size=batch_size, 
+        batch_size=batch_size,
         num_workers=0,
         pin_memory=False
     )
@@ -120,7 +120,7 @@ elif args.dataset_type == 'rvf10k':
         train_csv_file=train_csv_file,
         valid_csv_file=valid_csv_file,
         root_dir=data_dir,
-        batch_size=batch_size, 
+        batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
         ddp=False,
@@ -218,7 +218,7 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
- 
+    
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
@@ -234,6 +234,7 @@ display(IPImage(filename=file_path))
 
 
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
+
 
 from ptflops import get_model_complexity_info
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
