@@ -14,7 +14,6 @@ from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 from torch.amp import GradScaler, autocast
 
-# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -91,7 +90,7 @@ class Train:
             rvf10k_train_csv = None
             rvf10k_valid_csv = None
             rvf10k_root_dir = None
-        else:  # rvf10k
+        else:
             hardfake_csv_file = None
             hardfake_root_dir = None
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -129,18 +128,15 @@ class Train:
         self.teacher = ResNet_50_hardfakevsreal().to(self.device)
         self.student = ResNet_50_sparse_hardfakevsreal().to(self.device)
 
-        # بررسی وجود فایل چک‌پوینت معلم
         if not os.path.exists(self.teacher_ckpt_path):
             raise FileNotFoundError(f"Teacher checkpoint not found at {self.teacher_ckpt_path}")
 
-        # بارگذاری فایل چک‌پوینت معلم
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         
-        # مدیریت حالت‌های مختلف فایل چک‌پوینت
         if isinstance(ckpt_teacher, dict) and "teacher" in ckpt_teacher:
             state_dict = ckpt_teacher["teacher"]
         else:
-            state_dict = ckpt_teacher  # فرض می‌کنیم فایل مستقیماً state_dict است
+            state_dict = ckpt_teacher
 
         self.teacher.load_state_dict(state_dict, strict=True)
         self.teacher.eval()
@@ -151,7 +147,6 @@ class Train:
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
-        # انتقال معیارهای ضرر به دستگاه مناسب
         if self.device == "cuda":
             self.ori_loss = self.ori_loss.cuda()
             self.kd_loss = self.kd_loss.cuda()
@@ -226,7 +221,6 @@ class Train:
         if self.device == "cuda":
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
-            # معیارهای ضرر در define_loss به دستگاه منتقل شده‌اند
 
         if self.resume:
             self.resume_ckpt()
@@ -238,11 +232,9 @@ class Train:
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        # تنظیم مقادیر پیش‌فرض برای Flops و Flops_baseline
-        Flops_baseline = 7690  # در میلیون، از get_flops_and_params.py
-        Flops = 7690  # مقدار پیش‌فرض (بدون هرس در ابتدای آموزش)
+        Flops_baseline = 7690
+        Flops = 7690
         
-        # اگر چک‌پوینت دانش‌آموز وجود داشته باشد، Flops را محاسبه کن
         if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None:
             try:
                 Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
@@ -262,7 +254,9 @@ class Train:
             meter_loss.reset()
             meter_top1.reset()
             lr = self.optim_weight.state_dict()["param_groups"][0]["lr"]
-            gumbel_temperature = self.gumbel_start_temperature + (self.gumbel_end_temperature - self.gumbel_start_temperature) * (epoch - 1) / self.num_epochs
+            
+            self.student.update_gumbel_temperature(epoch - 1)
+            gumbel_temperature = self.student.gumbel_temperature
 
             with tqdm(total=len(self.train_loader), ncols=100, desc=f"Train Epoch {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
@@ -369,7 +363,6 @@ class Train:
 
         self.logger.info("Training finished!")
         self.logger.info(f"Best top1 accuracy: {self.best_prec1:.2f}")
-        # محاسبه نهایی Flops و Params
         try:
             (
                 Flops_baseline,
