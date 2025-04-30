@@ -7,7 +7,7 @@ import math
 from .layer import SoftMaskedConv2d
 
 class MaskedNet(nn.Module):
-    def __init__(self, gumbel_start_temperature=2, gumbel_end_temperature=0.1, num_epochs=3):
+    def __init__(self, gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3):
         super().__init__()
         self.gumbel_start_temperature = gumbel_start_temperature
         self.gumbel_end_temperature = gumbel_end_temperature
@@ -40,12 +40,11 @@ class MaskedNet(nn.Module):
 
     def get_flops(self):
         Flops_total = torch.tensor(0.0)
-        # Flops for first conv and bn layer
         Flops_total += 112 * 112 * 7 * 7 * 3 * 64 + 112 * 112 * 64
         for i, m in enumerate(self.mask_modules):
             Flops_shortcut_conv = 0
             Flops_shortcut_bn = 0
-            if len(self.mask_modules) == 48:  # For ResNet-50 (Bottleneck)
+            if len(self.mask_modules) == 48:
                 if i % 3 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -62,7 +61,7 @@ class MaskedNet(nn.Module):
                         m.feature_map_h * m.feature_map_w * 1 * 1 * (m.out_channels // 4) * m.out_channels
                     )
                     Flops_shortcut_bn = m.feature_map_h * m.feature_map_w * m.out_channels
-            elif len(self.mask_modules) in [16, 32]:  # For ResNet-18/34 (BasicBlock)
+            elif len(self.mask_modules) in [16, 32]:
                 if i % 2 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -146,7 +145,7 @@ class ResNet_sparse(MaskedNet):
         block,
         num_blocks,
         num_classes=2,
-        gumbel_start_temperature=2,
+        gumbel_start_temperature=1.0,
         gumbel_end_temperature=0.1,
         num_epochs=3,
     ):
@@ -166,7 +165,6 @@ class ResNet_sparse(MaskedNet):
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
-        # Convert feature
         expansion = block.expansion
         self.shortcut1 = nn.Conv2d(64 * expansion, 64 * expansion, kernel_size=1)
         self.shortcut2 = nn.Conv2d(128 * expansion, 128 * expansion, kernel_size=1)
@@ -210,7 +208,7 @@ class ResNet_sparse(MaskedNet):
         return out, feature_list
 
 def ResNet_18_sparse_hardfakevsreal(
-    gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
+    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
 ):
     return ResNet_sparse(
         block=BasicBlock_sparse,
@@ -222,7 +220,7 @@ def ResNet_18_sparse_hardfakevsreal(
     )
 
 def ResNet_34_sparse_hardfakevsreal(
-    gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
+    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
 ):
     return ResNet_sparse(
         block=BasicBlock_sparse,
@@ -234,7 +232,7 @@ def ResNet_34_sparse_hardfakevsreal(
     )
 
 def ResNet_50_sparse_hardfakevsreal(
-    gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=3
+    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
 ):
     return ResNet_sparse(
         block=Bottleneck_sparse,
