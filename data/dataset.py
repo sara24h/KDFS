@@ -11,7 +11,8 @@ class FaceDataset(Dataset):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.label_map = {'real': 1, 'fake': 0}
+        # اصلاح label_map برای سازگاری با مقادیر عددی 1 و 0
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0}  # پشتیبانی از هر دو فرمت
 
     def __len__(self):
         return len(self.data)
@@ -102,12 +103,11 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
-                folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['id']  # ستون id برای rvf10k
+                folder = 'fake' if row['label'] == 0 else 'real'  # اصلاح برای مقادیر عددی
+                img_name = row['id']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
-                # اضافه کردن زیرپوشه rvf10k به مسیر
                 return os.path.join('rvf10k', split, folder, img_name)
 
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
