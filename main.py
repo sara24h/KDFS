@@ -14,20 +14,23 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import GradScaler, autocast
 
+# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+matplotlib.use('Agg')
+
 # اصلاح import برای استفاده از Dataset_selector
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
+from train import Train
+from test import Test
+from finetune import Finetune
 import json
 import time
-from test import Test
-from train import Train
-from finetune import Finetune
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-matplotlib.use('Agg')
 
 def parse_args():
     desc = "Pytorch implementation of KDFS"
@@ -112,7 +115,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
+        default="cuda" if torch.cuda.is_available() else "cpu",
         choices=("cuda", "cpu"),
         help="Device to use",
     )
@@ -125,7 +128,7 @@ def parse_args():
     parser.add_argument(
         "--result_dir",
         type=str,
-        default="./result/",
+        default="/kaggle/working/results",
         help="The directory where the results will be stored",
     )
     parser.add_argument(
@@ -161,7 +164,7 @@ def parse_args():
         "--warmup_start_lr",
         default=1e-4,
         type=float,
-        help="The steps of warmup",
+        help="The start learning rate of warmup",
     )
     parser.add_argument(
         "--lr_decay_T_max",
@@ -196,13 +199,13 @@ def parse_args():
     parser.add_argument(
         "--target_temperature",
         type=float,
-        default=3,
+        default=3.0,
         help="temperature of soft targets",
     )
     parser.add_argument(
         "--gumbel_start_temperature",
         type=float,
-        default=2,
+        default=2.0,
         help="Gumbel-softmax temperature at the start of training",
     )
     parser.add_argument(
@@ -220,7 +223,7 @@ def parse_args():
     parser.add_argument(
         "--coef_rcloss",
         type=float,
-        default=100,
+        default=100.0,
         help="Coefficient of reconstruction loss",
     )
     parser.add_argument(
@@ -263,7 +266,7 @@ def parse_args():
         "--finetune_warmup_start_lr",
         default=4e-8,
         type=float,
-        help="The steps of warmup in finetune",
+        help="The start learning rate of warmup in finetune",
     )
     parser.add_argument(
         "--finetune_lr_decay_T_max",
@@ -310,20 +313,68 @@ def parse_args():
 
     return parser.parse_args()
 
+def validate_args(args):
+    """بررسی وجود فایل‌ها و دایرکتوری‌های مورد نیاز"""
+    if args.dataset_mode == "hardfake":
+        if not os.path.exists(args.hardfake_csv_file):
+            raise FileNotFoundError(f"Hardfake CSV file not found: {args.hardfake_csv_file}")
+        if not os.path.exists(args.dataset_dir):
+            raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
+    else:  # rvf10k
+        if not os.path.exists(args.rvf10k_train_csv):
+            raise FileNotFoundError(f"RVF10k train CSV file not found: {args.rvf10k_train_csv}")
+        if not os.path.exists(args.rvf10k_valid_csv):
+            raise FileNotFoundError(f"RVF10k valid CSV file not found: {args.rvf10k_valid_csv}")
+        if not os.path.exists(args.dataset_dir):
+            raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
+
+    if args.phase in ["train", "finetune"] and not os.path.exists(args.teacher_ckpt_path):
+        raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
+
+    if args.phase == "finetune" and args.finetune_student_ckpt_path and not os.path.exists(args.finetune_student_ckpt_path):
+        raise FileNotFoundError(f"Finetune student checkpoint not found: {args.finetune_student_ckpt_path}")
+
+    if args.phase == "test" and args.sparsed_student_ckpt_path and not os.path.exists(args.sparsed_student_ckpt_path):
+        raise FileNotFoundError(f"Sparsed student checkpoint not found: {args.sparsed_student_ckpt_path}")
+
 def main():
     args = parse_args()
+    
+    # بررسی وجود فایل‌ها و دایرکتوری‌ها
+    validate_args(args)
+
+    # تنظیم seed برای تکرارپذیری
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    # لاگ اطلاعات اولیه
+    print(f"Running phase: {args.phase}")
+    print(f"Dataset mode: {args.dataset_mode}")
+    print(f"Device: {args.device}")
+    print(f"Architecture: {args.arch}")
+
+    if args.dali:
+        print("Warning: DALI is not implemented in this version. Ignoring --dali flag.")
+
     if args.ddp:
         raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
-    else:
-        if args.phase == "train":
-            train = Train(args=args)
-            train.main()
-        elif args.phase == "finetune":
-            finetune = Finetune(args=args)
-            finetune.main()
-        elif args.phase == "test":
-            test = Test(args=args)
-            test.main()
+    
+    # اجرای فاز مربوطه
+    if args.phase == "train":
+        train = Train(args=args)
+        train.main()
+    elif args.phase == "finetune":
+        finetune = Finetune(args=args)
+        finetune.main()
+    elif args.phase == "test":
+        test = Test(args=args)
+        test.main()
 
 if __name__ == "__main__":
     main()
