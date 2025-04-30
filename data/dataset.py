@@ -76,7 +76,7 @@ class Dataset_selector(Dataset):
 
             def create_image_path(row):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['images_id']  # ستون images_id برای hardfake
+                img_name = row['images_id']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
@@ -107,9 +107,9 @@ class Dataset_selector(Dataset):
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
-                return os.path.join(split, folder, img_name)
+                # اضافه کردن زیرپوشه rvf10k به مسیر
+                return os.path.join('rvf10k', split, folder, img_name)
 
-            # تغییر ستون id به images_id برای سازگاری با FaceDataset
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
 
             # Load rvf10k valid data
@@ -211,9 +211,9 @@ if __name__ == "__main__":
     # Example for rvf10k
     dataset_rvf10k = Dataset_selector(
         dataset_mode='rvf10k',
-        rvf10k_train_csv='/path/to/rvf10k/train.csv',
-        rvf10k_valid_csv='/path/to/rvf10k/valid.csv',
-        rvf10k_root_dir='/path/to/rvf10k',
+        rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
+        rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
+        rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=32,
         eval_batch_size=32,
     )
