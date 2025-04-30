@@ -17,8 +17,8 @@ def parse_args():
     parser.add_argument('--data_dir', type=str, required=True, help='Path to the dataset directory containing images and CSV file')
     parser.add_argument('--dataset_type', type=str, choices=['hardfakevsreal', 'rvf10k'], default='rvf10k', help='Type of dataset to use: hardfakevsreal or rvf10k')
     parser.add_argument('--csv_file', type=str, default='data.csv', help='Name of the CSV file in data_dir (default: data.csv, used for hardfakevsreal)')
-    parser.add_argument('--train_csv', type=str, default='train.csv', help='Name of the train CSV file in data_dir (default: train.csv, used for rvf10k)')
-    parser.add_argument('--valid_csv', type=str, default='valid.csv', help='Name of the valid CSV file in data_dir (default: valid.csv, used for rvf10k)')
+    parser.add_argument('--train_csv', type=str, default='rvf10k/train.csv', help='Name of the train CSV file in data_dir (default: rvf10k/train.csv, used for rvf10k)')
+    parser.add_argument('--valid_csv', type=str, default='rvf10k/valid.csv', help='Name of the valid CSV file in data_dir (default: rvf10k/valid.csv, used for rvf10k)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth', help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir', help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300, help='Height of input images')
@@ -103,9 +103,16 @@ if args.dataset_type == 'hardfakevsreal':
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, collate_fn=collate_fn)
 
 elif args.dataset_type == 'rvf10k':
+    train_csv_file = os.path.join(data_dir, args.train_csv)
+    valid_csv_file = os.path.join(data_dir, args.valid_csv)
+    if not os.path.exists(train_csv_file):
+        raise FileNotFoundError(f"Train CSV file {train_csv_file} not found!")
+    if not os.path.exists(valid_csv_file):
+        raise FileNotFoundError(f"Valid CSV file {valid_csv_file} not found!")
+    
     dataset = FakeVsReal10kDataset(
-        train_csv_file=os.path.join(data_dir, args.train_csv),
-        valid_csv_file=os.path.join(data_dir, args.valid_csv),
+        train_csv_file=train_csv_file,
+        valid_csv_file=valid_csv_file,
         root_dir=data_dir,
         batch_size=batch_size,
         num_workers=4,
@@ -217,6 +224,8 @@ axes = axes.ravel()
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
         image, label = test_loader.dataset[idx]
+        if image is None:
+            continue
         image = image.unsqueeze(0).to(device)
         label_str = 'real' if label == 1 else 'fake'
         
