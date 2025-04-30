@@ -3,32 +3,33 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from data.dataset import Dataset_hardfakevsreal, FaceDataset
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from torchvision import transforms
 from IPython.display import Image as IPImage, display
 
+from data.dataset import Dataset_hardfakevsreal, FaceDataset
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
+    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k'],
+                        help='Dataset to use: hardfake or rvf10k')
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the dataset directory containing images and CSV file')
-    parser.add_argument('--csv_file', type=str, default='data.csv',
-                        help='Name of the CSV file in data_dir (default: data.csv)')
+                        help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
                         help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images')
+                        help='Height of input images for hardfake dataset')
     parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images')
+                        help='Width of input images for hardfake dataset')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -37,16 +38,15 @@ def parse_args():
                         help='Learning rate for the optimizer')
     return parser.parse_args()
 
-
 args = parse_args()
 
 
+dataset_mode = args.dataset_mode
 data_dir = args.data_dir
-csv_file = os.path.join(data_dir, args.csv_file)
 base_model_weights = args.base_model_weights
 teacher_dir = args.teacher_dir
-img_height = args.img_height
-img_width = args.img_width
+img_height = 256 if dataset_mode == 'rvf10k' else args.img_height
+img_width = 256 if dataset_mode == 'rvf10k' else args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
@@ -55,77 +55,119 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
-if not os.path.exists(csv_file):
-    raise FileNotFoundError(f"CSV file {csv_file} not found!")
 if not os.path.exists(base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {base_model_weights} not found!")
-
-
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
 
-df = pd.read_csv(csv_file)
-
-
-def create_full_image_path(row):
+def create_full_image_path(row, split=None):
     folder = 'fake' if row['label'] == 'fake' else 'real'
     img_name = row['images_id']
     if not img_name.endswith('.jpg'):
         img_name += '.jpg'
+    if split:  
+        return os.path.join(split, folder, img_name)
     return os.path.join(folder, img_name)
 
-df['images_id'] = df.apply(create_full_image_path, axis=1)
+
+if dataset_mode == 'hardfake':
+    csv_file = os.path.join(data_dir, 'data.csv')
+    if not os.path.exists(csv_file):
+        raise FileNotFoundError(f"CSV file {csv_file} not found!")
+    df = pd.read_csv(csv_file)
+    df['images_id'] = df.apply(create_full_image_path, axis=1)
+
+ 
+    train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
+    df.to_csv(train_csv_file, index=False)
+
+    
+    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
+    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
+
+    val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
+    test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
+    val_df.to_csv(val_csv_file, index=False)
+    test_df.to_csv(test_csv_file, index=False)
 
 
-train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
-df.to_csv(train_csv_file, index=False)
+    train_dataset = Dataset_hardfakevsreal(
+        csv_file=train_csv_file,
+        root_dir=data_dir,
+        train_batch_size=batch_size,
+        eval_batch_size=batch_size,
+        num_workers=4,
+        pin_memory=True,
+        ddp=False
+    )
+    temp_dataset = Dataset_hardfakevsreal(
+        csv_file=train_csv_file,
+        root_dir=data_dir,
+        train_batch_size=batch_size,
+        eval_batch_size=batch_size,
+        num_workers=0,
+        pin_memory=False
+    )
+    val_test_transform = temp_dataset.loader_test.dataset.transform
 
+    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
+    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
 
-train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
-val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
+ 
+    train_loader = train_dataset.loader_train
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
+elif dataset_mode == 'rvf10k':
+    train_csv_file = os.path.join(data_dir, 'train.csv')
+    valid_csv_file = os.path.join(data_dir, 'valid.csv')
+    if not os.path.exists(train_csv_file) or not os.path.exists(valid_csv_file):
+        raise FileNotFoundError(f"CSV files {train_csv_file} or {valid_csv_file} not found!")
 
-val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
-test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
-val_df.to_csv(val_csv_file, index=False)
-test_df.to_csv(test_csv_file, index=False)
+    train_df = pd.read_csv(train_csv_file)
+    val_df = pd.read_csv(valid_csv_file)
 
+ 
+    train_df['images_id'] = train_df.apply(lambda row: create_full_image_path(row, 'train'), axis=1)
+    val_df['images_id'] = val_df.apply(lambda row: create_full_image_path(row, 'valid'), axis=1)
 
-train_dataset = Dataset_hardfakevsreal(
-    csv_file=train_csv_file,  
-    root_dir=data_dir,
-    train_batch_size=batch_size,
-    eval_batch_size=batch_size,
-    num_workers=4,
-    pin_memory=True,
-    ddp=False
-)
+   
+    test_df = val_df
 
+ 
+    transform_train = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomCrop(256, padding=8),
+        transforms.RandomRotation(20),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
+    transform_test = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
 
-temp_dataset = Dataset_hardfakevsreal(
-    csv_file=train_csv_file,
-    root_dir=data_dir,
-    train_batch_size=batch_size,
-    eval_batch_size=batch_size,
-    num_workers=0,
-    pin_memory=False
-)
-val_test_transform = temp_dataset.loader_test.dataset.transform
+  
+    train_dataset = FaceDataset(train_df, data_dir, transform=transform_train)
+    val_dataset = FaceDataset(val_df, data_dir, transform=transform_test)
+    test_dataset = FaceDataset(test_df, data_dir, transform=transform_test)
 
+ 
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
-test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
-
-
-train_loader = train_dataset.loader_train
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+else:
+    raise ValueError("Invalid dataset_mode. Choose 'hardfake' or 'rvf10k'.")
 
 
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
-
 
 state_dict = torch.load(base_model_weights, weights_only=True)
 state_dict.pop('fc.weight', None)
@@ -158,8 +200,8 @@ for epoch in range(epochs):
     train_loss = running_loss / len(train_loader)
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
-
     
+   
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -170,7 +212,6 @@ for epoch in range(epochs):
             outputs, _ = model(images)
             loss = criterion(outputs, labels)
             val_loss += loss.item()
-            
             _, predicted = torch.max(outputs, 1)
             total_val += labels.size(0)
             correct_val += (predicted == labels).sum().item()
@@ -207,7 +248,6 @@ with torch.no_grad():
         label_str = row['label']
         
         img_path = os.path.join(data_dir, img_name)
-        
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
@@ -215,7 +255,8 @@ with torch.no_grad():
             continue
         
         image = Image.open(img_path).convert('RGB')
-        image_transformed = val_test_transform(image).unsqueeze(0).to(device)
+        transform = transform_test if dataset_mode == 'rvf10k' else val_test_transform
+        image_transformed = transform(image).unsqueeze(0).to(device)
         
         output, _ = model(image_transformed)
         _, predicted = torch.max(output, 1)
@@ -225,14 +266,11 @@ with torch.no_grad():
         axes[i].imshow(image)
         axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
-        
         print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
 plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
-
-
 display(IPImage(filename=file_path))
 
 
