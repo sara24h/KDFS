@@ -26,6 +26,8 @@ def parse_args():
                         help='Name of the train CSV file in data_dir (default: train.csv, used for rvf10k)')
     parser.add_argument('--valid_csv', type=str, default='valid.csv',
                         help='Name of the valid CSV file in data_dir (default: valid.csv, used for rvf10k)')
+    parser.add_argument('--image_id_column', type=str, default='path',
+                        help='Name of the column containing image paths or IDs in CSV files (default: path)')
     parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
                         help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
@@ -51,15 +53,16 @@ img_width = args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
+image_id_column = args.image_id_column
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
+# بررسی وجود دایرکتوری و ساخت آن در صورت نیاز
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-
+# انتخاب دیتاست و ساخت لودرها
 if args.dataset_type == 'hardfakevsreal':
     csv_file = os.path.join(data_dir, args.csv_file)
     if not os.path.exists(csv_file):
@@ -67,17 +70,17 @@ if args.dataset_type == 'hardfakevsreal':
     
     df = pd.read_csv(csv_file)
     def create_full_image_path(row):
-        folder = 'fake' if row['label'] == 'fake' else 'real'
-        img_name = row['images_id']
+        folder = 'fake' if row['label_str'] == 'fake' else 'real'
+        img_name = row[image_id_column]
         if not img_name.endswith('.jpg'):
             img_name += '.jpg'
         return os.path.join(folder, img_name)
-    df['images_id'] = df.apply(create_full_image_path, axis=1)
+    df[image_id_column] = df.apply(create_full_image_path, axis=1)
 
     train_csv_file = os.path.join(teacher_dir, 'train_data.csv')
     df.to_csv(train_csv_file, index=False)
-    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label'])
-    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label'])
+    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df['label_str'])
+    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42, stratify=temp_df['label_str'])
 
     val_csv_file = os.path.join(teacher_dir, 'val_data.csv')
     test_csv_file = os.path.join(teacher_dir, 'test_data.csv')
@@ -90,19 +93,21 @@ if args.dataset_type == 'hardfakevsreal':
         batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
-        ddp=False
+        ddp=False,
+        image_id_column=image_id_column
     )
     temp_dataset = Dataset_hardfakevsreal(
         csv_file=train_csv_file,
         root_dir=data_dir,
         batch_size=batch_size,
         num_workers=0,
-        pin_memory=False
+        pin_memory=False,
+        image_id_column=image_id_column
     )
     val_test_transform = temp_dataset.loader_test.dataset.transform
 
-    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform)
-    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform)
+    val_dataset = FaceDataset(val_df, data_dir, transform=val_test_transform, image_id_column=image_id_column)
+    test_dataset = FaceDataset(test_df, data_dir, transform=val_test_transform, image_id_column=image_id_column)
 
     train_loader = train_dataset.loader_train
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
@@ -124,17 +129,18 @@ elif args.dataset_type == 'rvf10k':
         num_workers=4,
         pin_memory=True,
         ddp=False,
-        test_split_ratio=0.33
+        test_split_ratio=0.33,
+        image_id_column=image_id_column
     )
     train_loader = dataset.loader_train
     val_loader = dataset.loader_valid
     test_loader = dataset.loader_test
 
-
+# بررسی وجود فایل وزن‌های پیش‌آموخته
 if not os.path.exists(args.base_model_weights):
     raise FileNotFoundError(f"Pretrained weights {args.base_model_weights} not found!")
 
-
+# آماده‌سازی مدل
 model = ResNet_50_hardfakevsreal()
 model = model.to(device)
 state_dict = torch.load(args.base_model_weights, weights_only=True)
@@ -145,7 +151,7 @@ model.load_state_dict(state_dict, strict=False)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
-
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -187,7 +193,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-
+# ارزیابی روی مجموعه تست
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -203,7 +209,7 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-
+# نمایش نمونه‌های تست
 random_indices = random.sample(range(len(test_loader.dataset)), min(10, len(test_loader.dataset)))
 fig, axes = plt.subplots(2, 5, figsize=(15, 8))
 axes = axes.ravel()
@@ -218,7 +224,7 @@ with torch.no_grad():
         _, predicted = torch.max(output, 1)
         predicted_label = 'real' if predicted.item() == 1 else 'fake'
         
-    
+
         image_np = image.squeeze().cpu().numpy().transpose(1, 2, 0)
         image_np = (image_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
         
