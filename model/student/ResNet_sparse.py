@@ -3,11 +3,47 @@ import torch.nn as nn
 import torch.nn.functional as F
 import copy
 import math
+from thop import profile
 
-from .layer import SoftMaskedConv2d
+class SoftMaskedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
+        self.mask = nn.Parameter(torch.ones(out_channels))
+        self.feature_map_h = None
+        self.feature_map_w = None
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.gumbel_temperature = 1.0
+
+    def forward(self, x, ticket):
+        if self.feature_map_h is None:
+            self.feature_map_h = (x.size(2) - self.kernel_size + 2 * self.padding) // self.stride + 1
+            self.feature_map_w = (x.size(3) - self.kernel_size + 2 * self.padding) // self.stride + 1
+        if ticket:
+            mask = (self.mask > 0).float()
+        else:
+            mask = F.gumbel_softmax(self.mask, tau=self.gumbel_temperature, hard=False)
+        out = self.conv(x)
+        out = out * mask.view(1, -1, 1, 1)
+        return out
+
+    def update_gumbel_temperature(self, temperature):
+        self.gumbel_temperature = temperature
+
+    def checkpoint(self):
+        self.checkpoint_conv = copy.deepcopy(self.conv.state_dict())
+        self.checkpoint_mask = self.mask.data.clone()
+
+    def rewind_weights(self):
+        self.conv.load_state_dict(self.checkpoint_conv)
+        self.mask.data = self.checkpoint_mask.clone()
 
 class MaskedNet(nn.Module):
-    def __init__(self, gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3):
+    def __init__(self, gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250):
         super().__init__()
         self.gumbel_start_temperature = gumbel_start_temperature
         self.gumbel_end_temperature = gumbel_end_temperature
@@ -20,14 +56,14 @@ class MaskedNet(nn.Module):
         for m in self.mask_modules:
             m.checkpoint()
         for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.BatchNorm2d, nn.Linear)):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.Linear):
                 m.checkpoint = copy.deepcopy(m.state_dict())
 
     def rewind_weights(self):
         for m in self.mask_modules:
             m.rewind_weights()
         for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.BatchNorm2d, nn.Linear)):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.Linear):
                 m.load_state_dict(m.checkpoint)
 
     def update_gumbel_temperature(self, epoch):
@@ -39,12 +75,30 @@ class MaskedNet(nn.Module):
             m.update_gumbel_temperature(self.gumbel_temperature)
 
     def get_flops(self):
-        Flops_total = torch.tensor(0.0)
-        Flops_total += 112 * 112 * 7 * 7 * 3 * 64 + 112 * 112 * 64
+        device = next(self.parameters()).device
+        Flops_total = torch.tensor(0.0, device=device)
+        image_sizes = {
+            "hardfakevsrealfaces": 300,
+            "rvf10k": 256
+        }
+        dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
+        input_size = image_sizes[dataset_type]
+        
+        conv1_h = (input_size - 7 + 2 * 3) // 2 + 1
+        maxpool_h = (conv1_h - 3 + 2 * 1) // 2 + 1
+        conv1_w = conv1_h
+        maxpool_w = maxpool_h
+        
+        Flops_total = Flops_total + (
+            conv1_h * conv1_w * 7 * 7 * 3 * 64 +
+            conv1_h * conv1_w * 64
+        )
+        
         for i, m in enumerate(self.mask_modules):
+            m = m.to(device)
             Flops_shortcut_conv = 0
             Flops_shortcut_bn = 0
-            if len(self.mask_modules) == 48:
+            if len(self.mask_modules) in [48]:
                 if i % 3 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -53,12 +107,13 @@ class MaskedNet(nn.Module):
                 else:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
-                        self.mask_modules[i - 1].mask.sum() * m.mask.sum()
+                        self.mask_modules[i - 1].mask.to(device).sum() * m.mask.sum()
                     )
                 Flops_bn = m.feature_map_h * m.feature_map_w * m.mask.sum()
                 if i % 3 == 2:
                     Flops_shortcut_conv = (
-                        m.feature_map_h * m.feature_map_w * 1 * 1 * (m.out_channels // 4) * m.out_channels
+                        m.feature_map_h * m.feature_map_w * 1 * 1 *
+                        (m.out_channels // 4) * m.out_channels
                     )
                     Flops_shortcut_bn = m.feature_map_h * m.feature_map_w * m.out_channels
             elif len(self.mask_modules) in [16, 32]:
@@ -70,17 +125,22 @@ class MaskedNet(nn.Module):
                 else:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
-                        self.mask_modules[i - 1].mask.sum() * m.mask.sum()
+                        self.mask_modules[i - 1].mask.to(device).sum() * m.mask.sum()
                     )
                 Flops_bn = m.feature_map_h * m.feature_map_w * m.mask.sum()
                 if i % 2 == 1 and i != 1:
                     Flops_shortcut_conv = (
-                        m.feature_map_h * m.feature_map_w * 1 * 1 * m.out_channels * m.out_channels
+                        m.feature_map_h * m.feature_map_w * 1 * 1 *
+                        m.out_channels * m.out_channels
                     )
                     Flops_shortcut_bn = m.feature_map_h * m.feature_map_w * m.out_channels
 
-            Flops_total += Flops_conv + Flops_bn + Flops_shortcut_conv + Flops_shortcut_bn
+            Flops_total = (
+                Flops_total + Flops_conv + Flops_bn + Flops_shortcut_conv + Flops_shortcut_bn
+            )
         return Flops_total
+
+   
 
 class BasicBlock_sparse(nn.Module):
     expansion = 1
@@ -95,16 +155,22 @@ class BasicBlock_sparse(nn.Module):
             planes, planes, kernel_size=3, stride=1, padding=1, bias=False
         )
         self.bn2 = nn.BatchNorm2d(planes)
+
         self.downsample = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.downsample = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.Conv2d(
+                    in_planes,
+                    self.expansion * planes,
+                    kernel_size=1,
+                    stride=stride,
+                ),
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket, gumbel_temperature=None):
-        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature=gumbel_temperature)))
-        out = self.bn2(self.conv2(out, ticket, gumbel_temperature=gumbel_temperature))
+    def forward(self, x, ticket):
+        out = F.relu(self.bn1(self.conv1(x, ticket)))
+        out = self.bn2(self.conv2(out, ticket))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -124,17 +190,23 @@ class Bottleneck_sparse(nn.Module):
             planes, self.expansion * planes, kernel_size=1, bias=False
         )
         self.bn3 = nn.BatchNorm2d(self.expansion * planes)
+
         self.downsample = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.downsample = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.Conv2d(
+                    in_planes,
+                    self.expansion * planes,
+                    kernel_size=1,
+                    stride=stride,
+                ),
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
-    def forward(self, x, ticket, gumbel_temperature=None):
-        out = F.relu(self.bn1(self.conv1(x, ticket, gumbel_temperature=gumbel_temperature)))
-        out = F.relu(self.bn2(self.conv2(out, ticket, gumbel_temperature=gumbel_temperature)))
-        out = self.bn3(self.conv3(out, ticket, gumbel_temperature=gumbel_temperature))
+    def forward(self, x, ticket):
+        out = F.relu(self.bn1(self.conv1(x, ticket)))
+        out = F.relu(self.bn2(self.conv2(out, ticket)))
+        out = self.bn3(self.conv3(out, ticket))
         out += self.downsample(x)
         out = F.relu(out)
         return out
@@ -147,7 +219,8 @@ class ResNet_sparse(MaskedNet):
         num_classes=2,
         gumbel_start_temperature=1.0,
         gumbel_end_temperature=0.1,
-        num_epochs=3,
+        num_epochs=250,
+        dataset_type="hardfakevsrealfaces"
     ):
         super().__init__(
             gumbel_start_temperature,
@@ -155,23 +228,30 @@ class ResNet_sparse(MaskedNet):
             num_epochs,
         )
         self.in_planes = 64
+        self.dataset_type = dataset_type
+
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
         self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.avgpool = nn.Sequential(nn.AvgPool2d(7))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
-        expansion = block.expansion
-        self.shortcut1 = nn.Conv2d(64 * expansion, 64 * expansion, kernel_size=1)
-        self.shortcut2 = nn.Conv2d(128 * expansion, 128 * expansion, kernel_size=1)
-        self.shortcut3 = nn.Conv2d(256 * expansion, 256 * expansion, kernel_size=1)
-        self.shortcut4 = nn.Conv2d(512 * expansion, 512 * expansion, kernel_size=1)
+        if block == BasicBlock_sparse:
+            expansion = 1
+        elif block == Bottleneck_sparse:
+            expansion = 4
+        self.feat1 = nn.Conv2d(64 * expansion, 64 * expansion, kernel_size=1)
+        self.feat2 = nn.Conv2d(128 * expansion, 128 * expansion, kernel_size=1)
+        self.feat3 = nn.Conv2d(256 * expansion, 256 * expansion, kernel_size=1)
+        self.feat4 = nn.Conv2d(512 * expansion, 512 * expansion, kernel_size=1)
 
         self.mask_modules = [m for m in self.modules() if isinstance(m, SoftMaskedConv2d)]
+        self.mask_modules = [m.to(next(self.parameters()).device) for m in self.mask_modules]
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1] * (num_blocks - 1)
@@ -181,58 +261,34 @@ class ResNet_sparse(MaskedNet):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x, gumbel_temperature=None):
+    def forward(self, x):
         feature_list = []
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.maxpool(out)
 
         for block in self.layer1:
-            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
-        feature_list.append(self.shortcut1(out))
+            out = block(out, self.ticket)
+        feature_list.append(self.feat1(out))
 
         for block in self.layer2:
-            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
-        feature_list.append(self.shortcut2(out))
+            out = block(out, self.ticket)
+        feature_list.append(self.feat2(out))
 
         for block in self.layer3:
-            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
-        feature_list.append(self.shortcut3(out))
+            out = block(out, self.ticket)
+        feature_list.append(self.feat3(out))
 
         for block in self.layer4:
-            out = block(out, self.ticket, gumbel_temperature=gumbel_temperature)
-        feature_list.append(self.shortcut4(out))
+            out = block(out, self.ticket)
+        feature_list.append(self.feat4(out))
 
         out = self.avgpool(out)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
         return out, feature_list
 
-def ResNet_18_sparse_hardfakevsreal(
-    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
-):
-    return ResNet_sparse(
-        block=BasicBlock_sparse,
-        num_blocks=[2, 2, 2, 2],
-        num_classes=2,
-        gumbel_start_temperature=gumbel_start_temperature,
-        gumbel_end_temperature=gumbel_end_temperature,
-        num_epochs=num_epochs,
-    )
-
-def ResNet_34_sparse_hardfakevsreal(
-    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
-):
-    return ResNet_sparse(
-        block=BasicBlock_sparse,
-        num_blocks=[3, 4, 6, 3],
-        num_classes=2,
-        gumbel_start_temperature=gumbel_start_temperature,
-        gumbel_end_temperature=gumbel_end_temperature,
-        num_epochs=num_epochs,
-    )
-
 def ResNet_50_sparse_hardfakevsreal(
-    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=3
+    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250
 ):
     return ResNet_sparse(
         block=Bottleneck_sparse,
@@ -241,4 +297,18 @@ def ResNet_50_sparse_hardfakevsreal(
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
+        dataset_type="hardfakevsrealfaces"
+    )
+
+def ResNet_50_sparse_rvf10k(
+    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250
+):
+    return ResNet_sparse(
+        block=Bottleneck_sparse,
+        num_blocks=[3, 4, 6, 3],
+        num_classes=2,
+        gumbel_start_temperature=gumbel_start_temperature,
+        gumbel_end_temperature=gumbel_end_temperature,
+        num_epochs=num_epochs,
+        dataset_type="rvf10k"
     )
