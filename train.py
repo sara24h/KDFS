@@ -402,8 +402,6 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            all_preds = []
-            all_targets = []
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -414,28 +412,12 @@ class Train:
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
                         prec1, = utils.get_accuracy(logits_student, targets, topk=(1,))
-
-                        # ذخیره پیش‌بینی‌ها و برچسب‌ها
-                        _, preds = torch.max(logits_student, 1)
-                        all_preds.append(preds.cpu().numpy())
-                        all_targets.append(targets.cpu().numpy())
-
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
 
                         _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
                         time.sleep(0.01)
-
-            # چاپ توزیع پیش‌بینی‌ها و برچسب‌ها
-            all_preds = np.concatenate(all_preds)
-            all_targets = np.concatenate(all_targets)
-            self.logger.info(
-                "[Val Predictions] Epoch {0} : {1}".format(epoch, np.bincount(all_preds))
-            )
-            self.logger.info(
-                "[Val Targets] Epoch {0} : {1}".format(epoch, np.bincount(all_targets))
-            )
 
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
