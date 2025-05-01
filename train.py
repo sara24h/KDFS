@@ -18,8 +18,8 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 7690.0,  # باید با calculate_baselines محاسبه شود
-        "rvf10k": 5000.0,  # باید با calculate_baselines محاسبه شود
+        "hardfakevsrealfaces": 7690.0,  
+        "rvf10k": 5000.0,  
     }
 }
 
@@ -327,7 +327,7 @@ class Train:
                     self.optim_weight.step()
                     self.optim_mask.step()
 
-                    prec1, _ = utils.get_accuracy(logits_student, targets, topk=(1,))
+                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
