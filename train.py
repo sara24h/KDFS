@@ -16,7 +16,10 @@ from utils import utils, loss, meter, scheduler
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
-    "ResNet_50": 7690.0,  # مقدار ثابت برای ResNet-50 در دیتاست hardfakevsrealfaces یا rvf10k
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7690.0,  # مقدار تخمینی، باید تأیید شود
+        "rvf10k": 5000.0,  # مقدار تخمینی، باید تأیید شود
+    }
 }
 
 class Train:
@@ -374,7 +377,7 @@ class Train:
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
                     for images, targets in self.val_loader:
-                        if self.device == "cudalocations:
+                        if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
