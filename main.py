@@ -13,6 +13,8 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import GradScaler, autocast
+import json
+import time
 
 # تنظیمات محیطی برای جلوگیری از خطاهای CUDA
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -21,7 +23,7 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 matplotlib.use('Agg')
 
-# اصلاح import برای استفاده از Dataset_selector
+# وارد کردن ماژول‌های پروژه
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
@@ -29,41 +31,6 @@ from utils import utils, loss, meter, scheduler
 from train import Train
 from test import Test
 from finetune import Finetune
-import json
-import time
-import os
-import pandas as pd
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from sklearn.model_selection import train_test_split
-from PIL import Image
-import argparse
-import random
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
-from torch.amp import GradScaler, autocast
-
-# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-matplotlib.use('Agg')
-
-# اصلاح import برای استفاده از Dataset_selector
-from data.dataset import FaceDataset, Dataset_selector
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
-from utils import utils, loss, meter, scheduler
-from train import Train
-from test import Test
-from finetune import Finetune
-import json
-import time
 
 def parse_args():
     desc = "Pytorch implementation of KDFS"
@@ -74,7 +41,7 @@ def parse_args():
         type=str,
         default="train",
         choices=("train", "finetune", "test"),
-        help="train, finetune or test",
+        help="Train, finetune, or test phase",
     )
     parser.add_argument(
         "--dataset_mode",
@@ -87,47 +54,47 @@ def parse_args():
         "--dataset_dir",
         type=str,
         default="/kaggle/input/hardfakevsrealfaces",
-        help="The dataset path",
+        help="Path to the dataset directory",
     )
     parser.add_argument(
         "--hardfake_csv_file",
         type=str,
         default="/kaggle/input/hardfakevsrealfaces/data.csv",
-        help="The path to the hardfake CSV file (for hardfake mode)",
+        help="Path to the hardfake CSV file (for hardfake mode)",
     )
     parser.add_argument(
         "--rvf10k_train_csv",
         type=str,
         default="/kaggle/input/rvf10k/train.csv",
-        help="The path to the rvf10k train CSV file (for rvf10k mode)",
+        help="Path to the rvf10k train CSV file (for rvf10k mode)",
     )
     parser.add_argument(
         "--rvf10k_valid_csv",
         type=str,
         default="/kaggle/input/rvf10k/valid.csv",
-        help="The path to the rvf10k valid CSV file (for rvf10k mode)",
+        help="Path to the rvf10k valid CSV file (for rvf10k mode)",
     )
     parser.add_argument(
         "--num_workers",
         type=int,
         default=4,
-        help="The num_workers of dataloader",
+        help="Number of workers for dataloader",
     )
     parser.add_argument(
         "--pin_memory",
         action="store_true",
-        help="The pin_memory of dataloader",
+        help="Enable pin_memory for dataloader",
     )
     parser.add_argument(
         "--resume",
         type=str,
         default=None,
-        help="load the model from the specified checkpoint",
+        help="Path to the checkpoint to resume training",
     )
     parser.add_argument(
         "--ddp",
         action="store_true",
-        help="Use the distributed data parallel",
+        help="Use Distributed Data Parallel (not implemented in this version)",
     )
     parser.add_argument(
         "--arch",
@@ -143,211 +110,211 @@ def parse_args():
             "GoogLeNet",
             "MobileNetV2",
         ),
-        help="The architecture to prune",
+        help="Model architecture to use",
     )
     parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
         choices=("cuda", "cpu"),
-        help="Device to use",
+        help="Device to use (cuda or cpu)",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=3407,
-        help="Init seed",
+        help="Random seed for reproducibility",
     )
     parser.add_argument(
         "--result_dir",
         type=str,
         default="/kaggle/working/results",
-        help="The directory where the results will be stored",
+        help="Directory to store results",
     )
     parser.add_argument(
         "--dali",
         action="store_true",
-        help="Use dali",
+        help="Use NVIDIA DALI for data loading (not implemented in this version)",
     )
     parser.add_argument(
         "--teacher_ckpt_path",
         type=str,
         default="/kaggle/working/KDFS/teacher_dir/teacher_model.pth",
-        help="The path where the teacher model is stored",
+        help="Path to the teacher model checkpoint",
     )
     parser.add_argument(
         "--num_epochs",
         type=int,
-        default=100,  # اصلاح برای تطبیق با نمونه (epoch: 1/100)
-        help="The num of epochs to train.",
+        default=100,
+        help="Number of epochs to train",
     )
     parser.add_argument(
         "--lr",
-        default=1e-4,  # اصلاح برای تطبیق با LR 0.000100
+        default=1e-4,
         type=float,
-        help="The initial learning rate of model",
+        help="Initial learning rate",
     )
     parser.add_argument(
         "--warmup_steps",
         default=30,
         type=int,
-        help="The steps of warmup",
+        help="Number of warmup steps",
     )
     parser.add_argument(
         "--warmup_start_lr",
         default=1e-5,
         type=float,
-        help="The start learning rate of warmup",
+        help="Starting learning rate for warmup",
     )
     parser.add_argument(
         "--lr_decay_T_max",
-        default=250,  # اصلاح برای هماهنگی با نمونه
+        default=250,
         type=int,
-        help="T_max of CosineAnnealingLR",
+        help="T_max for CosineAnnealingLR",
     )
     parser.add_argument(
         "--lr_decay_eta_min",
         default=1e-5,
         type=float,
-        help="eta_min of CosineAnnealingLR",
+        help="Minimum learning rate for CosineAnnealingLR",
     )
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=2e-5,  # اصلاح برای هماهنگی با نمونه
-        help="Weight decay",
+        default=2e-5,
+        help="Weight decay for optimization",
     )
     parser.add_argument(
         "--train_batch_size",
         type=int,
-        default=32,  # اصلاح برای 33 بچ آموزشی
+        default=32,
         help="Batch size for training",
     )
     parser.add_argument(
         "--eval_batch_size",
         type=int,
-        default=32,  # اصلاح برای 9 بچ اعتبارسنجی
+        default=32,
         help="Batch size for validation",
     )
     parser.add_argument(
         "--target_temperature",
         type=float,
         default=3.0,
-        help="temperature of soft targets",
+        help="Temperature for soft targets in KD",
     )
     parser.add_argument(
         "--gumbel_start_temperature",
         type=float,
-        default=2.0,  # نگه داشتن مقدار فعلی
-        help="Gumbel-softmax temperature at the start of training",
+        default=2.0,
+        help="Starting Gumbel-softmax temperature",
     )
     parser.add_argument(
         "--gumbel_end_temperature",
         type=float,
-        default=0.1,  # نگه داشتن مقدار فعلی
-        help="Gumbel-softmax temperature at the end of training",
+        default=0.1,
+        help="Ending Gumbel-softmax temperature",
     )
     parser.add_argument(
         "--coef_kdloss",
         type=float,
-        default=0.5,  # نگه داشتن مقدار فعلی
-        help="Coefficient of kd loss",
+        default=0.5,
+        help="Coefficient for KD loss",
     )
     parser.add_argument(
         "--coef_rcloss",
         type=float,
-        default=100.0,  # نگه داشتن مقدار فعلی
-        help="Coefficient of reconstruction loss",
+        default=100.0,
+        help="Coefficient for reconstruction loss",
     )
     parser.add_argument(
         "--coef_maskloss",
         type=float,
-        default=1.0,  # نگه داشتن مقدار فعلی
-        help="Coefficient of mask loss",
+        default=1.0,
+        help="Coefficient for mask loss",
     )
     parser.add_argument(
         "--compress_rate",
         type=float,
         default=0.68,
-        help="Compress rate of the student model",
+        help="Compression rate for the student model",
     )
     parser.add_argument(
         "--finetune_student_ckpt_path",
         type=str,
         default=None,
-        help="The path where to load the student ckpt in finetune",
+        help="Path to the student checkpoint for finetuning",
     )
     parser.add_argument(
         "--finetune_num_epochs",
         type=int,
         default=20,
-        help="The num of epochs to train in finetune",
+        help="Number of epochs for finetuning",
     )
     parser.add_argument(
         "--finetune_lr",
         default=4e-6,
         type=float,
-        help="The initial learning rate of model in finetune",
+        help="Initial learning rate for finetuning",
     )
     parser.add_argument(
         "--finetune_warmup_steps",
         default=5,
         type=int,
-        help="The steps of warmup in finetune",
+        help="Number of warmup steps for finetuning",
     )
     parser.add_argument(
         "--finetune_warmup_start_lr",
         default=4e-8,
         type=float,
-        help="The start learning rate of warmup in finetune",
+        help="Starting learning rate for warmup in finetuning",
     )
     parser.add_argument(
         "--finetune_lr_decay_T_max",
         default=20,
         type=int,
-        help="T_max of CosineAnnealingLR in finetune",
+        help="T_max for CosineAnnealingLR in finetuning",
     )
     parser.add_argument(
         "--finetune_lr_decay_eta_min",
         default=4e-8,
         type=float,
-        help="eta_min of CosineAnnealingLR in finetune",
+        help="Minimum learning rate for CosineAnnealingLR in finetuning",
     )
     parser.add_argument(
         "--finetune_weight_decay",
         type=float,
         default=2e-5,
-        help="Weight decay in finetune",
+        help="Weight decay for finetuning",
     )
     parser.add_argument(
         "--finetune_train_batch_size",
         type=int,
-        default=32,  # اصلاح برای هماهنگی
-        help="Batch size for training in finetune",
+        default=32,
+        help="Batch size for training in finetuning",
     )
     parser.add_argument(
         "--finetune_eval_batch_size",
         type=int,
-        default=32,  # اصلاح برای هماهنگی
-        help="Batch size for validation in finetune",
+        default=32,
+        help="Batch size for validation in finetuning",
     )
     parser.add_argument(
         "--sparsed_student_ckpt_path",
         type=str,
         default=None,
-        help="The path where to save the sparsed student ckpt in finetune",
+        help="Path to save the sparsed student checkpoint in finetuning",
     )
     parser.add_argument(
         "--test_batch_size",
         type=int,
-        default=32,  # اصلاح برای هماهنگی
-        help="Batch size for test",
+        default=32,
+        help="Batch size for testing",
     )
 
     return parser.parse_args()
 
 def validate_args(args):
-    """بررسی وجود فایل‌ها و دایرکتوری‌های مورد نیاز"""
+    """Check the existence of required files and directories"""
     if args.dataset_mode == "hardfake":
         if not os.path.exists(args.hardfake_csv_file):
             raise FileNotFoundError(f"Hardfake CSV file not found: {args.hardfake_csv_file}")
@@ -373,10 +340,10 @@ def validate_args(args):
 def main():
     args = parse_args()
     
-    # بررسی وجود فایل‌ها و دایرکتوری‌ها
+    # Validate files and directories
     validate_args(args)
 
-    # تنظیم seed برای تکرارپذیری
+    # Set random seed for reproducibility
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -386,7 +353,7 @@ def main():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    # لاگ اطلاعات اولیه
+    # Log initial information
     print(f"Running phase: {args.phase}")
     print(f"Dataset mode: {args.dataset_mode}")
     print(f"Device: {args.device}")
@@ -398,7 +365,7 @@ def main():
     if args.ddp:
         raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
     
-    # اجرای فاز مربوطه
+    # Execute the corresponding phase
     if args.phase == "train":
         train = Train(args=args)
         train.main()
