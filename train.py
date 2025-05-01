@@ -405,7 +405,6 @@ class Train:
             all_preds = []
             all_targets = []
 
- carnage
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
