@@ -22,11 +22,9 @@ def get_flops_and_params(args):
         raise ValueError("This script only supports ResNet_50 architecture")
 
     # ساخت مدل sparse
-    print("==> Building sparse student model..")
     student = ResNet_50_sparse_hardfakevsreal()
-    ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu")
+    ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
-    print("Sparse student model loaded!")
 
     # انتقال مدل به دستگاه مناسب
     device = args.device if hasattr(args, "device") else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,9 +52,5 @@ def get_flops_and_params(args):
     # محاسبه درصد کاهش
     Flops_reduction = (Flops_baseline - Flops) / Flops_baseline * 100.0
     Params_reduction = (Params_baseline - Params) / Params_baseline * 100.0
-
-    # چاپ نتایج
-    print(f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%")
-    print(f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%")
 
     return Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction
