@@ -264,11 +264,14 @@ class Train:
                 Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                self.logger.info(f"Calculated Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
+                current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+                self.logger.info(f"{current_time} | Calculated Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
             except Exception as e:
-                self.logger.warning(f"Failed to calculate Flops: {str(e)}. Using default values.")
+                current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+                self.logger.warning(f"{current_time} | Failed to calculate Flops: {str(e)}. Using default values.")
         else:
-            self.logger.info(f"No valid sparsed_student_ckpt_path provided or file does not exist. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+            self.logger.info(f"{current_time} | No valid sparsed_student_ckpt_path provided or file does not exist. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
@@ -285,18 +288,19 @@ class Train:
             gumbel_temperature = self.student.gumbel_temperature
 
             # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             if os.path.exists(self.args.sparsed_student_ckpt_path):
                 try:
                     Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                     Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                     Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                    self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
+                    self.logger.info(f"{current_time} | [Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
                 except Exception as e:
-                    self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+                    self.logger.warning(f"{current_time} | Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
             else:
-                self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
+                self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
-            with tqdm(total=len(self.train_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
+            with tqdm(total=len(self.train_loader), ncols=80, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
                     self.optim_mask.zero_grad()
@@ -370,6 +374,7 @@ class Train:
             meter_top1.reset()
 
             # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             if os.path.exists(self.args.sparsed_student_ckpt_path):
                 try:
                     Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
@@ -381,7 +386,7 @@ class Train:
             else:
                 self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
-            with tqdm(total=len(self.val_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
+            with tqdm(total=len(self.val_loader), ncols=80, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.val_loader:
                     images = images.to(self.device, non_blocking=True)
                     targets = targets.to(self.device, non_blocking=True)
@@ -398,6 +403,7 @@ class Train:
 
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, epoch)
 
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             self.logger.info(
                 f"{current_time} | [Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
             )
@@ -412,6 +418,7 @@ class Train:
             else:
                 self.save_ckpt(False)
 
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             self.logger.info(
                 f"{current_time} |  => Best top1 accuracy before finetune : {self.best_prec1:.2f}"
             )
