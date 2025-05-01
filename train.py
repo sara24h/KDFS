@@ -67,13 +67,10 @@ class Train:
         self.logger = utils.get_logger(
             os.path.join(self.result_dir, "train_logger.log"), "train_logger"
         )
-        self.logger.info("Train config:")
+        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+        self.logger.info(f"{current_time} | Train config:")
         self.logger.info(str(json.dumps(vars(self.args), indent=4)))
-        utils.record_config(
-            self.args,
-            os.path.join(self.result_dir, "train_config.txt")
-        )
-        self.logger.info("--------- Train -----------")
+        self.logger.info(f"{current_time} | --------- Train -----------")
 
     def setup_seed(self):
         torch.use_deterministic_algorithms(True)
@@ -89,7 +86,8 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        self.logger.info("==> Loading datasets..")
+        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+        self.logger.info(f"{current_time} | Dataset and test loader have been loaded!")
         if self.dataset_mode not in ['hardfake', 'rvf10k']:
             raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
         
@@ -130,11 +128,13 @@ class Train:
 
         self.train_loader = dataset_instance.loader_train
         self.val_loader = dataset_instance.loader_test
-        self.logger.info(f"{self.dataset_mode} dataset loaded! Train batches: {len(self.train_loader)}, Val batches: {len(self.val_loader)}")
 
     def build_model(self):
-        self.logger.info("==> Building teacher and student models..")
+        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+        self.logger.info(f"{current_time} | ==> Building model..")
+        self.logger.info(f"{current_time} | Loading teacher model")
         self.teacher = ResNet_50_hardfakevsreal().to(self.device)
+        self.logger.info(f"{current_time} | Building student model")
         self.student = ResNet_50_sparse_hardfakevsreal().to(self.device)
 
         if not os.path.exists(self.teacher_ckpt_path):
@@ -149,18 +149,6 @@ class Train:
 
         self.teacher.load_state_dict(state_dict, strict=True)
         self.teacher.eval()
-
-        self.logger.info("Evaluating teacher model on validation set...")
-        self.teacher.eval()
-        with torch.no_grad():
-            meter_top1 = meter.AverageMeter("TeacherAcc@1", ":6.2f")
-            for images, targets in self.val_loader:
-                images = images.to(self.device)
-                targets = targets.to(self.device)
-                logits, _ = self.teacher(images)
-                prec1 = utils.get_accuracy(logits, targets, topk=(1,))[0]
-                meter_top1.update(prec1.item(), images.size(0))
-            self.logger.info(f"Teacher validation accuracy: Prec@1 {meter_top1.avg:.2f}%")
 
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
@@ -213,7 +201,8 @@ class Train:
         self.optim_mask.load_state_dict(ckpt["optim_mask"])
         self.scheduler_weight.load_state_dict(ckpt["scheduler_weight"])
         self.scheduler_mask.load_state_dict(ckpt["scheduler_mask"])
-        self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
+        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+        self.logger.info(f"{current_time} | => Continue from epoch {self.start_epoch}...")
 
     def save_ckpt(self, is_best):
         folder = os.path.join(self.result_dir, "student_model")
@@ -259,20 +248,6 @@ class Train:
         # تنظیم مسیر پیش‌فرض برای sparsed_student_ckpt_path
         self.args.sparsed_student_ckpt_path = os.path.join(self.result_dir, "student_model", f"{self.arch}_sparse_last.pt")
 
-        if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None and os.path.exists(self.args.sparsed_student_ckpt_path):
-            try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
-                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
-                self.logger.info(f"{current_time} | Calculated Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
-            except Exception as e:
-                current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
-                self.logger.warning(f"{current_time} | Failed to calculate Flops: {str(e)}. Using default values.")
-        else:
-            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
-            self.logger.info(f"{current_time} | No valid sparsed_student_ckpt_path provided or file does not exist. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
-
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
             self.student.ticket = False
@@ -286,19 +261,6 @@ class Train:
             
             self.student.update_gumbel_temperature(epoch - 1)
             gumbel_temperature = self.student.gumbel_temperature
-
-            # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
-            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
-            if os.path.exists(self.args.sparsed_student_ckpt_path):
-                try:
-                    Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
-                    Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-                    Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                    self.logger.info(f"{current_time} | [Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
-                except Exception as e:
-                    self.logger.warning(f"{current_time} | Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
-            else:
-                self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
             with tqdm(total=len(self.train_loader), ncols=80, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
@@ -369,22 +331,21 @@ class Train:
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
             self.logger.info(f"{current_time} | [Train mask avg] Epoch {epoch} : {masks}")
 
-            self.student.eval()
-            self.student.ticket = True
-            meter_top1.reset()
-
-            # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
-            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
+            # محاسبه Flops
             if os.path.exists(self.args.sparsed_student_ckpt_path):
                 try:
                     Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                     Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                     Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                    self.logger.info(f"{current_time} | [Val model Flops] Epoch {epoch} : {Flops.item():.2f}M")
+                    self.logger.info(f"{current_time} | [Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
                 except Exception as e:
-                    self.logger.warning(f"{current_time} | Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+                    self.logger.warning(f"{current_time} | Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
             else:
-                self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
+                self.logger.info(f"{current_time} | [Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
+
+            self.student.eval()
+            self.student.ticket = True
+            meter_top1.reset()
 
             with tqdm(total=len(self.val_loader), ncols=80, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.val_loader:
@@ -411,6 +372,18 @@ class Train:
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
             self.logger.info(f"{current_time} | [Val mask avg] Epoch {epoch} : {masks}")
 
+            # محاسبه Flops برای اعتبارسنجی
+            if os.path.exists(self.args.sparsed_student_ckpt_path):
+                try:
+                    Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
+                    Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                    Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                    self.logger.info(f"{current_time} | [Val model Flops] Epoch {epoch} : {Flops.item():.2f}M")
+                except Exception as e:
+                    self.logger.warning(f"{current_time} | Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+            else:
+                self.logger.info(f"{current_time} | [Val model Flops] Epoch {epoch} : {Flops.item():.2f}M")
+
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
@@ -420,37 +393,11 @@ class Train:
 
             current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             self.logger.info(
-                f"{current_time} |  => Best top1 accuracy before finetune : {self.best_prec1:.2f}"
+                f"{current_time} |  => Best top1 accuracy before finetune : {self.best_prec1}"
             )
 
         self.logger.info("Training finished!")
         self.logger.info(f"Best top1 accuracy before finetune: {self.best_prec1:.2f}")
-        # گزارش نهایی Flops و پارامترها
-        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
-        if os.path.exists(self.args.sparsed_student_ckpt_path):
-            try:
-                (
-                    Flops_baseline,
-                    Flops,
-                    Flops_reduction,
-                    Params_baseline,
-                    Params,
-                    Params_reduction,
-                ) = get_flops_and_params(self.args)
-                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                self.logger.info(
-                    f"{current_time} | Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
-                    f"Params reduction: {Params_reduction:.2f}%"
-                )
-                self.logger.info(
-                    f"{current_time} | Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
-                    f"Flops reduction: {Flops_reduction:.2f}%"
-                )
-            except Exception as e:
-                self.logger.warning(f"{current_time} | Failed to calculate final Flops and Params: {str(e)}. Using default values.")
-        else:
-            self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist. Using default Flops and Params.")
 
     def main(self):
         self.result_init()
