@@ -12,7 +12,7 @@ class FaceDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
        
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0} 
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0,'Real': 1, 'Fake': 0} 
 
     def __len__(self):
         return len(self.data)
@@ -173,7 +173,7 @@ class Dataset_selector(Dataset):
         self.loader_test = DataLoader(
             val_dataset,
             batch_size=eval_batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
