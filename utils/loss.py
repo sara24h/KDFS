@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils
+
 
 class KDLoss(nn.Module):
     def __init__(self):
@@ -13,6 +15,7 @@ class KDLoss(nn.Module):
             reduction="batchmean",
         )
 
+
 class RCLoss(nn.Module):
     def __init__(self):
         super(RCLoss, self).__init__()
@@ -22,30 +25,16 @@ class RCLoss(nn.Module):
         return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
 
     def forward(self, x, y):
-        if not isinstance(x, list) or not isinstance(y, list):
-            raise ValueError("Expected x and y to be lists of feature tensors")
-        if len(x) != len(y):
-            raise ValueError(f"Feature lists have different lengths: {len(x)} vs {len(y)}")
+        return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-        loss = 0.0
-        for x_i, y_i in zip(x, y):
-            if x_i.shape != y_i.shape:
-                raise ValueError(f"Feature shapes mismatch: {x_i.shape} vs {y_i.shape}")
-            loss += (self.rc(x_i) - self.rc(y_i)).pow(2).mean()
-        
-        return loss / len(x)
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
 
     def forward(self, Flops, Flops_baseline, compress_rate):
-        # Convert to tensors only if not already tensors
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        Flops = Flops.clone().detach().to(dtype=torch.float, device=device) if isinstance(Flops, torch.Tensor) else torch.tensor(Flops, dtype=torch.float, device=device)
-        Flops_baseline = Flops_baseline.clone().detach().to(dtype=torch.float, device=device) if isinstance(Flops_baseline, torch.Tensor) else torch.tensor(Flops_baseline, dtype=torch.float, device=device)
-        compress_rate = compress_rate.clone().detach().to(dtype=torch.float, device=device) if isinstance(compress_rate, torch.Tensor) else torch.tensor(compress_rate, dtype=torch.float, device=device)
         return torch.pow(Flops / Flops_baseline - compress_rate, 2)
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
