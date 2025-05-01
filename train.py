@@ -149,7 +149,7 @@ class Train:
                 images = images.to(self.device)
                 targets = targets.to(self.device)
                 logits, _ = self.teacher(images)
-                prec1 = utils.get_accuracy(logits, targets, topk=(1,))
+                prec1 = utils.get_accuracy(logits, targets, topk=(1,))[0]
                 meter_top1.update(prec1.item(), images.size(0))
             self.logger.info(f"Teacher validation accuracy: Prec@1 {meter_top1.avg:.2f}%")
 
