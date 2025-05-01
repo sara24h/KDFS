@@ -2,6 +2,7 @@ import json
 import os
 import random
 import time
+from datetime import datetime
 import numpy as np
 import torch
 import torch.nn as nn
@@ -245,12 +246,12 @@ class Train:
         if self.resume:
             self.resume_ckpt()
 
-        meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
-        meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
-        meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
-        meter_maskloss = meter.AverageMeter("MaskLoss", ":.4e")
-        meter_loss = meter.AverageMeter("Loss", ":.4e")
-        meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+        meter_oriloss = meter.AverageMeter("OriLoss", ":.4f")
+        meter_kdloss = meter.AverageMeter("KDLoss", ":.4f")
+        meter_rcloss = meter.AverageMeter("RCLoss", ":.4f")
+        meter_maskloss = meter.AverageMeter("MaskLoss", ":.6f")
+        meter_loss = meter.AverageMeter("Loss", ":.4f")
+        meter_top1 = meter.AverageMeter("Acc@1", ":6.4f")
 
         Flops_baseline = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         Flops = torch.tensor(7690.0, dtype=torch.float, device=self.device)
@@ -289,7 +290,7 @@ class Train:
                     Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                     Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                     Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                    self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.6f}M")
+                    self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.2f}M")
                 except Exception as e:
                     self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
             else:
@@ -348,19 +349,21 @@ class Train:
             self.writer.add_scalar("train/acc/top1", meter_top1.avg, epoch)
             self.writer.add_scalar("train/lr/lr", lr, epoch)
 
+            # فرمت تاریخ و زمان
+            current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
             self.logger.info(
-                f"[Train] Epoch {epoch} : Gumbel_temperature {gumbel_temperature:.2f} "
+                f"{current_time} | [Train] Epoch {epoch} : Gumbel_temperature {gumbel_temperature:.2f} "
                 f"LR {lr:.6f} "
                 f"OriLoss {meter_oriloss.avg:.4f} "
                 f"KDLoss {meter_kdloss.avg:.4f} "
                 f"RCLoss {meter_rcloss.avg:.4f} "
                 f"MaskLoss {meter_maskloss.avg:.6f} "
                 f"TotalLoss {meter_loss.avg:.4f} "
-                f"Prec@(1) {meter_top1.avg:.2f}"
+                f"Prec@1 {meter_top1.avg:.2f}"
             )
 
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Train mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(f"{current_time} | [Train mask avg] Epoch {epoch} : {masks}")
 
             self.student.eval()
             self.student.ticket = True
@@ -372,11 +375,11 @@ class Train:
                     Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                     Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                     Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                    self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item():.6f}M")
+                    self.logger.info(f"{current_time} | [Val model Flops] Epoch {epoch} : {Flops.item():.2f}M")
                 except Exception as e:
-                    self.logger.warning(f"Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+                    self.logger.warning(f"{current_time} | Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
             else:
-                self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
+                self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
             with tqdm(total=len(self.val_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.val_loader:
@@ -396,11 +399,11 @@ class Train:
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, epoch)
 
             self.logger.info(
-                f"[Val] Epoch {epoch} : Prec@(1) {meter_top1.avg:.2f}"
+                f"{current_time} | [Val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
             )
 
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
+            self.logger.info(f"{current_time} | [Val mask avg] Epoch {epoch} : {masks}")
 
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
@@ -410,12 +413,13 @@ class Train:
                 self.save_ckpt(False)
 
             self.logger.info(
-                f" => Best top1 accuracy before finetune : {self.best_prec1:.2f}"
+                f"{current_time} |  => Best top1 accuracy before finetune : {self.best_prec1:.2f}"
             )
 
         self.logger.info("Training finished!")
         self.logger.info(f"Best top1 accuracy before finetune: {self.best_prec1:.2f}")
         # گزارش نهایی Flops و پارامترها
+        current_time = datetime.now().strftime("%m/%d %I:%M:%S %p")
         if os.path.exists(self.args.sparsed_student_ckpt_path):
             try:
                 (
@@ -429,17 +433,17 @@ class Train:
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
                 self.logger.info(
-                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                    f"{current_time} | Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
                     f"Params reduction: {Params_reduction:.2f}%"
                 )
                 self.logger.info(
-                    f"Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
+                    f"{current_time} | Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
                     f"Flops reduction: {Flops_reduction:.2f}%"
                 )
             except Exception as e:
-                self.logger.warning(f"Failed to calculate final Flops and Params: {str(e)}. Using default values.")
+                self.logger.warning(f"{current_time} | Failed to calculate final Flops and Params: {str(e)}. Using default values.")
         else:
-            self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist. Using default Flops and Params.")
+            self.logger.warning(f"{current_time} | Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist. Using default Flops and Params.")
 
     def main(self):
         self.result_init()
