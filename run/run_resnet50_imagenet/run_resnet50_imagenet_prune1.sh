@@ -1,4 +1,3 @@
-#!/bin/bash
 
 # Default values
 arch=ResNet_50
@@ -6,21 +5,19 @@ result_dir=/kaggle/working/results/run_resnet50_imagenet_prune1
 teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model.pth
 device=cuda
 
-# تنظیم متغیرهای محیطی برای CUDA
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-# بررسی وجود فایل چک‌پوینت معلم
+
 if [ ! -f "$teacher_ckpt_path" ]; then
     echo "Error: Teacher checkpoint not found at $teacher_ckpt_path"
     exit 1
 fi
 
-# ایجاد دایرکتوری نتایج
+
 mkdir -p $result_dir
 
-# Run training
 python /kaggle/working/KDFS/main.py \
     --phase train \
     --arch $arch \
@@ -30,7 +27,6 @@ python /kaggle/working/KDFS/main.py \
     --num_workers 4 \
     --pin_memory \
     --seed 3407 \
-    --num_epochs 100 \
     --lr 4e-3 \
     --warmup_steps 30 \
     --warmup_start_lr 4e-5 \
@@ -43,10 +39,8 @@ python /kaggle/working/KDFS/main.py \
     --gumbel_start_temperature 1 \
     --gumbel_end_temperature 0.1 \
     --coef_kdloss 0.05 \
-    --coef_rcloss 1000 \
-    --coef_maskloss 10000 \
     --compress_rate 0.6 \
-    "$@" \
+    "$@"
 && \
 # Run finetuning
 python /kaggle/working/KDFS/main.py \
