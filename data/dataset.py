@@ -5,14 +5,14 @@ import os
 import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
+import math
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        # اصلاح label_map برای سازگاری با مقادیر عددی 1 و 0
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0}  # پشتیبانی از هر دو فرمت
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0}
 
     def __len__(self):
         return len(self.data)
@@ -30,7 +30,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  # 'hardfake' or 'rvf10k'
+        dataset_mode,
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -47,46 +47,24 @@ class Dataset_selector(Dataset):
 
         self.dataset_mode = dataset_mode
 
-        # Define image size based on dataset_mode
+        # تعیین اندازه تصویر بر اساس دیتاست
         image_size = (256, 256) if dataset_mode == 'rvf10k' else (300, 300)
 
-        # Define transforms
-        transform_train = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomCrop(image_size[0], padding=8),
-            transforms.RandomRotation(20),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ])
-
-        transform_test = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ])
-
-        # Load data based on dataset_mode
+        # بارگذاری داده‌ها
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
-                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided for hardfake mode")
-            # Load and preprocess hardfakevsrealfaces
+                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
             full_data = pd.read_csv(hardfake_csv_file)
 
             def create_image_path(row):
                 folder = 'fake' if row['label'] == 'fake' else 'real'
-                img_name = row['images_id']
-                img_name = os.path.basename(img_name)
+                img_name = os.path.basename(row['images_id'])
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
                 return os.path.join(folder, img_name)
 
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
-
-            # Split into train and validation
             train_data, val_data = train_test_split(
                 full_data,
                 test_size=0.2,
@@ -96,64 +74,85 @@ class Dataset_selector(Dataset):
             train_data = train_data.reset_index(drop=True)
             val_data = val_data.reset_index(drop=True)
 
-        else:  # dataset_mode == 'rvf10k'
+        else:  # rvf10k
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
-                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided for rvf10k mode")
-            # Load rvf10k train data
+                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
-                folder = 'fake' if row['label'] == 0 else 'real'  # اصلاح برای مقادیر عددی
-                img_name = row['id']
-                img_name = os.path.basename(img_name)
+                folder = 'fake' if row['label'] == 0 else 'real'
+                img_name = os.path.basename(row['id'])
                 if not img_name.endswith('.jpg'):
                     img_name += '.jpg'
                 return os.path.join('rvf10k', split, folder, img_name)
 
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-
-            # Load rvf10k valid data
             val_data = pd.read_csv(rvf10k_valid_csv)
             val_data['images_id'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             root_dir = rvf10k_root_dir
 
-        # Debug: Print data statistics
-        print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train image paths:\n{train_data['images_id'].head()}")
-        print(f"Total train dataset size: {len(train_data)}")
-        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation image paths:\n{val_data['images_id'].head()}")
-        print(f"Total validation dataset size: {len(val_data)}")
-        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+        # محاسبه mean و std برای دیتاست آموزشی
+        stats_transform = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+        ])
+        temp_dataset = FaceDataset(train_data, root_dir, transform=stats_transform)
+        temp_loader = DataLoader(temp_dataset, batch_size=100, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
 
-        # Check for missing images
-        missing_train_images = []
-        for img_path in train_data['images_id']:
-            full_path = os.path.join(root_dir, img_path)
-            if not os.path.exists(full_path):
-                missing_train_images.append(full_path)
-        if missing_train_images:
-            print(f"Missing train images: {len(missing_train_images)}")
-            print("Sample missing train images:", missing_train_images[:5])
+        sum_r, sum_g, sum_b = 0.0, 0.0, 0.0
+        sum_sq_r, sum_sq_g, sum_sq_b = 0.0, 0.0, 0.0
+        total_pixels = 0
 
-        missing_val_images = []
-        for img_path in val_data['images_id']:
-            full_path = os.path.join(root_dir, img_path)
-            if not os.path.exists(full_path):
-                missing_val_images.append(full_path)
-        if missing_val_images:
-            print(f"Missing validation images: {len(missing_val_images)}")
-            print("Sample missing validation images:", missing_val_images[:5])
+        for batch in temp_loader:
+            images, _ = batch
+            batch_size, _, h, w = images.shape
+            batch_pixels = batch_size * h * w
+            sum_r += images[:, 0, :, :].sum().item()
+            sum_g += images[:, 1, :, :].sum().item()
+            sum_b += images[:, 2, :, :].sum().item()
+            sum_sq_r += (images[:, 0, :, :] ** 2).sum().item()
+            sum_sq_g += (images[:, 1, :, :] ** 2).sum().item()
+            sum_sq_b += (images[:, 2, :, :] ** 2).sum().item()
+            total_pixels += batch_pixels
 
-        # Create datasets
+        mean_r = sum_r / total_pixels
+        mean_g = sum_g / total_pixels
+        mean_b = sum_b / total_pixels
+        var_r = (sum_sq_r / total_pixels) - (mean_r ** 2)
+        var_g = (sum_sq_g / total_pixels) - (mean_g ** 2)
+        var_b = (sum_sq_b / total_pixels) - (mean_b ** 2)
+        std_r = math.sqrt(var_r)
+        std_g = math.sqrt(var_g)
+        std_b = math.sqrt(var_b)
+
+        print(f"میانگین محاسبه‌شده برای {dataset_mode}: ({mean_r:.4f}, {mean_g:.4f}, {mean_b:.4f})")
+        print(f"انحراف معیار محاسبه‌شده برای {dataset_mode}: ({std_r:.4f}, {std_g:.4f}, {std_b:.4f})")
+
+        # تعریف تبدیل‌ها با mean و std محاسبه‌شده
+        transform_train = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomCrop(image_size[0], padding=8),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(mean_r, mean_g, mean_b), std=(std_r, std_g, std_b)),
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(mean_r, mean_g, mean_b), std=(std_r, std_g, std_b)),
+        ])
+
+        # ساخت دیتاست‌ها
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
 
-        # Create data loaders
+        # ساخت DataLoaderها
         if ddp:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_dataset, shuffle=True
-            )
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             self.loader_train = DataLoader(
                 train_dataset,
                 batch_size=train_batch_size,
@@ -178,28 +177,7 @@ class Dataset_selector(Dataset):
             pin_memory=pin_memory,
         )
 
-        # Debug: Print loader sizes
-        print(f"Train loader batches: {len(self.loader_train)}")
-        print(f"Validation loader batches: {len(self.loader_test)}")
-
-        # Test a sample batch
-        try:
-            sample = next(iter(self.loader_train))
-            print(f"Sample train batch image shape: {sample[0].shape}")
-            print(f"Sample train batch labels: {sample[1]}")
-        except Exception as e:
-            print(f"Error loading sample train batch: {e}")
-
-        try:
-            sample = next(iter(self.loader_test))
-            print(f"Sample validation batch image shape: {sample[0].shape}")
-            print(f"Sample validation batch labels: {sample[1]}")
-        except Exception as e:
-            print(f"Error loading sample validation batch: {e}")
-
-
 if __name__ == "__main__":
-    # Example for hardfakevsrealfaces
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
@@ -208,7 +186,6 @@ if __name__ == "__main__":
         eval_batch_size=32,
     )
 
-    # Example for rvf10k
     dataset_rvf10k = Dataset_selector(
         dataset_mode='rvf10k',
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
