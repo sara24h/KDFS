@@ -273,7 +273,7 @@ class Train:
             gumbel_temperature = self.student.gumbel_temperature
 
             try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student, ticket=False)
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, ticket=False)
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
                 self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.6f}M")
@@ -306,7 +306,7 @@ class Train:
                     self.scaler.step(self.optim_mask)
                     self.scaler.update()
 
-                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1))
+                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(kd_loss.item(), n)
@@ -352,7 +352,7 @@ class Train:
             meter_top1.reset()
 
             try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student, ticket=True)
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, ticket=True)
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
                 self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item():.6f}M")
@@ -365,7 +365,7 @@ class Train:
                     targets = targets.to(self.device, non_blocking=True)
                     with torch.no_grad():
                         logits_student, _ = self.student(images)
-                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1))
+                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
                         _tqdm.set_postfix(
@@ -404,7 +404,7 @@ class Train:
                 Params_baseline,
                 Params,
                 Params_reduction,
-            ) = get_flops_and_params(self.args, model=self.student)
+            ) = get_flops_and_params(self.args)
             Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
             Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
             self.logger.info(
