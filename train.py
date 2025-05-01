@@ -394,7 +394,7 @@ class Train:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
-                        prec1, _ = utils.get_accuracy(logits_student, targets, topk=(1,))
+                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
 
