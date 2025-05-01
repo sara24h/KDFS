@@ -141,6 +141,18 @@ class Train:
         self.teacher.load_state_dict(state_dict, strict=True)
         self.teacher.eval()
 
+        self.logger.info("Evaluating teacher model on validation set...")
+        self.teacher.eval()
+        with torch.no_grad():
+            meter_top1 = meter.AverageMeter("TeacherAcc@1", ":6.2f")
+            for images, targets in self.val_loader:
+                images = images.to(self.device)
+                targets = targets.to(self.device)
+                logits, _ = self.teacher(images)
+                prec1 = utils.get_accuracy(logits, targets, topk=(1))
+                meter_top1.update(prec1.item(), images.size(0))
+            self.logger.info(f"Teacher validation accuracy: Prec@1 {meter_top1.avg:.2f}%")
+
     def define_loss(self):
         self.ori_loss = nn.CrossEntropyLoss()
         self.kd_loss = loss.KDLoss()
@@ -232,7 +244,6 @@ class Train:
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        # Initialize as tensors
         Flops_baseline = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         Flops = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         
@@ -261,16 +272,15 @@ class Train:
             self.student.update_gumbel_temperature(epoch - 1)
             gumbel_temperature = self.student.gumbel_temperature
 
-            # Update Flops based on current model state
             try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student)
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student, ticket=False)
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
                 Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                self.logger.info(f"Epoch {epoch} Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
+                self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.6f}M")
             except Exception as e:
                 self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
 
-            with tqdm(total=len(self.train_loader), ncols=100, desc=f"Train Epoch {epoch}/{self.num_epochs}") as _tqdm:
+            with tqdm(total=len(self.train_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
                     self.optim_weight.zero_grad()
                     self.optim_mask.zero_grad()
@@ -281,7 +291,7 @@ class Train:
                         logits_teacher, features_teacher = self.teacher(images)
                         logits_student, features_student = self.student(images, gumbel_temperature=gumbel_temperature)
                         ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = self.kd_loss(logits_teacher, logits_student)  # Fixed argument order
+                        kd_loss = self.kd_loss(logits_teacher, logits_student)
                         rc_loss = self.rc_loss(features_student, features_teacher)
                         mask_loss = self.mask_loss(Flops, Flops_baseline, self.compress_rate)
                         total_loss = (
@@ -296,7 +306,7 @@ class Train:
                     self.scaler.step(self.optim_mask)
                     self.scaler.update()
 
-                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1))
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(kd_loss.item(), n)
@@ -307,10 +317,7 @@ class Train:
 
                     _tqdm.set_postfix(
                         loss=f"{meter_loss.avg:.4f}",
-                        top1=f"{meter_top1.avg:.4f}",
-                        kd_loss=f"{meter_kdloss.avg:.4f}",
-                        rc_loss=f"{meter_rcloss.avg:.4f}",
-                        mask_loss=f"{meter_maskloss.avg:.4f}"
+                        top1=f"{meter_top1.avg:.4f}"
                     )
                     _tqdm.update(1)
                     time.sleep(0.01)
@@ -327,43 +334,54 @@ class Train:
             self.writer.add_scalar("train/lr/lr", lr, epoch)
 
             self.logger.info(
-                f"[Train] Epoch {epoch}: "
+                f"[Train] Epoch {epoch} : Gumbel_temperature {gumbel_temperature:.2f} "
                 f"LR {lr:.6f} "
                 f"OriLoss {meter_oriloss.avg:.4f} "
                 f"KDLoss {meter_kdloss.avg:.4f} "
                 f"RCLoss {meter_rcloss.avg:.4f} "
-                f"MaskLoss {meter_maskloss.avg:.4f} "
+                f"MaskLoss {meter_maskloss.avg:.6f} "
                 f"TotalLoss {meter_loss.avg:.4f} "
-                f"Prec@1 {meter_top1.avg:.2f}"
+                f"Prec@(1) {meter_top1.avg:.2f}"
             )
+
+            masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
+            self.logger.info(f"[Train mask avg] Epoch {epoch} : {masks}")
 
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            with torch.no_grad():
-                with tqdm(total=len(self.val_loader), ncols=100, desc=f"Val Epoch {epoch}/{self.num_epochs}") as _tqdm:
-                    for images, targets in self.val_loader:
-                        images = images.to(self.device, non_blocking=True)
-                        targets = targets.to(self.device, non_blocking=True)
+
+            try:
+                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, model=self.student, ticket=True)
+                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item():.6f}M")
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+
+            with tqdm(total=len(self.val_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
+                for images, targets in self.val_loader:
+                    images = images.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
+                    with torch.no_grad():
                         logits_student, _ = self.student(images)
-                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
-                        # Debug: Log some predictions
-                        preds = torch.argmax(logits_student, dim=1)
-                        self.logger.debug(f"Val batch preds: {preds[:5].tolist()}, targets: {targets[:5].tolist()}")
+                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1))
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
-                        _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
+                        _tqdm.set_postfix(
+                            top1=f"{meter_top1.avg:.4f}"
+                        )
                         _tqdm.update(1)
                         time.sleep(0.01)
 
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, epoch)
 
             self.logger.info(
-                f"[Val] Epoch {epoch}: Prec@1 {meter_top1.avg:.2f}"
+                f"[Val] Epoch {epoch} : Prec@(1) {meter_top1.avg:.2f}"
             )
 
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Mask avg] Epoch {epoch}: {masks}")
+            self.logger.info(f"[Val mask avg] Epoch {epoch} : {masks}")
 
             self.start_epoch += 1
             if self.best_prec1 < meter_top1.avg:
@@ -373,11 +391,11 @@ class Train:
                 self.save_ckpt(False)
 
             self.logger.info(
-                f" => Best top1 accuracy: {self.best_prec1:.2f}"
+                f" => Best top1 accuracy before finetune : {self.best_prec1:.2f}"
             )
 
         self.logger.info("Training finished!")
-        self.logger.info(f"Best top1 accuracy: {self.best_prec1:.2f}")
+        self.logger.info(f"Best top1 accuracy before finetune: {self.best_prec1:.2f}")
         try:
             (
                 Flops_baseline,
