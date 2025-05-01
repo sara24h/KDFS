@@ -5,14 +5,13 @@ import os
 import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
-import math
 
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0}
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0} 
 
     def __len__(self):
         return len(self.data)
@@ -47,10 +46,10 @@ class Dataset_selector(Dataset):
 
         self.dataset_mode = dataset_mode
 
-        # تعیین اندازه تصویر بر اساس دیتاست
+        
         image_size = (256, 256) if dataset_mode == 'rvf10k' else (300, 300)
 
-        # بارگذاری داده‌ها
+     
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
@@ -91,44 +90,38 @@ class Dataset_selector(Dataset):
             val_data['images_id'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
             root_dir = rvf10k_root_dir
 
-        # محاسبه mean و std برای دیتاست آموزشی
+     
         stats_transform = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
         ])
         temp_dataset = FaceDataset(train_data, root_dir, transform=stats_transform)
-        temp_loader = DataLoader(temp_dataset, batch_size=100, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
+        temp_loader = DataLoader(
+            temp_dataset,
+            batch_size=100,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory
+        )
 
-        sum_r, sum_g, sum_b = 0.0, 0.0, 0.0
-        sum_sq_r, sum_sq_g, sum_sq_b = 0.0, 0.0, 0.0
-        total_pixels = 0
+        mean = 0.0
+        std = 0.0
+        total_images = 0
 
-        for batch in temp_loader:
-            images, _ = batch
-            batch_size, _, h, w = images.shape
-            batch_pixels = batch_size * h * w
-            sum_r += images[:, 0, :, :].sum().item()
-            sum_g += images[:, 1, :, :].sum().item()
-            sum_b += images[:, 2, :, :].sum().item()
-            sum_sq_r += (images[:, 0, :, :] ** 2).sum().item()
-            sum_sq_g += (images[:, 1, :, :] ** 2).sum().item()
-            sum_sq_b += (images[:, 2, :, :] ** 2).sum().item()
-            total_pixels += batch_pixels
+        for images, _ in temp_loader:
+            batch_samples = images.size(0)
+            images = images.view(batch_samples, images.size(1), -1)
+            mean += images.mean(2).sum(0)
+            std += images.std(2).sum(0)
+            total_images += batch_samples
 
-        mean_r = sum_r / total_pixels
-        mean_g = sum_g / total_pixels
-        mean_b = sum_b / total_pixels
-        var_r = (sum_sq_r / total_pixels) - (mean_r ** 2)
-        var_g = (sum_sq_g / total_pixels) - (mean_g ** 2)
-        var_b = (sum_sq_b / total_pixels) - (mean_b ** 2)
-        std_r = math.sqrt(var_r)
-        std_g = math.sqrt(var_g)
-        std_b = math.sqrt(var_b)
+        mean /= total_images
+        std /= total_images
 
-        print(f"میانگین محاسبه‌شده برای {dataset_mode}: ({mean_r:.4f}, {mean_g:.4f}, {mean_b:.4f})")
-        print(f"انحراف معیار محاسبه‌شده برای {dataset_mode}: ({std_r:.4f}, {std_g:.4f}, {std_b:.4f})")
+        print(f"mean for {dataset_mode}: {mean}")
+        print(f"std for {dataset_mode}: {std}")
 
-        # تعریف تبدیل‌ها با mean و std محاسبه‌شده
+   
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -137,20 +130,20 @@ class Dataset_selector(Dataset):
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
             transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(mean_r, mean_g, mean_b), std=(std_r, std_g, std_b)),
+            transforms.Normalize(mean=mean, std=std),
         ])
 
         transform_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(mean_r, mean_g, mean_b), std=(std_r, std_g, std_b)),
+            transforms.Normalize(mean=mean, std=std),
         ])
 
-        # ساخت دیتاست‌ها
+ 
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
 
-        # ساخت DataLoaderها
+
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             self.loader_train = DataLoader(
