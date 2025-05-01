@@ -1,56 +1,116 @@
 import torch
-from thop import profile
+import argparse
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
+from thop import profile
 
-# مقادیر پایه برای ResNet-50
-Flops_baseline = 7690  # در میلیون
-Params_baseline = 23.51  # در میلیون
+# مقادیر پایه FLOPs و پارامترها برای هر دیتاست
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7690.0,  # مقدار تخمینی، باید تأیید شود
+        "rvf10k": 5000.0,  # مقدار تخمینی، باید تأیید شود
+    }
+}
+Params_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 23.50,  # مقدار تخمینی، باید تأیید شود
+        "rvf10k": 25.50,  # مقدار تخمینی، باید تأیید شود
+    }
+}
+image_sizes = {
+    "hardfakevsrealfaces": 300,  # فرض بر این است که اندازه تصویر 224x224 است
+    "rvf10k": 256,  # فرض بر این است که اندازه تصویر 224x224 است
+}
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="hardfakevsrealfaces",
+        choices=("hardfakevsrealfaces", "rvf10k"),
+        help="The type of dataset",
+    )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="ResNet_50",
+        choices=("ResNet_50",),
+        help="The architecture to prune",
+    )
+    parser.add_argument(
+        "--sparsed_student_ckpt_path",
+        type=str,
+        default=None,
+        help="The path where to load the sparsed student ckpt",
+    )
+    return parser.parse_args()
+
+def calculate_baselines(arch, dataset_type):
+  
+    model = eval(arch + "_sparse_" + dataset_type)()
+    input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
+    flops, params = profile(model, inputs=(input,), verbose=False)
+    return flops / (10**6), params / (10**6)
 
 def get_flops_and_params(args):
-    """
-    محاسبه FLOPs و پارامترهای مدل ResNet-50 sparse و pruned.
-    
-    Args:
-        args: آرگومان‌ها شامل arch، device، dataset_type، و sparsed_student_ckpt_path
-    
-    Returns:
-        tuple: (Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction)
-    """
-    # بررسی معماری
-    if args.arch != "ResNet_50":
-        raise ValueError("This script only supports ResNet_50 architecture")
-
-    # ساخت مدل sparse
-    student = ResNet_50_sparse_hardfakevsreal()
-    ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
+    student = eval(args.arch + "_sparse_" + args.dataset_type)()
+    ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu")
     student.load_state_dict(ckpt_student["student"])
 
-    # انتقال مدل به دستگاه مناسب
-    device = args.device if hasattr(args, "device") else ("cuda" if torch.cuda.is_available() else "cpu")
-    if device == "cuda":
-        student = student.cuda()
-
-    # استخراج ماسک‌ها
     mask_weights = [m.mask_weight for m in student.mask_modules]
-    masks = [torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1) for mask_weight in mask_weights]
-
-    # ساخت مدل pruned
-    pruned_model = ResNet_50_pruned_hardfakevsreal(masks=masks)
-    if device == "cuda":
-        pruned_model = pruned_model.cuda()
-
-    # تنظیم اندازه تصویر بر اساس dataset_type
-    image_size = 300 if args.dataset_type == "hardfakevsrealfaces" else 32
-    input = torch.rand([1, 3, image_size, image_size], device=device)
-    
-    # محاسبه FLOPs و پارامترها
+    masks = [
+        torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1)
+        for mask_weight in mask_weights
+    ]
+    pruned_model = eval(args.arch + "_pruned_" + args.dataset_type)(masks=masks)
+    input = torch.rand(
+        [1, 3, image_sizes[args.dataset_type], image_sizes[args.dataset_type]]
+    )
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
-    Flops /= 1e6  # تبدیل به میلیون
-    Params /= 1e6  # تبدیل به میلیون
 
-    # محاسبه درصد کاهش
-    Flops_reduction = (Flops_baseline - Flops) / Flops_baseline * 100.0
-    Params_reduction = (Params_baseline - Params) / Params_baseline * 100.0
+    # استفاده از مقادیر پایه خاص دیتاست
+    Flops_baseline = Flops_baselines[args.arch][args.dataset_type]
+    Params_baseline = Params_baselines[args.arch][args.dataset_type]
 
-    return Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction
+    Flops_reduction = (
+        (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
+    )
+    Params_reduction = (
+        (Params_baseline - Params / (10**6)) / Params_baseline * 100.0
+    )
+    return (
+        Flops_baseline,
+        Flops / (10**6),
+        Flops_reduction,
+        Params_baseline,
+        Params / (10**6),
+        Params_reduction,
+    )
+
+def main():
+    args = parse_args()
+
+    # محاسبه‌ی مقادیر پایه در صورت نیاز (اختیاری)
+    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type)
+    # print(f"Calculated Flops_baseline: {flops_base:.2f}M, Params_baseline: {params_base:.2f}M")
+
+    (
+        Flops_baseline,
+        Flops,
+        Flops_reduction,
+        Params_baseline,
+        Params,
+        Params_reduction,
+    ) = get_flops_and_params(args=args)
+    print(
+        "Params_baseline: %.2fM, Params: %.2fM, Params reduction: %.2f%%"
+        % (Params_baseline, Params, Params_reduction)
+    )
+    print(
+        "Flops_baseline: %.2fM, Flops: %.2fM, Flops reduction: %.2f%%"
+        % (Flops_baseline, Flops, Flops_reduction)
+    )
+
+if __name__ == "__main__":
+    main()
