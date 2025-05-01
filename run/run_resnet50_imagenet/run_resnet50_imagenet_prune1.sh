@@ -39,9 +39,10 @@ python /kaggle/working/KDFS/main.py \
     --gumbel_start_temperature 1 \
     --gumbel_end_temperature 0.1 \
     --coef_kdloss 0.05 \
+    --coef_rcloss 1.0 \
     --compress_rate 0.6 \
     "$@"
-&& \
+
 # Run finetuning
 python /kaggle/working/KDFS/main.py \
     --phase finetune \
