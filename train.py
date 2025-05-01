@@ -51,6 +51,14 @@ class Train:
         self.best_prec1 = 0
         self.scaler = GradScaler()
 
+        # تنظیم dataset_type بر اساس dataset_mode
+        if self.dataset_mode == "hardfake":
+            self.args.dataset_type = "hardfakevsrealfaces"
+        elif self.dataset_mode == "rvf10k":
+            self.args.dataset_type = "rvf10k"
+        else:
+            raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
+
     def result_init(self):
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
@@ -247,7 +255,10 @@ class Train:
         Flops_baseline = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         Flops = torch.tensor(7690.0, dtype=torch.float, device=self.device)
         
-        if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None:
+        # تنظیم مسیر پیش‌فرض برای sparsed_student_ckpt_path
+        self.args.sparsed_student_ckpt_path = os.path.join(self.result_dir, "student_model", f"{self.arch}_sparse_last.pt")
+
+        if hasattr(self.args, 'sparsed_student_ckpt_path') and self.args.sparsed_student_ckpt_path is not None and os.path.exists(self.args.sparsed_student_ckpt_path):
             try:
                 Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
                 Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
@@ -256,7 +267,7 @@ class Train:
             except Exception as e:
                 self.logger.warning(f"Failed to calculate Flops: {str(e)}. Using default values.")
         else:
-            self.logger.info(f"No sparsed_student_ckpt_path provided. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
+            self.logger.info(f"No valid sparsed_student_ckpt_path provided or file does not exist. Using default Flops: {Flops.item():.2f}M, Flops_baseline: {Flops_baseline.item():.2f}M")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.student.train()
@@ -272,13 +283,17 @@ class Train:
             self.student.update_gumbel_temperature(epoch - 1)
             gumbel_temperature = self.student.gumbel_temperature
 
-            try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, ticket=False)
-                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.6f}M")
-            except Exception as e:
-                self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+            # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
+            if os.path.exists(self.args.sparsed_student_ckpt_path):
+                try:
+                    Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
+                    Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                    Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                    self.logger.info(f"[Train model Flops] Epoch {epoch} : {Flops.item():.6f}M")
+                except Exception as e:
+                    self.logger.warning(f"Failed to calculate Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+            else:
+                self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
             with tqdm(total=len(self.train_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
@@ -351,13 +366,17 @@ class Train:
             self.student.ticket = True
             meter_top1.reset()
 
-            try:
-                Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args, ticket=True)
-                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-                self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item():.6f}M")
-            except Exception as e:
-                self.logger.warning(f"Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+            # فقط در صورت وجود فایل چک‌پوینت، Flops را محاسبه کن
+            if os.path.exists(self.args.sparsed_student_ckpt_path):
+                try:
+                    Flops_baseline, Flops, _, _, _, _ = get_flops_and_params(self.args)
+                    Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                    Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                    self.logger.info(f"[Val model Flops] Epoch {epoch} : {Flops.item():.6f}M")
+                except Exception as e:
+                    self.logger.warning(f"Failed to calculate Val Flops for epoch {epoch}: {str(e)}. Using previous Flops: {Flops.item():.2f}M")
+            else:
+                self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist for epoch {epoch}. Using previous Flops: {Flops.item():.2f}M")
 
             with tqdm(total=len(self.val_loader), ncols=100, desc=f"epoch: {epoch}/{self.num_epochs}") as _tqdm:
                 for images, targets in self.val_loader:
@@ -396,27 +415,31 @@ class Train:
 
         self.logger.info("Training finished!")
         self.logger.info(f"Best top1 accuracy before finetune: {self.best_prec1:.2f}")
-        try:
-            (
-                Flops_baseline,
-                Flops,
-                Flops_reduction,
-                Params_baseline,
-                Params,
-                Params_reduction,
-            ) = get_flops_and_params(self.args)
-            Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
-            Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
-            self.logger.info(
-                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
-                f"Params reduction: {Params_reduction:.2f}%"
-            )
-            self.logger.info(
-                f"Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
-                f"Flops reduction: {Flops_reduction:.2f}%"
-            )
-        except Exception as e:
-            self.logger.warning(f"Failed to calculate final Flops and Params: {str(e)}. Using default values.")
+        # گزارش نهایی Flops و پارامترها
+        if os.path.exists(self.args.sparsed_student_ckpt_path):
+            try:
+                (
+                    Flops_baseline,
+                    Flops,
+                    Flops_reduction,
+                    Params_baseline,
+                    Params,
+                    Params_reduction,
+                ) = get_flops_and_params(self.args)
+                Flops_baseline = torch.tensor(Flops_baseline, dtype=torch.float, device=self.device)
+                Flops = torch.tensor(Flops, dtype=torch.float, device=self.device)
+                self.logger.info(
+                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                    f"Params reduction: {Params_reduction:.2f}%"
+                )
+                self.logger.info(
+                    f"Flops_baseline: {Flops_baseline.item():.2f}M, Flops: {Flops.item():.2f}M, "
+                    f"Flops reduction: {Flops_reduction:.2f}%"
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to calculate final Flops and Params: {str(e)}. Using default values.")
+        else:
+            self.logger.warning(f"Checkpoint file {self.args.sparsed_student_ckpt_path} does not exist. Using default Flops and Params.")
 
     def main(self):
         self.result_init()
