@@ -49,7 +49,7 @@ class Train:
         self.gumbel_end_temperature = args.gumbel_end_temperature
         self.coef_kdloss = args.coef_kdloss
         self.coef_rcloss = args.coef_rcloss
-        self.coef_maskloss = args.coef_maskloss
+        self.coef_maskloss = 0.1  # کاهش برای دیتاست کوچک
         self.compress_rate = args.compress_rate
         self.resume = args.resume
 
@@ -68,18 +68,14 @@ class Train:
             raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
 
     def result_init(self):
-        # tensorboard
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
 
         self.writer = SummaryWriter(self.result_dir)
-
-        # log
         self.logger = utils.get_logger(
             os.path.join(self.result_dir, "train_logger.log"), "train_logger"
         )
 
-        # config
         self.logger.info("train config:")
         self.logger.info(str(json.dumps(vars(self.args), indent=4)))
         utils.record_config(
@@ -308,13 +304,12 @@ class Train:
                         logits_student / self.target_temperature,
                     )
 
-                    rc_loss = torch.tensor(0, device=images.device)  # Ensure rc_loss on correct device
+                    rc_loss = torch.tensor(0, device=images.device)
                     for i in range(len(feature_list_student)):
                         rc_loss = rc_loss + self.rc_loss(
                             feature_list_student[i], feature_list_teacher[i]
                         )
 
-                    # Correct selection of Flops_baseline
                     Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
                     Flops = self.student.get_flops()
                     mask_loss = self.mask_loss(
@@ -411,6 +406,9 @@ class Train:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
+                        # Log predictions
+                        preds = torch.argmax(logits_student, dim=1)
+                        self.logger.info(f"Predictions: {preds}, Targets: {targets}")
                         prec1, = utils.get_accuracy(logits_student, targets, topk=(1,))
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
