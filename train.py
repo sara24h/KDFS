@@ -166,7 +166,6 @@ class Train:
         self.student.dataset_type = self.args.dataset_type
 
     def define_loss(self):
-        # Define class weights for imbalanced dataset
         class_weights = torch.tensor([1.0, 560/471]).cuda() if self.device == "cuda" else torch.tensor([1.0, 560/471])
         self.ori_loss = nn.CrossEntropyLoss(weight=class_weights)
         self.kd_loss = loss.KDLoss()
@@ -212,8 +211,12 @@ class Train:
         )
 
     def resume_student_ckpt(self):
-        if not os.path.exists(self.resume):
-            raise FileNotFoundError(f"Checkpoint file not found: {self.resume}")
+        self.logger.info(f"Resume path: {self.resume}")
+        if not self.resume or not os.path.exists(self.resume):
+            self.logger.info("No checkpoint provided or file not found. Starting from epoch 1.")
+            self.start_epoch = 0
+            return
+        self.logger.info(f"Loading checkpoint from: {self.resume}")
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
         self.best_prec1 = ckpt_student["best_prec1"]
         self.start_epoch = ckpt_student["start_epoch"]
@@ -226,7 +229,7 @@ class Train:
         self.scheduler_student_mask.load_state_dict(
             ckpt_student["scheduler_student_mask"]
         )
-        self.logger.info("=> Continue from epoch {}...".format(self.start_epoch + 1))
+        self.logger.info(f"=> Continuing from epoch {self.start_epoch + 1}...")
 
     def save_student_ckpt(self, is_best, epoch):
         folder = os.path.join(self.result_dir, "student_model")
@@ -235,7 +238,7 @@ class Train:
 
         ckpt_student = {}
         ckpt_student["best_prec1"] = self.best_prec1
-        ckpt_student["start_epoch"] = epoch  # Save current epoch
+        ckpt_student["start_epoch"] = epoch
         ckpt_student["student"] = self.student.state_dict()
         ckpt_student["optim_weight"] = self.optim_weight.state_dict()
         ckpt_student["optim_mask"] = self.optim_mask.state_dict()
@@ -254,11 +257,12 @@ class Train:
         torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def train(self):
-        # Debug: Print start_epoch before training
+        self.logger.info(f"Resume path: {self.resume}")
+        self.logger.info(f"Initial start_epoch: {self.start_epoch}")
         self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
 
         if self.device == "cuda":
-            torch.cuda.empty_cache()  # Clear GPU memory
+            torch.cuda.empty_cache()
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
@@ -278,6 +282,7 @@ class Train:
 
         self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
+            self.logger.info(f"Starting epoch {epoch}")
             self.student.train()
             self.student.ticket = False
             meter_oriloss.reset()
@@ -414,9 +419,6 @@ class Train:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
-                        # Log predictions
-                        preds = torch.argmax(logits_student, dim=1)
-                        self.logger.info(f"Predictions: {preds}, Targets: {targets}")
                         prec1, = utils.get_accuracy(logits_student, targets, topk=(1,))
                         n = images.size(0)
                         meter_top1.update(prec1.item(), n)
@@ -449,7 +451,6 @@ class Train:
                 + "M"
             )
 
-            # Save checkpoint with current epoch
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
