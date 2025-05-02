@@ -36,11 +36,11 @@ class SoftMaskedConv2d(nn.Module):
 
     def compute_mask(self, ticket):
         if ticket:
-            mask = torch.argmax(self.mask_weight, dim=1).unsqueeze(1).float()
+            mask = torch.argmax(self.mask_weight, dim=1).float().view(-1, 1, 1, 1)
         else:
             mask = F.gumbel_softmax(
                 logits=self.mask_weight, tau=self.gumbel_temperature, hard=True, dim=1
-            )[:, 1, :, :].unsqueeze(1)
+            )[:, 1, :, :].view(-1, 1, 1, 1)
         return mask
 
     def forward(self, x, ticket):
@@ -182,6 +182,7 @@ class BasicBlock_sparse(nn.Module):
                     self.expansion * planes,
                     kernel_size=1,
                     stride=stride,
+                    bias=False
                 ),
                 nn.BatchNorm2d(self.expansion * planes),
             )
@@ -217,25 +218,29 @@ class Bottleneck_sparse(nn.Module):
                     self.expansion * planes,
                     kernel_size=1,
                     stride=stride,
+                    bias=False
                 ),
                 nn.BatchNorm2d(self.expansion * planes),
             )
 
     def forward(self, x, ticket):
+        # Debug print to check tensor shapes
+        print(f"Input shape: {x.shape}")
+        
         out = self.conv1(x, ticket)
-        out = out * self.conv1.mask
+        print(f"conv1 out shape: {out.shape}, conv1 mask shape: {self.conv1.mask.shape}")
         out = F.relu(self.bn1(out))
         
         out = self.conv2(out, ticket)
-        out = out * self.conv2.mask
+        print(f"conv2 out shape: {out.shape}, conv2 mask shape: {self.conv2.mask.shape}")
         out = F.relu(self.bn2(out))
         
         out = self.conv3(out, ticket)
-        out = out * self.conv3.mask
+        print(f"conv3 out shape: {out.shape}, conv3 mask shape: {self.conv3.mask.shape}")
         out = self.bn3(out)
         
         shortcut = self.downsample(x)
-        print(f"ticket: {ticket}, out shape: {out.shape}, shortcut shape: {shortcut.shape}")
+        print(f"out shape: {out.shape}, shortcut shape: {shortcut.shape}")
         out += shortcut
         out = F.relu(out)
         return out
@@ -341,3 +346,4 @@ def ResNet_50_sparse_rvf10k(
         num_epochs=num_epochs,
         dataset_type="rvf10k"
     )
+
