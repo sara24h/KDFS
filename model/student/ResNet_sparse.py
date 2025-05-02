@@ -222,9 +222,18 @@ class Bottleneck_sparse(nn.Module):
             )
 
     def forward(self, x, ticket):
-        out = F.relu(self.bn1(self.conv1(x, ticket)))
-        out = F.relu(self.bn2(self.conv2(out, ticket)))
-        out = self.bn3(self.conv3(out, ticket))
+        out = self.conv1(x, ticket)
+        out = out * self.conv1.mask
+        out = F.relu(self.bn1(out))
+        
+        out = self.conv2(out, ticket)
+        out = out * self.conv2.mask
+        out = F.relu(self.bn2(out))
+        
+        out = self.conv3(out, ticket)
+        out = out * self.conv3.mask
+        out = self.bn3(out)
+        
         shortcut = self.downsample(x)
         print(f"ticket: {ticket}, out shape: {out.shape}, shortcut shape: {shortcut.shape}")
         out += shortcut
