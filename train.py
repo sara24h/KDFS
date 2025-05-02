@@ -49,7 +49,7 @@ class Train:
         self.gumbel_end_temperature = args.gumbel_end_temperature
         self.coef_kdloss = args.coef_kdloss
         self.coef_rcloss = args.coef_rcloss
-        self.coef_maskloss = 0.1  # کاهش برای دیتاست کوچک
+        self.coef_maskloss = args.coef_maskloss
         self.compress_rate = args.compress_rate
         self.resume = args.resume
 
