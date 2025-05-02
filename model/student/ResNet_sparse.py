@@ -225,22 +225,22 @@ class Bottleneck_sparse(nn.Module):
 
     def forward(self, x, ticket):
         # Debug print to check tensor shapes
-        print(f"Input shape: {x.shape}")
+        #print(f"Input shape: {x.shape}")
         
         out = self.conv1(x, ticket)
-        print(f"conv1 out shape: {out.shape}, conv1 mask shape: {self.conv1.mask.shape}")
+        #print(f"conv1 out shape: {out.shape}, conv1 mask shape: {self.conv1.mask.shape}")
         out = F.relu(self.bn1(out))
         
         out = self.conv2(out, ticket)
-        print(f"conv2 out shape: {out.shape}, conv2 mask shape: {self.conv2.mask.shape}")
+        #print(f"conv2 out shape: {out.shape}, conv2 mask shape: {self.conv2.mask.shape}")
         out = F.relu(self.bn2(out))
         
         out = self.conv3(out, ticket)
-        print(f"conv3 out shape: {out.shape}, conv3 mask shape: {self.conv3.mask.shape}")
+        #print(f"conv3 out shape: {out.shape}, conv3 mask shape: {self.conv3.mask.shape}")
         out = self.bn3(out)
         
         shortcut = self.downsample(x)
-        print(f"out shape: {out.shape}, shortcut shape: {shortcut.shape}")
+        #print(f"out shape: {out.shape}, shortcut shape: {shortcut.shape}")
         out += shortcut
         out = F.relu(out)
         return out
