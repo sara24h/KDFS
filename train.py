@@ -166,7 +166,9 @@ class Train:
         self.student.dataset_type = self.args.dataset_type
 
     def define_loss(self):
-        self.ori_loss = nn.CrossEntropyLoss()
+        # Define class weights for imbalanced dataset
+        class_weights = torch.tensor([1.0, 560/471]).cuda() if self.device == "cuda" else torch.tensor([1.0, 560/471])
+        self.ori_loss = nn.CrossEntropyLoss(weight=class_weights)
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
@@ -210,6 +212,8 @@ class Train:
         )
 
     def resume_student_ckpt(self):
+        if not os.path.exists(self.resume):
+            raise FileNotFoundError(f"Checkpoint file not found: {self.resume}")
         ckpt_student = torch.load(self.resume, map_location="cpu", weights_only=True)
         self.best_prec1 = ckpt_student["best_prec1"]
         self.start_epoch = ckpt_student["start_epoch"]
@@ -222,16 +226,16 @@ class Train:
         self.scheduler_student_mask.load_state_dict(
             ckpt_student["scheduler_student_mask"]
         )
-        self.logger.info("=> Continue from epoch {}...".format(self.start_epoch))
+        self.logger.info("=> Continue from epoch {}...".format(self.start_epoch + 1))
 
-    def save_student_ckpt(self, is_best):
+    def save_student_ckpt(self, is_best, epoch):
         folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
 
         ckpt_student = {}
         ckpt_student["best_prec1"] = self.best_prec1
-        ckpt_student["start_epoch"] = self.start_epoch
+        ckpt_student["start_epoch"] = epoch  # Save current epoch
         ckpt_student["student"] = self.student.state_dict()
         ckpt_student["optim_weight"] = self.optim_weight.state_dict()
         ckpt_student["optim_mask"] = self.optim_mask.state_dict()
@@ -250,7 +254,11 @@ class Train:
         torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def train(self):
+        # Debug: Print start_epoch before training
+        self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
+
         if self.device == "cuda":
+            torch.cuda.empty_cache()  # Clear GPU memory
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
@@ -261,7 +269,7 @@ class Train:
         if self.resume:
             self.resume_student_ckpt()
 
-        meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
+        meter_oriloss = meter.AverageMeter("OriLoss", ":.Tournament")
         meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
         meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
@@ -441,12 +449,12 @@ class Train:
                 + "M"
             )
 
-            self.start_epoch += 1
+            # Save checkpoint with current epoch
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
-                self.save_student_ckpt(True)
+                self.save_student_ckpt(True, epoch)
             else:
-                self.save_student_ckpt(False)
+                self.save_student_ckpt(False, epoch)
 
             self.logger.info(
                 " => Best top1 accuracy before finetune : " + str(self.best_prec1)
