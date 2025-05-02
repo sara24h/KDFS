@@ -8,42 +8,62 @@ from thop import profile
 class SoftMaskedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
-        self.mask = nn.Parameter(torch.ones(out_channels))
-        self.feature_map_h = None
-        self.feature_map_w = None
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.weight = nn.Parameter(torch.Tensor(out_channels, in_channels, kernel_size, kernel_size))
+        self.bias = nn.Parameter(torch.Tensor(out_channels)) if bias else None
+        self.init_weight()
+        self.init_mask()
+        self.mask = torch.ones([out_channels, 1, 1, 1])
         self.gumbel_temperature = 1.0
+        self.feature_map_h = 0
+        self.feature_map_w = 0
+
+    def init_weight(self):
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            if fan_in != 0:
+                bound = 1 / math.sqrt(fan_in)
+                nn.init.uniform_(self.bias, -bound, bound)
+
+    def init_mask(self):
+        self.mask_weight = nn.Parameter(torch.Tensor(self.out_channels, 2, 1, 1))
+        nn.init.kaiming_normal_(self.mask_weight)
+
+    def compute_mask(self, ticket):
+        if ticket:
+            mask = torch.argmax(self.mask_weight, dim=1).unsqueeze(1).float()
+        else:
+            mask = F.gumbel_softmax(
+                logits=self.mask_weight, tau=self.gumbel_temperature, hard=True, dim=1
+            )[:, 1, :, :].unsqueeze(1)
+        return mask
 
     def forward(self, x, ticket):
-        if self.feature_map_h is None:
-            self.feature_map_h = (x.size(2) - self.kernel_size + 2 * self.padding) // self.stride + 1
-            self.feature_map_w = (x.size(3) - self.kernel_size + 2 * self.padding) // self.stride + 1
-        if ticket:
-            mask = (self.mask > 0).float()
-        else:
-            mask = F.gumbel_softmax(self.mask, tau=self.gumbel_temperature, hard=False)
-        out = self.conv(x)
-        out = out * mask.view(1, -1, 1, 1)
+        self.mask = self.compute_mask(ticket)
+        masked_weight = self.weight * self.mask
+        out = F.conv2d(
+            x, weight=masked_weight, bias=self.bias, stride=self.stride, padding=self.padding
+        )
+        self.feature_map_h, self.feature_map_w = out.shape[2], out.shape[3]
         return out
 
     def update_gumbel_temperature(self, temperature):
         self.gumbel_temperature = temperature
 
     def checkpoint(self):
-        self.checkpoint_conv = copy.deepcopy(self.conv.state_dict())
-        self.checkpoint_mask = self.mask.data.clone()
+        self.checkpoint_state = self.state_dict()
 
     def rewind_weights(self):
-        self.conv.load_state_dict(self.checkpoint_conv)
-        self.mask.data = self.checkpoint_mask.clone()
+        if hasattr(self, 'checkpoint_state'):
+            self.load_state_dict(self.checkpoint_state)
 
 class MaskedNet(nn.Module):
-    def __init__(self, gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250):
+    def __init__(self, gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200):
         super().__init__()
         self.gumbel_start_temperature = gumbel_start_temperature
         self.gumbel_end_temperature = gumbel_end_temperature
@@ -140,8 +160,6 @@ class MaskedNet(nn.Module):
             )
         return Flops_total
 
-   
-
 class BasicBlock_sparse(nn.Module):
     expansion = 1
 
@@ -219,9 +237,9 @@ class ResNet_sparse(MaskedNet):
         block,
         num_blocks,
         num_classes=2,
-        gumbel_start_temperature=1.0,
-        gumbel_end_temperature=0.1,
-        num_epochs=250,
+        gumbel_start_temperature=2.0,
+        gumbel_end_temperature=0.5,
+        num_epochs=200,
         dataset_type="hardfakevsrealfaces"
     ):
         super().__init__(
@@ -290,7 +308,7 @@ class ResNet_sparse(MaskedNet):
         return out, feature_list
 
 def ResNet_50_sparse_hardfakevsreal(
-    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250
+    gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200
 ):
     return ResNet_sparse(
         block=Bottleneck_sparse,
@@ -303,7 +321,7 @@ def ResNet_50_sparse_hardfakevsreal(
     )
 
 def ResNet_50_sparse_rvf10k(
-    gumbel_start_temperature=1.0, gumbel_end_temperature=0.1, num_epochs=250
+    gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200
 ):
     return ResNet_sparse(
         block=Bottleneck_sparse,
