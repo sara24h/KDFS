@@ -207,7 +207,9 @@ class Bottleneck_sparse(nn.Module):
         out = F.relu(self.bn1(self.conv1(x, ticket)))
         out = F.relu(self.bn2(self.conv2(out, ticket)))
         out = self.bn3(self.conv3(out, ticket))
-        out += self.downsample(x)
+        shortcut = self.downsample(x)
+        print(f"ticket: {ticket}, out shape: {out.shape}, shortcut shape: {shortcut.shape}")
+        out += shortcut
         out = F.relu(out)
         return out
 
