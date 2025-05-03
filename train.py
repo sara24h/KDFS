@@ -8,8 +8,8 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from torchvision import models
 from data.dataset import Dataset_selector
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
@@ -58,11 +58,11 @@ class Train:
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 2
+            self.num_classes = 1  # تغییر به 1 برای خروجی باینری
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
-            self.num_classes = 2
+            self.num_classes = 1  # تغییر به 1 برای خروجی باینری
             self.image_size = 256
         else:
             raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
@@ -146,7 +146,10 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
-        self.teacher = ResNet_50_hardfakevsreal()
+        # تغییر مدل معلم به resnet50 با یک خروجی
+        self.teacher = models.resnet50(pretrained=False)
+        num_ftrs = self.teacher.fc.in_features
+        self.teacher.fc = nn.Linear(num_ftrs, 1)  # خروجی باینری
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         self.teacher.load_state_dict(ckpt_teacher, strict=True)
 
@@ -165,11 +168,14 @@ class Train:
             )
         self.student.dataset_type = self.args.dataset_type
 
+        # تغییر لایه نهایی دانش‌آموز به یک خروجی
+        num_ftrs = self.student.fc.in_features
+        self.student.fc = nn.Linear(num_ftrs, 1)
+
     def define_loss(self):
-        # Define class weights for imbalanced dataset
-        class_weights = torch.tensor([1.0, 560/471]).cuda() if self.device == "cuda" else torch.tensor([1.0, 560/471])
-        self.ori_loss = nn.CrossEntropyLoss(weight=class_weights)
-        self.kd_loss = loss.KDLoss()
+        # تغییر معیارها به BCEWithLogitsLoss
+        self.ori_loss = nn.BCEWithLogitsLoss()
+        self.kd_loss = nn.BCEWithLogitsLoss()  # تغییر به BCE برای تقطیر دانش
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
@@ -235,7 +241,7 @@ class Train:
 
         ckpt_student = {}
         ckpt_student["best_prec1"] = self.best_prec1
-        ckpt_student["start_epoch"] = epoch  # Save current epoch
+        ckpt_student["start_epoch"] = epoch
         ckpt_student["student"] = self.student.state_dict()
         ckpt_student["optim_weight"] = self.optim_weight.state_dict()
         ckpt_student["optim_mask"] = self.optim_mask.state_dict()
@@ -254,11 +260,10 @@ class Train:
         torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def train(self):
-        # Debug: Print start_epoch before training
         self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
 
         if self.device == "cuda":
-            torch.cuda.empty_cache()  # Clear GPU memory
+            torch.cuda.empty_cache()
             self.teacher = self.teacher.cuda()
             self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
@@ -269,7 +274,7 @@ class Train:
         if self.resume:
             self.resume_student_ckpt()
 
-        meter_oriloss = meter.AverageMeter("OriLoss", ":.Tournament")
+        meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
         meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
@@ -301,16 +306,16 @@ class Train:
                     self.optim_mask.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
-                        targets = targets.cuda()
+                        targets = targets.cuda().float()  # تبدیل به float
+
                     logits_student, feature_list_student = self.student(images)
+                    logits_student = logits_student.squeeze(1)  # تبدیل به تک‌بعدی
                     with torch.no_grad():
                         logits_teacher, feature_list_teacher = self.teacher(images)
+                        logits_teacher = logits_teacher.squeeze(1)  # تبدیل به تک‌بعدی
 
                     ori_loss = self.ori_loss(logits_student, targets)
-                    kd_loss = (self.target_temperature**2) * self.kd_loss(
-                        logits_teacher / self.target_temperature,
-                        logits_student / self.target_temperature,
-                    )
+                    kd_loss = self.kd_loss(logits_teacher, logits_student)
 
                     rc_loss = torch.tensor(0, device=images.device)
                     for i in range(len(feature_list_student)):
@@ -335,7 +340,10 @@ class Train:
                     self.optim_weight.step()
                     self.optim_mask.step()
 
-                    prec1, = utils.get_accuracy(logits_student, targets, topk=(1,))
+                    # محاسبه دقت برای خروجی باینری
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
@@ -344,7 +352,7 @@ class Train:
                     )
                     meter_maskloss.update(self.coef_maskloss * mask_loss.item(), n)
                     meter_loss.update(total_loss.item(), n)
-                    meter_top1.update(prec1.item(), n)
+                    meter_top1.update(prec1, n)
 
                     _tqdm.set_postfix(
                         loss="{:.4f}".format(meter_loss.avg),
@@ -412,14 +420,16 @@ class Train:
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
-                            targets = targets.cuda()
+                            targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
-                        # Log predictions
-                        preds = torch.argmax(logits_student, dim=1)
-                        self.logger.info(f"Predictions: {preds}, Targets: {targets}")
-                        prec1, = utils.get_accuracy(logits_student, targets, topk=(1,))
+                        logits_student = logits_student.squeeze(1)
+
+                        # محاسبه دقت برای اعتبارسنجی
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
-                        meter_top1.update(prec1.item(), n)
+                        meter_top1.update(prec1, n)
 
                         _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
@@ -449,7 +459,6 @@ class Train:
                 + "M"
             )
 
-            # Save checkpoint with current epoch
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
