@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
+from torchvision import models
 from PIL import Image
 import argparse
 import random
@@ -13,18 +14,16 @@ import numpy as np
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 
-# Import classes from dataset.py
+
 from data.dataset import FaceDataset, Dataset_selector
-from model.teacher.ResNet import ResNet_50_hardfakevsreal
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train a ResNet-based model for fake vs real face classification.')
+    parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k'],
                         help='Dataset to use: hardfake or rvf10k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
-    parser.add_argument('--base_model_weights', type=str, default='/kaggle/input/resnet50-pth/resnet50-19c8e357.pth',
-                        help='Path to the pretrained ResNet50 weights')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained model and outputs')
     parser.add_argument('--img_height', type=int, default=300,
@@ -41,10 +40,9 @@ def parse_args():
 
 args = parse_args()
 
-# تنظیم متغیرها
+
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
-base_model_weights = args.base_model_weights
 teacher_dir = args.teacher_dir
 img_height = 256 if dataset_mode == 'rvf10k' else args.img_height
 img_width = 256 if dataset_mode == 'rvf10k' else args.img_width
@@ -53,15 +51,12 @@ epochs = args.epochs
 lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# بررسی وجود مسیرها
+
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
-if not os.path.exists(base_model_weights):
-    raise FileNotFoundError(f"Pretrained weights {base_model_weights} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# تعریف دیتاست‌ها با استفاده از Dataset_selector
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
         dataset_mode='hardfake',
@@ -88,42 +83,46 @@ elif dataset_mode == 'rvf10k':
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake' or 'rvf10k'.")
 
-# تعریف دیتالودرها
+
 train_loader = dataset.loader_train
 val_loader = dataset.loader_test
-test_loader = val_loader  # برای ساده‌سازی، از val_loader به‌عنوان test_loader استفاده می‌کنیم
+test_loader = val_loader  
 
-# تعریف مدل
-model = ResNet_50_hardfakevsreal()
+
+model = models.resnet50(pretrained=True)  
+num_ftrs = model.fc.in_features
+model.fc = nn.Linear(num_ftrs, 1)  
 model = model.to(device)
 
-# بارگذاری وزن‌های پیش‌آموزش‌دیده
-state_dict = torch.load(base_model_weights, weights_only=True)
-state_dict.pop('fc.weight', None)
-state_dict.pop('fc.bias', None)
-model.load_state_dict(state_dict, strict=False)
 
-# تعریف معیار و بهینه‌ساز
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=lr)
+for param in model.parameters():
+    param.requires_grad = False
+for param in model.fc.parameters():
+    param.requires_grad = True
 
-# حلقه آموزش
+
+criterion = nn.BCEWithLogitsLoss()  
+optimizer = optim.Adam(model.fc.parameters(), lr=lr) 
+
+
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
     correct_train = 0
     total_train = 0
     for images, labels in train_loader:
-        images, labels = images.to(device), labels.to(device).long()
+        images = images.to(device)
+        labels = labels.to(device).float() 
         optimizer.zero_grad()
-        outputs, _ = model(images)
+        outputs = model(images).squeeze(1)  # فشرده‌سازی خروجی
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-        _, predicted = torch.max(outputs, 1)
+        # محاسبه دقت
+        preds = (torch.sigmoid(outputs) > 0.5).float()
+        correct_train += (preds == labels).sum().item()
         total_train += labels.size(0)
-        correct_train += (predicted == labels).sum().item()
     
     train_loss = running_loss / len(train_loader)
     train_accuracy = 100 * correct_train / total_train
@@ -136,13 +135,14 @@ for epoch in range(epochs):
     total_val = 0
     with torch.no_grad():
         for images, labels in val_loader:
-            images, labels = images.to(device), labels.to(device).long()
-            outputs, _ = model(images)
+            images = images.to(device)
+            labels = labels.to(device).float()
+            outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
             val_loss += loss.item()
-            _, predicted = torch.max(outputs, 1)
+            preds = (torch.sigmoid(outputs) > 0.5).float()
+            correct_val += (preds == labels).sum().item()
             total_val += labels.size(0)
-            correct_val += (predicted == labels).sum().item()
     
     val_loss = val_loss / len(val_loader)
     val_accuracy = 100 * correct_val / total_val
@@ -155,17 +155,18 @@ correct = 0
 total = 0
 with torch.no_grad():
     for images, labels in test_loader:
-        images, labels = images.to(device), labels.to(device).long()
-        outputs, _ = model(images)
+        images = images.to(device)
+        labels = labels.to(device).float()
+        outputs = model(images).squeeze(1)
         loss = criterion(outputs, labels)
         test_loss += loss.item()
-        _, predicted = torch.max(outputs, 1)
+        preds = (torch.sigmoid(outputs) > 0.5).float()
+        correct += (preds == labels).sum().item()
         total += labels.size(0)
-        correct += (predicted == labels).sum().item()
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 # نمایش نمونه‌های تست
-val_data = dataset.loader_test.dataset.data  # DataFrame اعتبارسنجی
+val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
 random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
@@ -185,9 +186,9 @@ with torch.no_grad():
             continue
         image = Image.open(img_path).convert('RGB')
         image_transformed = transform_test(image).unsqueeze(0).to(device)
-        output, _ = model(image_transformed)
-        _, predicted = torch.max(output, 1)
-        predicted_label = 'real' if predicted.item() == 1 else 'fake'
+        output = model(image_transformed).squeeze(1)
+        prob = torch.sigmoid(output).item()
+        predicted_label = 'real' if prob > 0.5 else 'fake'
         true_label = 'real' if label_str == 'real' else 'fake'
         axes[i].imshow(image)
         axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
