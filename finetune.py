@@ -38,7 +38,7 @@ class Finetune:
         self.finetune_lr_decay_T_max = args.finetune_lr_decay_T_max
         self.finetune_lr_decay_eta_min = args.finetune_lr_decay_eta_min
         self.finetune_weight_decay = args.finetune_weight_decay
-        self.finetune_resume = args.resume  # استفاده از resume به جای finetune_resume
+        self.finetune_resume = args.resume
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
@@ -190,7 +190,7 @@ class Finetune:
 
         # اضافه کردن dataset_type به args اگر وجود ندارد
         if not hasattr(self.args, 'dataset_type'):
-            self.args.dataset_type = "hardfakevsrealfaces" if self.args.dataset_mode == "hardfake" else "rvf10k"
+            self.args.dataset_type = "hardfakevsreal" if self.args.dataset_mode == "hardfake" else "rvf10k"
 
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
