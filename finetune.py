@@ -15,6 +15,7 @@ from get_flops_and_params import get_flops_and_params
 # تنظیمات محیطی برای جلوگیری از خطاهای CUDA
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # برای دیباگ خطاهای CUDA
 
 class Finetune:
     def __init__(self, args):
@@ -117,14 +118,14 @@ class Finetune:
     def build_model(self):
         self.logger.info("==> Building sparse student model for fine-tuning..")
         self.student = ResNet_50_sparse_hardfakevsreal()
-        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
+        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
         self.student.load_state_dict(state_dict, strict=False)
         self.best_prec1_before_finetune = ckpt_student.get("best_prec1", 0.0)
         self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.CrossEntropyLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss()  # مناسب برای طبقه‌بندی باینری
 
     def define_optim(self):
         weight_params = [p for n, p in self.student.named_parameters() if p.requires_grad and "mask" not in n]
@@ -143,7 +144,7 @@ class Finetune:
         )
 
     def resume_student_ckpt(self):
-        ckpt_student = torch.load(self.finetune_resume, map_location="cpu")
+        ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.load_state_dict(ckpt_student["student"])
@@ -182,6 +183,7 @@ class Finetune:
     def finetune(self):
         if self.device == "cuda":
             self.ori_loss = self.ori_loss.cuda()
+            torch.cuda.empty_cache()
 
         if self.finetune_resume:
             self.resume_student_ckpt()
@@ -190,7 +192,7 @@ class Finetune:
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
+        for epoch in range(self.start_epoch, self.finetune_num_epochs):
             self.student.train()
             self.student.ticket = True
             meter_oriloss.reset()
@@ -198,26 +200,29 @@ class Finetune:
             meter_top1.reset()
             finetune_lr = (
                 self.finetune_optim_weight.state_dict()["param_groups"][0]["lr"]
-                if epoch > 1
+                if epoch > 0
                 else self.finetune_warmup_start_lr
             )
 
-            with tqdm(total=len(self.train_loader), ncols=100, desc=f"Finetune Epoch {epoch}/{self.finetune_num_epochs}") as _tqdm:
+            with tqdm(total=len(self.train_loader), ncols=100, desc=f"Finetune Epoch {epoch+1}/{self.finetune_num_epochs}") as _tqdm:
                 for images, targets in self.train_loader:
                     self.finetune_optim_weight.zero_grad()
                     images = images.to(self.device, non_blocking=True)
-                    targets = targets.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True).float()
                     logits_student, _ = self.student(images)
+                    logits_student = logits_student.squeeze()  # تبدیل به (batch_size,)
                     ori_loss = self.ori_loss(logits_student, targets)
                     total_loss = ori_loss
                     total_loss.backward()
                     self.finetune_optim_weight.step()
 
-                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_loss.update(total_loss.item(), n)
-                    meter_top1.update(prec1.item(), n)
+                    meter_top1.update(prec1, n)
 
                     _tqdm.set_postfix(loss=f"{meter_loss.avg:.4f}", top1=f"{meter_top1.avg:.4f}")
                     _tqdm.update(1)
@@ -225,13 +230,13 @@ class Finetune:
 
             self.finetune_scheduler_student_weight.step()
 
-            self.writer.add_scalar("finetune_train/loss/ori_loss", meter_oriloss.avg, epoch)
-            self.writer.add_scalar("finetune_train/loss/total_loss", meter_loss.avg, epoch)
-            self.writer.add_scalar("finetune_train/acc/top1", meter_top1.avg, epoch)
-            self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch)
+            self.writer.add_scalar("finetune_train/loss/ori_loss", meter_oriloss.avg, epoch + 1)
+            self.writer.add_scalar("finetune_train/loss/total_loss", meter_loss.avg, epoch + 1)
+            self.writer.add_scalar("finetune_train/acc/top1", meter_top1.avg, epoch + 1)
+            self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch + 1)
 
             self.logger.info(
-                f"[Finetune_train] Epoch {epoch}: "
+                f"[Finetune_train] Epoch {epoch+1}: "
                 f"LR {finetune_lr:.6f} "
                 f"OriLoss {meter_oriloss.avg:.4f} "
                 f"TotalLoss {meter_loss.avg:.4f} "
@@ -242,28 +247,31 @@ class Finetune:
             self.student.ticket = True
             meter_top1.reset()
             with torch.no_grad():
-                with tqdm(total=len(self.val_loader), ncols=100, desc=f"Finetune Val Epoch {epoch}/{self.finetune_num_epochs}") as _tqdm:
+                with tqdm(total=len(self.val_loader), ncols=100, desc=f"Finetune Val Epoch {epoch+1}/{self.finetune_num_epochs}") as _tqdm:
                     for images, targets in self.val_loader:
                         images = images.to(self.device, non_blocking=True)
-                        targets = targets.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True).float()
                         logits_student, _ = self.student(images)
-                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                        logits_student = logits_student.squeeze()
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
-                        meter_top1.update(prec1.item(), n)
+                        meter_top1.update(prec1, n)
                         _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-            self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch)
+            self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch + 1)
 
             self.logger.info(
-                f"[Finetune_val] Epoch {epoch}: Prec@1 {meter_top1.avg:.2f}"
+                f"[Finetune_val] Epoch {epoch+1}: Prec@1 {meter_top1.avg:.2f}"
             )
 
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-            self.logger.info(f"[Finetune Mask avg] Epoch {epoch}: {masks}")
+            self.logger.info(f"[Finetune Mask avg] Epoch {epoch+1}: {masks}")
 
-            self.start_epoch += 1
+            self.start_epoch = epoch + 1
             if self.best_prec1_after_finetune < meter_top1.avg:
                 self.best_prec1_after_finetune = meter_top1.avg
                 self.save_student_ckpt(True)
