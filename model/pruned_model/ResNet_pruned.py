@@ -128,7 +128,7 @@ class Bottleneck_pruned(nn.Module):
 
 
 class ResNet_pruned(nn.Module):
-    def __init__(self, block, num_blocks, masks=[], num_classes=10):
+    def __init__(self, block, num_blocks, masks=[], num_classes=1):
         super().__init__()
         self.in_planes = 64
 
@@ -178,8 +178,7 @@ class ResNet_pruned(nn.Module):
         )
         num = num + coef * num_blocks[3]
 
-        # تغییر این خط
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # به جای nn.Sequential(nn.AvgPool2d(7))
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
     def _make_layer(self, block, planes, num_blocks, stride, masks=[]):
@@ -234,17 +233,17 @@ class ResNet_pruned(nn.Module):
 
 def ResNet_18_pruned_imagenet(masks):
     return ResNet_pruned(
-        block=BasicBlock_pruned, num_blocks=[2, 2, 2, 2], masks=masks, num_classes=2
+        block=BasicBlock_pruned, num_blocks=[2, 2, 2, 2], masks=masks, num_classes=1
     )
 
 
 def ResNet_34_pruned_imagenet(masks):
     return ResNet_pruned(
-        block=BasicBlock_pruned, num_blocks=[3, 4, 6, 3], masks=masks, num_classes=2
+        block=BasicBlock_pruned, num_blocks=[3, 4, 6, 3], masks=masks, num_classes=1
     )
 
 
 def ResNet_50_pruned_hardfakevsreal(masks):
     return ResNet_pruned(
-        block=Bottleneck_pruned, num_blocks=[3, 4, 6, 3], masks=masks, num_classes=2
+        block=Bottleneck_pruned, num_blocks=[3, 4, 6, 3], masks=masks, num_classes=1
     )
