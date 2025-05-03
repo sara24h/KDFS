@@ -7,18 +7,18 @@ from thop import profile
 # Base FLOPs and parameters for each dataset
 Flops_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 7690.0,  # Verify with calculate_baselines
+        "hardfakevsreal": 7690.0,  # Verify with calculate_baselines
         "rvf10k": 5000.0,  # Verify with calculate_baselines
     }
 }
 Params_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 23.50,  # Updated for num_classes=1
+        "hardfakevsreal": 23.50,  # Updated for num_classes=1
         "rvf10k": 25.50,  # Updated for num_classes=1
     }
 }
 image_sizes = {
-    "hardfakevsrealfaces": 300,
+    "hardfakevsreal": 300,
     "rvf10k": 256,
 }
 
@@ -35,7 +35,7 @@ def parse_args():
         "--dataset_type",
         type=str,
         default=None,  # Allow None, derive from dataset_mode if needed
-        choices=("hardfakevsrealfaces", "rvf10k", None),
+        choices=("hardfakevsreal", "rvf10k", None),
         help="The dataset type for model naming",
     )
     parser.add_argument(
@@ -62,7 +62,7 @@ def calculate_baselines(arch, dataset_type):
 def get_flops_and_params(args):
     # Derive dataset_type from dataset_mode if not provided
     if args.dataset_type is None:
-        dataset_type = "hardfakevsrealfaces" if args.dataset_mode == "hardfake" else "rvf10k"
+        dataset_type = "hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"
     else:
         dataset_type = args.dataset_type
 
@@ -104,7 +104,7 @@ def main():
     args = parse_args()
 
     # Calculate baselines for verification (uncomment to update Flops_baselines and Params_baselines)
-    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type or ("hardfakevsrealfaces" if args.dataset_mode == "hardfake" else "rvf10k"))
+    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type or ("hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"))
     # print(f"Calculated Flops_baseline: {flops_base:.2f}M, Params_baseline: {params_base:.2f}M")
 
     (
