@@ -49,7 +49,7 @@ python /kaggle/working/KDFS/main.py \
     --arch $arch \
     --device $device \
     --result_dir $result_dir \
-    --finetune_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_last.pt" \
+    --finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_last.pt" \
     --num_workers 4 \
     --pin_memory \
     --seed 3407 \
