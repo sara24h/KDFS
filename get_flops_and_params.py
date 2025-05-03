@@ -46,14 +46,14 @@ def parse_args():
     )
     return parser.parse_args()
 
-def calculate_baselines(arch, dataset_type):
-    model = eval(arch + "_sparse_" + dataset_type)()
-    input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
+def calculate_baselines(arch, dataset_mode):
+    model = eval(arch + "_sparse_" + dataset_mode)()
+    input = torch.rand([1, 3, image_sizes[dataset_mode], image_sizes[dataset_mode]])
     flops, params = profile(model, inputs=(input,), verbose=False)
     return flops / (10**6), params / (10**6)
 
 def get_flops_and_params(args):
-    student = eval(args.arch + "_sparse_" + args.dataset_type)()
+    student = eval(args.arch + "_sparse_" + args.dataset_mode)()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
 
@@ -62,15 +62,15 @@ def get_flops_and_params(args):
         torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1)
         for mask_weight in mask_weights
     ]
-    pruned_model = eval(args.arch + "_pruned_" + args.dataset_type)(masks=masks)
+    pruned_model = eval(args.arch + "_pruned_" + args.dataset_mode)(masks=masks)
     input = torch.rand(
-        [1, 3, image_sizes[args.dataset_type], image_sizes[args.dataset_type]]
+        [1, 3, image_sizes[args.dataset_mode], image_sizes[args.dataset_mode]]
     )
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
 
     # استفاده از مقادیر پایه خاص دیتاست
-    Flops_baseline = Flops_baselines[args.arch][args.dataset_type]
-    Params_baseline = Params_baselines[args.arch][args.dataset_type]
+    Flops_baseline = Flops_baselines[args.arch][args.dataset_mode]
+    Params_baseline = Params_baselines[args.arch][args.dataset_mode]
 
     Flops_reduction = (
         (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
@@ -91,7 +91,7 @@ def main():
     args = parse_args()
 
     # محاسبه مقادیر پایه برای تأیید (اجرا کنید و مقادیر Flops_baselines و Params_baselines را به‌روزرسانی کنید)
-    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type)
+    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_mode)
     # print(f"Calculated Flops_baseline: {flops_base:.2f}M, Params_baseline: {params_base:.2f}M")
 
     (
