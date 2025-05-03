@@ -32,10 +32,10 @@ def parse_args():
         help="The type of dataset",
     )
     parser.add_argument(
-        "--dataset_type",  # Added to match model definitions
+        "--dataset_type",
         type=str,
-        default="hardfakevsrealfaces",
-        choices=("hardfakevsrealfaces", "rvf10k"),
+        default=None,  # Allow None, derive from dataset_mode if needed
+        choices=("hardfakevsrealfaces", "rvf10k", None),
         help="The dataset type for model naming",
     )
     parser.add_argument(
@@ -60,7 +60,13 @@ def calculate_baselines(arch, dataset_type):
     return flops / (10**6), params / (10**6)
 
 def get_flops_and_params(args):
-    student = eval(args.arch + "_sparse_" + args.dataset_type)()  # Changed to dataset_type
+    # Derive dataset_type from dataset_mode if not provided
+    if args.dataset_type is None:
+        dataset_type = "hardfakevsrealfaces" if args.dataset_mode == "hardfake" else "rvf10k"
+    else:
+        dataset_type = args.dataset_type
+
+    student = eval(args.arch + "_sparse_" + dataset_type)()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
 
@@ -69,15 +75,15 @@ def get_flops_and_params(args):
         torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1)
         for mask_weight in mask_weights
     ]
-    pruned_model = eval(args.arch + "_pruned_" + args.dataset_type)(masks=masks)  # Changed to dataset_type
+    pruned_model = eval(args.arch + "_pruned_" + dataset_type)(masks=masks)
     input = torch.rand(
-        [1, 3, image_sizes[args.dataset_type], image_sizes[args.dataset_type]]  # Changed to dataset_type
+        [1, 3, image_sizes[dataset_type], image_sizes[dataset_type]]
     )
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
 
     # Use dataset-specific baseline values
-    Flops_baseline = Flops_baselines[args.arch][args.dataset_type]
-    Params_baseline = Params_baselines[args.arch][args.dataset_type]
+    Flops_baseline = Flops_baselines[args.arch][dataset_type]
+    Params_baseline = Params_baselines[args.arch][dataset_type]
 
     Flops_reduction = (
         (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
@@ -98,7 +104,7 @@ def main():
     args = parse_args()
 
     # Calculate baselines for verification (uncomment to update Flops_baselines and Params_baselines)
-    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type)
+    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type or ("hardfakevsrealfaces" if args.dataset_mode == "hardfake" else "rvf10k"))
     # print(f"Calculated Flops_baseline: {flops_base:.2f}M, Params_baseline: {params_base:.2f}M")
 
     (
