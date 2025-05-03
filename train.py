@@ -175,7 +175,7 @@ class Train:
     def define_loss(self):
         # تغییر معیارها به BCEWithLogitsLoss
         self.ori_loss = nn.BCEWithLogitsLoss()
-        self.kd_loss = nn.BCEWithLogitsLoss()  # تغییر به BCE برای تقطیر دانش
+        self.kd_loss = loss.KDLoss()  # تغییر به BCE برای تقطیر دانش
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
