@@ -96,15 +96,23 @@ model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
 
+
 for param in model.parameters():
     param.requires_grad = False
-for param in model.fc.parameters():
+
+
+for param in model.layer4.parameters():
     param.requires_grad = True
 
 
-criterion = nn.BCEWithLogitsLoss()  
-optimizer = optim.Adam(model.fc.parameters(), lr=lr) 
+for param in model.fc.parameters():
+    param.requires_grad = True
 
+criterion = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam([
+    {'params': model.layer4.parameters(), 'lr': 1e-5}, 
+    {'params': model.fc.parameters(), 'lr': lr}         
+], weight_decay=1e-4) 
 
 for epoch in range(epochs):
     model.train()
@@ -115,12 +123,12 @@ for epoch in range(epochs):
         images = images.to(device)
         labels = labels.to(device).float() 
         optimizer.zero_grad()
-        outputs = model(images).squeeze(1)  # فشرده‌سازی خروجی
+        outputs = model(images).squeeze(1) 
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-        # محاسبه دقت
+       
         preds = (torch.sigmoid(outputs) > 0.5).float()
         correct_train += (preds == labels).sum().item()
         total_train += labels.size(0)
@@ -129,7 +137,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-    # اعتبارسنجی
+    
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -149,7 +157,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# تست مدل
+
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -166,7 +174,7 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# نمایش نمونه‌های تست
+
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
@@ -201,10 +209,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-# ذخیره مدل
+
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# محاسبه پیچیدگی مدل
+
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
 print('Parameters:', params)
