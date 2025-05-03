@@ -224,24 +224,10 @@ class Bottleneck_sparse(nn.Module):
             )
 
     def forward(self, x, ticket):
-        # Debug print to check tensor shapes
-        #print(f"Input shape: {x.shape}")
-        
-        out = self.conv1(x, ticket)
-        #print(f"conv1 out shape: {out.shape}, conv1 mask shape: {self.conv1.mask.shape}")
-        out = F.relu(self.bn1(out))
-        
-        out = self.conv2(out, ticket)
-        #print(f"conv2 out shape: {out.shape}, conv2 mask shape: {self.conv2.mask.shape}")
-        out = F.relu(self.bn2(out))
-        
-        out = self.conv3(out, ticket)
-        #print(f"conv3 out shape: {out.shape}, conv3 mask shape: {self.conv3.mask.shape}")
-        out = self.bn3(out)
-        
-        shortcut = self.downsample(x)
-        #print(f"out shape: {out.shape}, shortcut shape: {shortcut.shape}")
-        out += shortcut
+        out = F.relu(self.bn1(self.conv1(x, ticket)))
+        out = F.relu(self.bn2(self.conv2(out, ticket)))
+        out = self.bn3(self.conv3(out, ticket))
+        out += self.downsample(x)
         out = F.relu(out)
         return out
 
@@ -250,7 +236,7 @@ class ResNet_sparse(MaskedNet):
         self,
         block,
         num_blocks,
-        num_classes=2,
+        num_classes=1,  # تغییر به 1 برای خروجی باینری
         gumbel_start_temperature=2.0,
         gumbel_end_temperature=0.5,
         num_epochs=200,
@@ -327,7 +313,7 @@ def ResNet_50_sparse_hardfakevsreal(
     return ResNet_sparse(
         block=Bottleneck_sparse,
         num_blocks=[3, 4, 6, 3],
-        num_classes=2,
+        num_classes=1,  # تغییر به 1 برای خروجی باینری
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
@@ -340,10 +326,9 @@ def ResNet_50_sparse_rvf10k(
     return ResNet_sparse(
         block=Bottleneck_sparse,
         num_blocks=[3, 4, 6, 3],
-        num_classes=2,
+        num_classes=1,  # تغییر به 1 برای خروجی باینری
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
         dataset_type="rvf10k"
     )
-
