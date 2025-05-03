@@ -1,3 +1,4 @@
+
 import os
 import pandas as pd
 import torch
@@ -14,7 +15,9 @@ import numpy as np
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 
+
 from data.dataset import FaceDataset, Dataset_selector
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
@@ -32,15 +35,12 @@ def parse_args():
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
-    parser.add_argument('--lr_fc', type=float, default=1e-4,
-                        help='Learning rate for the fc layer')
-    parser.add_argument('--lr_layer4', type=float, default=1e-5,
-                        help='Learning rate for the layer4')
-    parser.add_argument('--weight_decay', type=float, default=1e-4,
-                        help='Weight decay for L2 regularization')
+    parser.add_argument('--lr', type=float, default=0.0001,
+                        help='Learning rate for the optimizer')
     return parser.parse_args()
 
 args = parse_args()
+
 
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
@@ -49,10 +49,9 @@ img_height = 256 if dataset_mode == 'rvf10k' else args.img_height
 img_width = 256 if dataset_mode == 'rvf10k' else args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
-lr_fc = args.lr_fc
-lr_layer4 = args.lr_layer4
-weight_decay = args.weight_decay
+lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
@@ -85,41 +84,28 @@ elif dataset_mode == 'rvf10k':
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake' or 'rvf10k'.")
 
+
 train_loader = dataset.loader_train
 val_loader = dataset.loader_test
 test_loader = val_loader  
 
-# Load ResNet50 model
-model = models.resnet50(pretrained=True)
+
+model = models.resnet50(pretrained=True)  
 num_ftrs = model.fc.in_features
-# Modify fc layer with Dropout
-model.fc = nn.Sequential(
-    nn.Linear(num_ftrs, 512),
-    nn.ReLU(),
-    nn.Dropout(0.5),
-    nn.Linear(512, 1)
-)
+model.fc = nn.Linear(num_ftrs, 1)  
 model = model.to(device)
 
-# Freeze all layers
+
 for param in model.parameters():
     param.requires_grad = False
-
-# Unfreeze layer4 and fc
-for param in model.layer4.parameters():
-    param.requires_grad = True
 for param in model.fc.parameters():
     param.requires_grad = True
 
-# Define optimizer with different learning rates and L2 regularization
-optimizer = optim.Adam([
-    {'params': model.layer4.parameters(), 'lr': lr_layer4},
-    {'params': model.fc.parameters(), 'lr': lr_fc}
-], weight_decay=weight_decay)
 
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCEWithLogitsLoss()  
+optimizer = optim.Adam(model.fc.parameters(), lr=lr) 
 
-# Training loop
+
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -127,13 +113,14 @@ for epoch in range(epochs):
     total_train = 0
     for images, labels in train_loader:
         images = images.to(device)
-        labels = labels.to(device).float()
+        labels = labels.to(device).float() 
         optimizer.zero_grad()
-        outputs = model(images).squeeze(1)
+        outputs = model(images).squeeze(1)  # فشرده‌سازی خروجی
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
+        # محاسبه دقت
         preds = (torch.sigmoid(outputs) > 0.5).float()
         correct_train += (preds == labels).sum().item()
         total_train += labels.size(0)
@@ -142,7 +129,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-    # Validation
+    # اعتبارسنجی
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -162,7 +149,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# Test the model
+# تست مدل
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -179,7 +166,7 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# Display test samples
+# نمایش نمونه‌های تست
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
@@ -214,10 +201,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-# Save the model
+# ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# Calculate model complexity
+# محاسبه پیچیدگی مدل
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
 print('Parameters:', params)
