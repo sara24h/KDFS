@@ -175,43 +175,14 @@ class Train:
                 
                 return out, feature_list
 
-        resnet = models.resnet50(weights=None)
+        resnet = models.resnet50(pretrained=False)
         num_ftrs = resnet.fc.in_features
         resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        
-        # اصلاح state_dict برای ناسازگاری‌های احتمالی
-        state_dict = ckpt_teacher
-        model_state_dict = resnet.state_dict()
-        new_state_dict = {}
-        for key in state_dict:
-            if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-                new_state_dict[key] = state_dict[key]
-            elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-            elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-        resnet.load_state_dict(new_state_dict, strict=False)
+        resnet.load_state_dict(ckpt_teacher, strict=True)
         
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
-
-        # تست دقت معلم
-        self.logger.info("Testing teacher model on validation batch...")
-        with torch.no_grad():
-            correct = 0
-            total = 0
-            for images, targets in self.val_loader:
-                images = images.to(self.device)
-                targets = targets.to(self.device).float()
-                logits, _ = self.teacher(images)
-                logits = logits.squeeze(1)
-                preds = (torch.sigmoid(logits) > 0.5).float()
-                correct += (preds == targets).sum().item()
-                total += images.size(0)
-                break
-            accuracy = 100. * correct / total
-            self.logger.info(f"Teacher accuracy on validation batch: {accuracy:.2f}%")
 
         self.logger.info("Building student model")
         if self.dataset_mode == "hardfake":
