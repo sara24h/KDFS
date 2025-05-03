@@ -32,7 +32,7 @@ def parse_args():
         help="The type of dataset",
     )
     parser.add_argument(
-        "--dataset_mode",
+        "--dataset_type",
         type=str,
         default=None,  # Allow None, derive from dataset_mode if needed
         choices=("hardfakevsreal", "rvf10k", None),
@@ -53,20 +53,20 @@ def parse_args():
     )
     return parser.parse_args()
 
-def calculate_baselines(arch, dataset_mode):
-    model = eval(arch + "_sparse_" + dataset_mode)()
-    input = torch.rand([1, 3, image_sizes[dataset_mode], image_sizes[dataset_mode]])
+def calculate_baselines(arch, dataset_type):
+    model = eval(arch + "_sparse_" + dataset_type)()
+    input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
     flops, params = profile(model, inputs=(input,), verbose=False)
     return flops / (10**6), params / (10**6)
 
 def get_flops_and_params(args):
     # Derive dataset_type from dataset_mode if not provided
-    if args.dataset_mode is None:
-        dataset_mode= "hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"
+    if args.dataset_type is None:
+        dataset_type = "hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"
     else:
-        dataset_mode= args.dataset_mode
+        dataset_type = args.dataset_type
 
-    student = eval(args.arch + "_sparse_" + dataset_mode)()
+    student = eval(args.arch + "_sparse_" + dataset_type)()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
 
@@ -75,15 +75,15 @@ def get_flops_and_params(args):
         torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1)
         for mask_weight in mask_weights
     ]
-    pruned_model = eval(args.arch + "_pruned_" + dataset_mode)(masks=masks)
+    pruned_model = eval(args.arch + "_pruned_" + dataset_type)(masks=masks)
     input = torch.rand(
-        [1, 3, image_sizes[dataset_mode], image_sizes[dataset_mode]]
+        [1, 3, image_sizes[dataset_type], image_sizes[dataset_type]]
     )
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
 
     # Use dataset-specific baseline values
-    Flops_baseline = Flops_baselines[args.arch][dataset_mode]
-    Params_baseline = Params_baselines[args.arch][dataset_mode]
+    Flops_baseline = Flops_baselines[args.arch][dataset_type]
+    Params_baseline = Params_baselines[args.arch][dataset_type]
 
     Flops_reduction = (
         (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
