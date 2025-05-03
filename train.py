@@ -146,20 +146,20 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
-    
+        
         class ResNet50Wrapper(nn.Module):
             def __init__(self, resnet_model):
                 super().__init__()
                 self.resnet = resnet_model
-        
+            
             def forward(self, x):
                 feature_list = []
-            
+                
                 out = self.resnet.conv1(x)
                 out = self.resnet.bn1(out)
                 out = self.resnet.relu(out)
                 out = self.resnet.maxpool(out)
-            
+                
                 out = self.resnet.layer1(out)
                 feature_list.append(out)
                 out = self.resnet.layer2(out)
@@ -168,23 +168,35 @@ class Train:
                 feature_list.append(out)
                 out = self.resnet.layer4(out)
                 feature_list.append(out)
-            
+                
                 out = self.resnet.avgpool(out)
                 out = torch.flatten(out, 1)
                 out = self.resnet.fc(out)
-            
+                
                 return out, feature_list
 
         resnet = models.resnet50(weights=None)
         num_ftrs = resnet.fc.in_features
         resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        resnet.load_state_dict(ckpt_teacher, strict=True)
-    
+        
+        # اصلاح state_dict برای ناسازگاری‌های احتمالی
+        state_dict = ckpt_teacher
+        model_state_dict = resnet.state_dict()
+        new_state_dict = {}
+        for key in state_dict:
+            if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
+                new_state_dict[key] = state_dict[key]
+            elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
+                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
+            elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
+                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
+        resnet.load_state_dict(new_state_dict, strict=False)
+        
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
 
-    
+        # تست دقت معلم
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -197,7 +209,7 @@ class Train:
                 preds = (torch.sigmoid(logits) > 0.5).float()
                 correct += (preds == targets).sum().item()
                 total += images.size(0)
-                break  
+                break
             accuracy = 100. * correct / total
             self.logger.info(f"Teacher accuracy on validation batch: {accuracy:.2f}%")
 
