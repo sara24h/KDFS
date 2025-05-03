@@ -146,20 +146,20 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
-        
+    
         class ResNet50Wrapper(nn.Module):
             def __init__(self, resnet_model):
                 super().__init__()
                 self.resnet = resnet_model
-            
+        
             def forward(self, x):
                 feature_list = []
-                
+            
                 out = self.resnet.conv1(x)
                 out = self.resnet.bn1(out)
                 out = self.resnet.relu(out)
                 out = self.resnet.maxpool(out)
-                
+            
                 out = self.resnet.layer1(out)
                 feature_list.append(out)
                 out = self.resnet.layer2(out)
@@ -168,21 +168,38 @@ class Train:
                 feature_list.append(out)
                 out = self.resnet.layer4(out)
                 feature_list.append(out)
-                
+            
                 out = self.resnet.avgpool(out)
                 out = torch.flatten(out, 1)
                 out = self.resnet.fc(out)
-                
+            
                 return out, feature_list
 
-        resnet = models.resnet50(pretrained=False)
+        resnet = models.resnet50(weights=None)
         num_ftrs = resnet.fc.in_features
         resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         resnet.load_state_dict(ckpt_teacher, strict=True)
-        
+    
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
+
+    
+        self.logger.info("Testing teacher model on validation batch...")
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, targets in self.val_loader:
+                images = images.to(self.device)
+                targets = targets.to(self.device).float()
+                logits, _ = self.teacher(images)
+                logits = logits.squeeze(1)
+                preds = (torch.sigmoid(logits) > 0.5).float()
+                correct += (preds == targets).sum().item()
+                total += images.size(0)
+                break  
+            accuracy = 100. * correct / total
+            self.logger.info(f"Teacher accuracy on validation batch: {accuracy:.2f}%")
 
         self.logger.info("Building student model")
         if self.dataset_mode == "hardfake":
