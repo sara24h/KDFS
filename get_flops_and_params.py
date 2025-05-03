@@ -25,7 +25,7 @@ image_sizes = {
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--dataset_type",
+        "--dataset_mode",
         type=str,
         default="hardfakevsrealfaces",
         choices=("hardfakevsrealfaces", "rvf10k"),
