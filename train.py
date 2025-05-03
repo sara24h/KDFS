@@ -58,11 +58,11 @@ class Train:
 
         if self.dataset_mode == "hardfake":
             self.args.dataset_type = "hardfakevsrealfaces"
-            self.num_classes = 1  # تغییر به 1 برای خروجی باینری
+            self.num_classes = 1
             self.image_size = 300
         elif self.dataset_mode == "rvf10k":
             self.args.dataset_type = "rvf10k"
-            self.num_classes = 1  # تغییر به 1 برای خروجی باینری
+            self.num_classes = 1
             self.image_size = 256
         else:
             raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
@@ -146,12 +146,43 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
-        # تغییر مدل معلم به resnet50 با یک خروجی
-        self.teacher = models.resnet50(pretrained=False)
-        num_ftrs = self.teacher.fc.in_features
-        self.teacher.fc = nn.Linear(num_ftrs, 1)  # خروجی باینری
+        
+        class ResNet50Wrapper(nn.Module):
+            def __init__(self, resnet_model):
+                super().__init__()
+                self.resnet = resnet_model
+            
+            def forward(self, x):
+                feature_list = []
+                
+                out = self.resnet.conv1(x)
+                out = self.resnet.bn1(out)
+                out = self.resnet.relu(out)
+                out = self.resnet.maxpool(out)
+                
+                out = self.resnet.layer1(out)
+                feature_list.append(out)
+                out = self.resnet.layer2(out)
+                feature_list.append(out)
+                out = self.resnet.layer3(out)
+                feature_list.append(out)
+                out = self.resnet.layer4(out)
+                feature_list.append(out)
+                
+                out = self.resnet.avgpool(out)
+                out = torch.flatten(out, 1)
+                out = self.resnet.fc(out)
+                
+                return out, feature_list
+
+        resnet = models.resnet50(pretrained=False)
+        num_ftrs = resnet.fc.in_features
+        resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        self.teacher.load_state_dict(ckpt_teacher, strict=True)
+        resnet.load_state_dict(ckpt_teacher, strict=True)
+        
+        self.teacher = ResNet50Wrapper(resnet).to(self.device)
+        self.teacher.eval()
 
         self.logger.info("Building student model")
         if self.dataset_mode == "hardfake":
@@ -168,14 +199,13 @@ class Train:
             )
         self.student.dataset_type = self.args.dataset_type
 
-        # تغییر لایه نهایی دانش‌آموز به یک خروجی
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
+        self.student = self.student.to(self.device)
 
     def define_loss(self):
-        # تغییر معیارها به BCEWithLogitsLoss
         self.ori_loss = nn.BCEWithLogitsLoss()
-        self.kd_loss = loss.KDLoss()  # تغییر به BCE برای تقطیر دانش
+        self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
 
@@ -306,13 +336,13 @@ class Train:
                     self.optim_mask.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
-                        targets = targets.cuda().float()  # تبدیل به float
+                        targets = targets.cuda().float()
 
                     logits_student, feature_list_student = self.student(images)
-                    logits_student = logits_student.squeeze(1)  # تبدیل به تک‌بعدی
+                    logits_student = logits_student.squeeze(1)
                     with torch.no_grad():
                         logits_teacher, feature_list_teacher = self.teacher(images)
-                        logits_teacher = logits_teacher.squeeze(1)  # تبدیل به تک‌بعدی
+                        logits_teacher = logits_teacher.squeeze(1)
 
                     ori_loss = self.ori_loss(logits_student, targets)
                     kd_loss = self.kd_loss(logits_teacher, logits_student)
@@ -340,7 +370,6 @@ class Train:
                     self.optim_weight.step()
                     self.optim_mask.step()
 
-                    # محاسبه دقت برای خروجی باینری
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
                     prec1 = 100. * correct / images.size(0)
@@ -424,7 +453,6 @@ class Train:
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
 
-                        # محاسبه دقت برای اعتبارسنجی
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
