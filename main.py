@@ -14,14 +14,8 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import GradScaler, autocast
 
-# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
 matplotlib.use('Agg')
 
-# اصلاح import برای استفاده از Dataset_selector
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
@@ -156,13 +150,13 @@ def parse_args():
     )
     parser.add_argument(
         "--warmup_steps",
-        default=30,
+        default=10,
         type=int,
         help="The steps of warmup",
     )
     parser.add_argument(
         "--warmup_start_lr",
-        default=4e-5,
+        default=1e-5,
         type=float,
         help="The start learning rate of warmup",
     )
@@ -181,7 +175,7 @@ def parse_args():
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=2e-5,
+        default=4e-5,
         help="Weight decay",
     )
     parser.add_argument(
@@ -217,25 +211,25 @@ def parse_args():
     parser.add_argument(
         "--coef_kdloss",
         type=float,
-        default=0.05,
+        default=2.0,
         help="Coefficient of kd loss",
     )
     parser.add_argument(
         "--coef_rcloss",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Coefficient of reconstruction loss",
     )
     parser.add_argument(
         "--coef_maskloss",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Coefficient of mask loss",
     )
     parser.add_argument(
         "--compress_rate",
         type=float,
-        default=0.6,
+        default=0.3,
         help="Compress rate of the student model",
     )
     parser.add_argument(
@@ -314,7 +308,7 @@ def parse_args():
     return parser.parse_args()
 
 def validate_args(args):
-    """بررسی وجود فایل‌ها و دایرکتوری‌های مورد نیاز"""
+    """Check if required files and directories exist"""
     if args.dataset_mode == "hardfake":
         if not os.path.exists(args.hardfake_csv_file):
             raise FileNotFoundError(f"Hardfake CSV file not found: {args.hardfake_csv_file}")
@@ -340,10 +334,10 @@ def validate_args(args):
 def main():
     args = parse_args()
     
-    # بررسی وجود فایل‌ها و دایرکتوری‌ها
+    # Validate file and directory existence
     validate_args(args)
 
-    # تنظیم seed برای تکرارپذیری
+    # Set seeds for reproducibility
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -353,7 +347,7 @@ def main():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    # لاگ اطلاعات اولیه
+    # Log basic information
     print(f"Running phase: {args.phase}")
     print(f"Dataset mode: {args.dataset_mode}")
     print(f"Device: {args.device}")
@@ -365,7 +359,7 @@ def main():
     if args.ddp:
         raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
     
-    # اجرای فاز مربوطه
+    # Execute the corresponding phase
     if args.phase == "train":
         train = Train(args=args)
         train.main()
