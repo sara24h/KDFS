@@ -7,13 +7,13 @@ from thop import profile
 # Base FLOPs and parameters for each dataset
 Flops_baselines = {
     "ResNet_50": {
-        "hardfakevsreal": 7690.0,  # Verify with calculate_baselines
+        "hardfakevsreal": 7700.0,  # Verify with calculate_baselines
         "rvf10k": 5000.0,  # Verify with calculate_baselines
     }
 }
 Params_baselines = {
     "ResNet_50": {
-        "hardfakevsreal": 23.50,  # Updated for num_classes=1
+        "hardfakevsreal": 14.97,  # Updated for num_classes=1
         "rvf10k": 25.50,  # Updated for num_classes=1
     }
 }
