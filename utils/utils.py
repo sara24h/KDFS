@@ -5,7 +5,6 @@ import time, datetime
 import logging
 import numpy as np
 from pathlib import Path
-import time, datetime
 import re
 import torch
 
@@ -61,19 +60,12 @@ def get_compress_rates(cprate_str):
 
 def get_accuracy(output, target, topk=(1,)):
     with torch.no_grad():
-        num_classes = output.size(1)
-        maxk = min(max(topk), num_classes)
         batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            if k <= num_classes:
-                correct_k = correct[:k].contiguous().view(-1).float().sum(0, keepdim=True)
-                res.append(correct_k.mul_(100.0 / batch_size))
-            else:
-                res.append(torch.tensor([0.0]).to(output.device))
-        return res[0] if len(res) == 1 else res
+        
+        # برای خروجی باینری با BCEWithLogitsLoss
+        output = torch.sigmoid(output).squeeze()  # اعمال sigmoid و تبدیل به تک‌بعدی
+        pred = (output > 0.5).float()  # پیش‌بینی باینری با آستانه 0.5
+        correct = pred.eq(target.float()).float().sum(0, keepdim=True)
+        acc = correct.mul_(100.0 / batch_size)
+        
+        return [acc]  # برای سازگاری با کدهای قبلی، به صورت لیست برمی‌گردونیم
