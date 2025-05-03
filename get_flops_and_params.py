@@ -4,17 +4,17 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from model.pruned_model.ResNet_pruned import ResNet_50_pruned_hardfakevsreal
 from thop import profile
 
-# مقادیر پایه FLOPs و پارامترها برای هر دیتاست (به‌روزرسانی‌شده برای num_classes=1)
+# Base FLOPs and parameters for each dataset
 Flops_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 7690.0,  # باید با calculate_baselines تأیید بشه
-        "rvf10k": 5000.0,  # باید با calculate_baselines تأیید بشه
+        "hardfakevsrealfaces": 7690.0,  # Verify with calculate_baselines
+        "rvf10k": 5000.0,  # Verify with calculate_baselines
     }
 }
 Params_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 23.50,  # به‌روزرسانی‌شده برای num_classes=1
-        "rvf10k": 25.50,  # به‌روزرسانی‌شده برای num_classes=1
+        "hardfakevsrealfaces": 23.50,  # Updated for num_classes=1
+        "rvf10k": 25.50,  # Updated for num_classes=1
     }
 }
 image_sizes = {
@@ -27,9 +27,16 @@ def parse_args():
     parser.add_argument(
         "--dataset_mode",
         type=str,
+        default="hardfake",
+        choices=("hardfake", "rvf10k"),
+        help="The type of dataset",
+    )
+    parser.add_argument(
+        "--dataset_type",  # Added to match model definitions
+        type=str,
         default="hardfakevsrealfaces",
         choices=("hardfakevsrealfaces", "rvf10k"),
-        help="The type of dataset",
+        help="The dataset type for model naming",
     )
     parser.add_argument(
         "--arch",
@@ -46,14 +53,14 @@ def parse_args():
     )
     return parser.parse_args()
 
-def calculate_baselines(arch, dataset_mode):
-    model = eval(arch + "_sparse_" + dataset_mode)()
-    input = torch.rand([1, 3, image_sizes[dataset_mode], image_sizes[dataset_mode]])
+def calculate_baselines(arch, dataset_type):
+    model = eval(arch + "_sparse_" + dataset_type)()
+    input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
     flops, params = profile(model, inputs=(input,), verbose=False)
     return flops / (10**6), params / (10**6)
 
 def get_flops_and_params(args):
-    student = eval(args.arch + "_sparse_" + args.dataset_mode)()
+    student = eval(args.arch + "_sparse_" + args.dataset_type)()  # Changed to dataset_type
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
 
@@ -62,15 +69,15 @@ def get_flops_and_params(args):
         torch.argmax(mask_weight, dim=1).squeeze(1).squeeze(1)
         for mask_weight in mask_weights
     ]
-    pruned_model = eval(args.arch + "_pruned_" + args.dataset_mode)(masks=masks)
+    pruned_model = eval(args.arch + "_pruned_" + args.dataset_type)(masks=masks)  # Changed to dataset_type
     input = torch.rand(
-        [1, 3, image_sizes[args.dataset_mode], image_sizes[args.dataset_mode]]
+        [1, 3, image_sizes[args.dataset_type], image_sizes[args.dataset_type]]  # Changed to dataset_type
     )
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
 
-    # استفاده از مقادیر پایه خاص دیتاست
-    Flops_baseline = Flops_baselines[args.arch][args.dataset_mode]
-    Params_baseline = Params_baselines[args.arch][args.dataset_mode]
+    # Use dataset-specific baseline values
+    Flops_baseline = Flops_baselines[args.arch][args.dataset_type]
+    Params_baseline = Params_baselines[args.arch][args.dataset_type]
 
     Flops_reduction = (
         (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
@@ -90,8 +97,8 @@ def get_flops_and_params(args):
 def main():
     args = parse_args()
 
-    # محاسبه مقادیر پایه برای تأیید (اجرا کنید و مقادیر Flops_baselines و Params_baselines را به‌روزرسانی کنید)
-    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_mode)
+    # Calculate baselines for verification (uncomment to update Flops_baselines and Params_baselines)
+    # flops_base, params_base = calculate_baselines(args.arch, args.dataset_type)
     # print(f"Calculated Flops_baseline: {flops_base:.2f}M, Params_baseline: {params_base:.2f}M")
 
     (
