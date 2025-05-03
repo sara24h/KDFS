@@ -32,9 +32,9 @@ def parse_args():
         help="The type of dataset",
     )
     parser.add_argument(
-        "--dataset_mode",
+        "--dataset_type",  # تغییر نام آرگومان برای وضوح بیشتر
         type=str,
-        default=None,  # Allow None, derive from dataset_mode if needed
+        default=None,
         choices=("hardfakevsreal", "rvf10k", None),
         help="The dataset type for model naming",
     )
@@ -61,10 +61,9 @@ def calculate_baselines(arch, dataset_mode):
 
 def get_flops_and_params(args):
     # Derive dataset_type from dataset_mode if not provided
-    if args.dataset_mode is None:
-        dataset_mode= "hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"
-    else:
-        dataset_mode = args.dataset_mode
+    dataset_mode = (
+        "hardfakevsreal" if args.dataset_mode == "hardfake" else "rvf10k"
+    )
 
     student = eval(args.arch + "_sparse_" + dataset_mode)()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
