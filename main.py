@@ -31,6 +31,39 @@ from test import Test
 from finetune import Finetune
 import json
 import time
+import os
+import pandas as pd
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from sklearn.model_selection import train_test_split
+from PIL import Image
+import argparse
+import random
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+from torch.amp import GradScaler, autocast
+
+# تنظیمات محیطی برای جلوگیری از خطاهای CUDA
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+matplotlib.use('Agg')
+
+# اصلاح import برای استفاده از Dataset_selector
+from data.dataset import FaceDataset, Dataset_selector
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from utils import utils, loss, meter, scheduler
+from train import Train
+from test import Test
+from finetune import Finetune
+import json
+import time
 
 def parse_args():
     desc = "Pytorch implementation of KDFS"
@@ -128,7 +161,7 @@ def parse_args():
     parser.add_argument(
         "--result_dir",
         type=str,
-        default="/kaggle/working/results/run_resnet50_imagenet_prune1",
+        default="/kaggle/working/results",
         help="The directory where the results will be stored",
     )
     parser.add_argument(
@@ -145,12 +178,12 @@ def parse_args():
     parser.add_argument(
         "--num_epochs",
         type=int,
-        default=200,
+        default=100,  # اصلاح برای تطبیق با نمونه (epoch: 1/100)
         help="The num of epochs to train.",
     )
     parser.add_argument(
         "--lr",
-        default=4e-3,
+        default=1e-4,  # اصلاح برای تطبیق با LR 0.000100
         type=float,
         help="The initial learning rate of model",
     )
@@ -162,38 +195,38 @@ def parse_args():
     )
     parser.add_argument(
         "--warmup_start_lr",
-        default=4e-5,
+        default=1e-5,
         type=float,
         help="The start learning rate of warmup",
     )
     parser.add_argument(
         "--lr_decay_T_max",
-        default=250,
+        default=250,  # اصلاح برای هماهنگی با نمونه
         type=int,
         help="T_max of CosineAnnealingLR",
     )
     parser.add_argument(
         "--lr_decay_eta_min",
-        default=4e-5,
+        default=1e-5,
         type=float,
         help="eta_min of CosineAnnealingLR",
     )
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=2e-5,
+        default=2e-5,  # اصلاح برای هماهنگی با نمونه
         help="Weight decay",
     )
     parser.add_argument(
         "--train_batch_size",
         type=int,
-        default=16,
+        default=32,  # اصلاح برای 33 بچ آموزشی
         help="Batch size for training",
     )
     parser.add_argument(
         "--eval_batch_size",
         type=int,
-        default=16,
+        default=32,  # اصلاح برای 9 بچ اعتبارسنجی
         help="Batch size for validation",
     )
     parser.add_argument(
@@ -205,37 +238,37 @@ def parse_args():
     parser.add_argument(
         "--gumbel_start_temperature",
         type=float,
-        default=1.0,
+        default=2.0,  # نگه داشتن مقدار فعلی
         help="Gumbel-softmax temperature at the start of training",
     )
     parser.add_argument(
         "--gumbel_end_temperature",
         type=float,
-        default=0.1,
+        default=0.1,  # نگه داشتن مقدار فعلی
         help="Gumbel-softmax temperature at the end of training",
     )
     parser.add_argument(
         "--coef_kdloss",
         type=float,
-        default=0.05,
+        default=0.5,  # نگه داشتن مقدار فعلی
         help="Coefficient of kd loss",
     )
     parser.add_argument(
         "--coef_rcloss",
         type=float,
-        default=1.0,
+        default=100.0,  # نگه داشتن مقدار فعلی
         help="Coefficient of reconstruction loss",
     )
     parser.add_argument(
         "--coef_maskloss",
         type=float,
-        default=1.0,
+        default=1.0,  # نگه داشتن مقدار فعلی
         help="Coefficient of mask loss",
     )
     parser.add_argument(
         "--compress_rate",
         type=float,
-        default=0.6,
+        default=0.68,
         help="Compress rate of the student model",
     )
     parser.add_argument(
@@ -247,7 +280,7 @@ def parse_args():
     parser.add_argument(
         "--finetune_num_epochs",
         type=int,
-        default=6,
+        default=20,
         help="The num of epochs to train in finetune",
     )
     parser.add_argument(
@@ -289,13 +322,13 @@ def parse_args():
     parser.add_argument(
         "--finetune_train_batch_size",
         type=int,
-        default=8,
+        default=32,  # اصلاح برای هماهنگی
         help="Batch size for training in finetune",
     )
     parser.add_argument(
         "--finetune_eval_batch_size",
         type=int,
-        default=8,
+        default=32,  # اصلاح برای هماهنگی
         help="Batch size for validation in finetune",
     )
     parser.add_argument(
@@ -307,7 +340,7 @@ def parse_args():
     parser.add_argument(
         "--test_batch_size",
         type=int,
-        default=32,
+        default=32,  # اصلاح برای هماهنگی
         help="Batch size for test",
     )
 
