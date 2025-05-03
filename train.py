@@ -18,7 +18,7 @@ os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
     "ResNet_50": {
-        "hardfakevsrealfaces": 7690.0,
+        "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
     }
 }
