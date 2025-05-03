@@ -188,6 +188,10 @@ class Finetune:
         if self.finetune_resume:
             self.resume_student_ckpt()
 
+        # اضافه کردن dataset_type به args اگر وجود ندارد
+        if not hasattr(self.args, 'dataset_type'):
+            self.args.dataset_type = "hardfakevsrealfaces" if self.args.dataset_mode == "hardfake" else "rvf10k"
+
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
