@@ -9,8 +9,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 import time
-import utils  # ماژول فرضی برای توابع کمکی
-import meter  # ماژول فرضی برای AverageMeter
+from utils import utils, loss, meter, scheduler
 from dataset import Dataset_selector  # ایمپورت Dataset_selector
 
 class Finetune:
