@@ -10,16 +10,14 @@ import numpy as np
 from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_selector  
+from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
-
 
 class Finetune:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
         self.dataset_mode = args.dataset_mode
-        # تنظیم dataset_type مشابه train.py
         if self.dataset_mode == "hardfake":
             self.dataset_type = "hardfakevsrealfaces"
         else:
@@ -60,11 +58,12 @@ class Finetune:
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # برای کاهش خطاهای CUDA
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = str(self.seed)
+        os.environ["PYTHONHASHSEED"] = strazor = str(self.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -73,7 +72,6 @@ class Finetune:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        """لود کردن دیتاست‌ها با استفاده از Dataset_selector"""
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
@@ -109,6 +107,8 @@ class Finetune:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading student model")
+        if not os.path.exists(self.finetune_student_ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
         else:
@@ -118,7 +118,7 @@ class Finetune:
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
 
     def define_loss(self):
-        self.ori_loss = nn.CrossEntropyLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss()  # برای مسئله باینری
 
     def define_optim(self):
         weight_params = map(
@@ -211,16 +211,19 @@ class Finetune:
                         images = images.cuda()
                         targets = targets.cuda()
                     logits_student, _ = self.student(images)
-                    ori_loss = self.ori_loss(logits_student, targets)
+                    logits_student = logits_student.squeeze(1)  # برای مسئله باینری
+                    ori_loss = self.ori_loss(logits_student, targets.float())
                     total_loss = ori_loss
                     total_loss.backward()
                     self.finetune_optim_weight.step()
 
-                    prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
                     n = images.size(0)
                     meter_oriloss.update(ori_loss.item(), n)
                     meter_loss.update(total_loss.item(), n)
-                    meter_top1.update(prec1.item(), n)
+                    meter_top1.update(prec1, n)
 
                     _tqdm.set_postfix(
                         loss=f"{meter_loss.avg:.4f}",
@@ -256,9 +259,12 @@ class Finetune:
                             images = images.cuda()
                             targets = targets.cuda()
                         logits_student, _ = self.student(images)
-                        prec1 = utils.get_accuracy(logits_student, targets, topk=(1,))[0]
+                        logits_student = logits_student.squeeze(1)
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
-                        meter_top1.update(prec1.item(), n)
+                        meter_top1.update(prec1, n)
                         _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
                         _tqdm.update(1)
                         time.sleep(0.01)
@@ -285,22 +291,23 @@ class Finetune:
         self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
 
         # محاسبه و لاگ کردن FLOPs و Params
-        (
-            Flops_baseline,
-            Flops,
-            Flops_reduction,
-            Params_baseline,
-            Params,
-            Params_reduction,
-        ) = utils.get_flops_and_params(self.args)
-        self.logger.info(
-            "Params_baseline: %.2fM, Params: %.2fM, Params reduction: %.2f%%"
-            % (Params_baseline, Params, Params_reduction)
-        )
-        self.logger.info(
-            "Flops_baseline: %.2fM, Flops: %.2fM, Flops reduction: %.2f%%"
-            % (Flops_baseline, Flops, Flops_reduction)
-        )
+        try:
+            (
+                Flops_baseline,
+                Flops,
+                Flops_reduction,
+                Params_baseline,
+                Params,
+                Params_reduction,
+            ) = utils.get_flops_and_params(self.args)
+            self.logger.info(
+                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, Params reduction: {Params_reduction:.2f}%"
+            )
+            self.logger.info(
+                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, Flops reduction: {Flops_reduction:.2f}%"
+            )
+        except AttributeError:
+            self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and Params calculation.")
 
     def main(self):
         self.result_init()
