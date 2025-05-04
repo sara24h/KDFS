@@ -17,7 +17,7 @@ class FaceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data['images_id'].iloc[idx])
+        img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
         if not os.path.exists(img_name):
             raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
@@ -29,25 +29,29 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,  # 'hardfake' or 'rvf10k'
+        dataset_mode,  # 'hardfake', 'rvf10k', or '140k'
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
         rvf10k_valid_csv=None,
         rvf10k_root_dir=None,
+        realfake140k_train_csv=None,
+        realfake140k_valid_csv=None,
+        realfake140k_test_csv=None,
+        realfake140k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
         num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
-        if dataset_mode not in ['hardfake', 'rvf10k']:
-            raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
         self.dataset_mode = dataset_mode
 
         # Define image size based on dataset_mode
-        image_size = (256, 256) if dataset_mode == 'rvf10k' else (300, 300)
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
 
         # Define transforms
         transform_train = transforms.Compose([
@@ -71,7 +75,6 @@ class Dataset_selector(Dataset):
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided for hardfake mode")
-            # Load and preprocess hardfakevsrealfaces
             full_data = pd.read_csv(hardfake_csv_file)
 
             def create_image_path(row):
@@ -85,16 +88,15 @@ class Dataset_selector(Dataset):
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
 
-            # Split into train, validation, and test
             train_data, temp_data = train_test_split(
                 full_data,
-                test_size=0.3,  # 30% برای validation + test
+                test_size=0.3,
                 stratify=full_data['label'],
                 random_state=3407
             )
             val_data, test_data = train_test_split(
                 temp_data,
-                test_size=0.5,  # نصف 30% برای validation و نصف برای test
+                test_size=0.5,
                 stratify=temp_data['label'],
                 random_state=3407
             )
@@ -102,10 +104,9 @@ class Dataset_selector(Dataset):
             val_data = val_data.reset_index(drop=True)
             test_data = test_data.reset_index(drop=True)
 
-        else:  # dataset_mode == 'rvf10k'
+        elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
                 raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided for rvf10k mode")
-            # Load rvf10k train data
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
@@ -117,22 +118,37 @@ class Dataset_selector(Dataset):
                 return os.path.join('rvf10k', split, folder, img_name)
 
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-
-            # Load rvf10k valid data and split into validation and test
             valid_data = pd.read_csv(rvf10k_valid_csv)
             valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
-            # Split valid_data into validation and test
             val_data, test_data = train_test_split(
                 valid_data,
-                test_size=0.5,  # 50% برای validation و 50% برای test
+                test_size=0.5,
                 stratify=valid_data['label'],
                 random_state=3407
             )
             val_data = val_data.reset_index(drop=True)
             test_data = test_data.reset_index(drop=True)
-
             root_dir = rvf10k_root_dir
+
+        else:  # dataset_mode == '140k'
+            if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
+                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided for 140k mode")
+            
+            # Load train, valid, and test data
+            train_data = pd.read_csv(realfake140k_train_csv)
+            val_data = pd.read_csv(realfake140k_valid_csv)
+            test_data = pd.read_csv(realfake140k_test_csv)
+            root_dir = realfake140k_root_dir
+
+            # Use 'path' column directly from CSV and rename it to 'images_id' for compatibility
+            train_data = train_data.rename(columns={'path': 'images_id'})
+            val_data = val_data.rename(columns={'path': 'images_id'})
+            test_data = test_data.rename(columns={'path': 'images_id'})
+
+            train_data = train_data.reset_index(drop=True)
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
@@ -229,6 +245,17 @@ if __name__ == "__main__":
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
         rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
         rvf10k_root_dir='/kaggle/input/rvf10k',
+        train_batch_size=32,
+        eval_batch_size=32,
+    )
+
+    # Example for 140k Real and Fake Faces
+    dataset_140k = Dataset_selector(
+        dataset_mode='140k',
+        realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
+        realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
+        realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
+        realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=32,
         eval_batch_size=32,
     )
