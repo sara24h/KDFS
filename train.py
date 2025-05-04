@@ -181,7 +181,7 @@ class Train:
         resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         
-        # اصلاح state_dict برای ناسازگاری‌های احتمالی
+       
         state_dict = ckpt_teacher
         model_state_dict = resnet.state_dict()
         new_state_dict = {}
@@ -415,7 +415,7 @@ class Train:
 
                     _tqdm.set_postfix(
                         loss="{:.4f}".format(meter_loss.avg),
-                        top1="{:.4f}".format(meter_top1.avg),
+                        train_acc="{:.4f}".format(meter_top1.avg),
                     )
                     _tqdm.update(1)
                     time.sleep(0.01)
@@ -444,7 +444,7 @@ class Train:
                 "RCLoss {rc_loss:.4f} "
                 "MaskLoss {mask_loss:.6f} "
                 "TotalLoss {total_loss:.4f} "
-                "Prec@(1,) {top1:.2f}".format(
+                "Train_Acc {train_acc:.2f}".format(
                     epoch,
                     gumbel_temperature=self.student.gumbel_temperature,
                     lr=lr,
@@ -453,7 +453,7 @@ class Train:
                     rc_loss=meter_rcloss.avg,
                     mask_loss=meter_maskloss.avg,
                     total_loss=meter_loss.avg,
-                    top1=meter_top1.avg,
+                    train_acc=meter_top1.avg,
                 )
             )
 
@@ -489,7 +489,7 @@ class Train:
                         n = images.size(0)
                         meter_top1.update(prec1, n)
 
-                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
+                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
                         time.sleep(0.01)
 
@@ -500,9 +500,9 @@ class Train:
             self.logger.info(
                 "[Val] "
                 "Epoch {0} : "
-                "Prec@(1,) {top1:.2f}".format(
+                "Val_Acc {val_acc:.2f}".format(
                     epoch,
-                    top1=meter_top1.avg,
+                    val_acc=meter_top1.avg,
                 )
             )
 
@@ -513,55 +513,6 @@ class Train:
 
             self.logger.info(
                 "[Val model Flops] Epoch {0} : ".format(epoch)
-                + str(Flops.item() / (10**6))
-                + "M"
-            )
-
-            # Test
-            self.student.eval()
-            self.student.ticket = True
-            meter_top1.reset()
-
-            with torch.no_grad():
-                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Test epoch: {}/{}".format(epoch, self.num_epochs))
-                    for images, targets in self.test_loader:
-                        if self.device == "cuda":
-                            images = images.cuda()
-                            targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets).sum().item()
-                        prec1 = 100. * correct / images.size(0)
-                        n = images.size(0)
-                        meter_top1.update(prec1, n)
-
-                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
-                        _tqdm.update(1)
-                        time.sleep(0.01)
-
-            Flops = self.student.get_flops()
-            self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("test/Flops", Flops, global_step=epoch)
-
-            self.logger.info(
-                "[Test] "
-                "Epoch {0} : "
-                "Prec@(1,) {top1:.2f}".format(
-                    epoch,
-                    top1=meter_top1.avg,
-                )
-            )
-
-            masks = []
-            for _, m in enumerate(self.student.mask_modules):
-                masks.append(round(m.mask.mean().item(), 2))
-            self.logger.info("[Test mask avg] Epoch {0} : ".format(epoch) + str(masks))
-
-            self.logger.info(
-                "[Test model Flops] Epoch {0} : ".format(epoch)
                 + str(Flops.item() / (10**6))
                 + "M"
             )
@@ -579,6 +530,41 @@ class Train:
 
         self.logger.info("Train finished!")
 
+    def test(self):
+        self.student.eval()
+        self.student.ticket = True
+        meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        with torch.no_grad():
+            with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
+                _tqdm.set_description("Test")
+                for images, targets in self.test_loader:
+                    if self.device == "cuda":
+                        images = images.cuda()
+                        targets = targets.cuda().float()
+                    logits_student, _ = self.student(images)
+                    logits_student = logits_student.squeeze(1)
+
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
+                    n = images.size(0)
+                    meter_top1.update(prec1, n)
+
+                    _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
+                    _tqdm.update(1)
+                    time.sleep(0.01)
+
+        Flops = self.student.get_flops()
+        self.logger.info(
+            "[Test] Test_Acc {test_acc:.2f}".format(test_acc=meter_top1.avg)
+        )
+        self.logger.info(
+            "[Test model Flops] : " + str(Flops.item() / (10**6)) + "M"
+        )
+        self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=0)
+        self.writer.add_scalar("test/Flops", Flops, global_step=0)
+
     def main(self):
         self.result_init()
         self.setup_seed()
@@ -587,3 +573,4 @@ class Train:
         self.define_loss()
         self.define_optim()
         self.train()
+     
