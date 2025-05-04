@@ -38,7 +38,7 @@ def parse_args():
 
 args = parse_args()
 
-
+# تنظیم پارامترها
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
@@ -49,13 +49,13 @@ epochs = args.epochs
 lr = args.lr
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
+# بررسی وجود دایرکتوری‌ها
 if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-
+# بارگذاری داده‌ها
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
         dataset_mode='hardfake',
@@ -99,30 +99,30 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-
-model = models.resnet50(pretrained=True)
+# تعریف مدل
+model = models.resnet50(weights='IMAGENET1K_V1')  # جایگزینی pretrained با weights
 num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 1) 
+model.fc = nn.Linear(num_ftrs, 1)  # خروجی باینری
 model = model.to(device)
 
-
+# فریز کردن لایه‌ها
 for param in model.parameters():
     param.requires_grad = False
 
-
+# آزاد کردن لایه‌های layer4 و fc
 for param in model.layer4.parameters():
     param.requires_grad = True
 for param in model.fc.parameters():
     param.requires_grad = True
 
-
+# تعریف معیار و بهینه‌ساز
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
     {'params': model.layer4.parameters(), 'lr': 1e-5},
     {'params': model.fc.parameters(), 'lr': lr}
 ], weight_decay=1e-4)
 
-
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
@@ -146,7 +146,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-   
+    # اعتبارسنجی
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -166,7 +166,7 @@ for epoch in range(epochs):
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-
+# تست
 model.eval()
 test_loss = 0.0
 correct = 0
@@ -183,7 +183,7 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-
+# نمایش تصاویر نمونه
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
@@ -194,9 +194,10 @@ axes = axes.ravel()
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
         row = val_data.iloc[idx]
-        img_name = row['path'] if dataset_mode == '140k' else row['images_id']
-        label_str = row['label']
-        img_path = os.path.join(data_dir, img_name)
+        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        img_name = row[img_column]
+        label = row['label']
+        img_path = os.path.join(data_dir, 'real_vs_fake', 'real_vs_fake', img_name) if dataset_mode == '140k' else os.path.join(data_dir, img_name)
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
@@ -207,7 +208,7 @@ with torch.no_grad():
         output = model(image_transformed).squeeze(1)
         prob = torch.sigmoid(output).item()
         predicted_label = 'real' if prob > 0.5 else 'fake'
-        true_label = 'real' if label_str == 1 else 'fake'
+        true_label = 'real' if label == 1 else 'fake'
         axes[i].imshow(image)
         axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
@@ -218,10 +219,10 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
-
+# ذخیره مدل
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-
+# محاسبه FLOPs و پارامترها
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
 print('Parameters:', params)
