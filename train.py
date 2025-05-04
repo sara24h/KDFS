@@ -11,7 +11,7 @@ from tqdm import tqdm
 from torchvision import models
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
-from model.student.MobileNet_sparse import MobileNetV2_sparse  # Assuming MobileNetV2_sparse is available
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse  # Assuming MobileNetV2_sparse is available
 from utils import utils, loss, meter, scheduler
 from thop import profile
 
