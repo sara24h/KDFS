@@ -19,12 +19,19 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
         if not os.path.exists(img_name):
-            raise FileNotFoundError(f"Image not found: {img_name}")
+            print(f"Warning: Image not found: {img_name}")
+            # بازگشت تصویر خالی برای جلوگیری از توقف
+            image_size = 256 if self.root_dir.endswith('real_vs_fake/real_vs_fake') else 300
+            image = Image.new('RGB', (image_size, image_size), color='black')
+            label = self.label_map[self.data['label'].iloc[idx]]
+            if self.transform:
+                image = self.transform(image)
+            return image, torch.tensor(label, dtype=torch.float)  # تغییر به float برای BCEWithLogitsLoss
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
             image = self.transform(image)
-        return image, label
+        return image, torch.tensor(label, dtype=torch.float)
 
 class Dataset_selector(Dataset):
     def __init__(
@@ -139,12 +146,12 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(realfake140k_train_csv)
             val_data = pd.read_csv(realfake140k_valid_csv)
             test_data = pd.read_csv(realfake140k_test_csv)
-            root_dir = realfake140k_root_dir
+            # تنظیم مسیر پایه به دایرکتوری تصاویر
+            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real_vs_fake')
 
-            # Use 'path' column directly from CSV and rename it to 'images_id' for compatibility
-            train_data = train_data.rename(columns={'path': 'images_id'})
-            val_data = val_data.rename(columns={'path': 'images_id'})
-            test_data = test_data.rename(columns={'path': 'images_id'})
+            # اطمینان از وجود ستون path
+            if 'path' not in train_data.columns:
+                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
             train_data = train_data.reset_index(drop=True)
             val_data = val_data.reset_index(drop=True)
@@ -152,20 +159,21 @@ class Dataset_selector(Dataset):
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train image paths:\n{train_data['images_id'].head()}")
+        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
         print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation image paths:\n{val_data['images_id'].head()}")
+        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
         print(f"Total validation dataset size: {len(val_data)}")
         print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        print(f"Sample test image paths:\n{test_data['images_id'].head()}")
+        print(f"Sample test image paths:\n{test_data[img_column].head()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         # Check for missing images
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
-            for img_path in data['images_id']:
+            for img_path in data[img_column]:
                 full_path = os.path.join(root_dir, img_path)
                 if not os.path.exists(full_path):
                     missing_images.append(full_path)
