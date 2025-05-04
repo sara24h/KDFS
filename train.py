@@ -140,7 +140,8 @@ class Train:
         )
 
         self.train_loader = dataset_instance.loader_train
-        self.val_loader = dataset_instance.loader_test
+        self.val_loader = dataset_instance.loader_val
+        self.test_loader = dataset_instance.loader_test
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
@@ -196,7 +197,7 @@ class Train:
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
 
-        # تست دقت معلم
+        # تست دقت معلم روی مجموعه اعتبارسنجی
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -474,7 +475,7 @@ class Train:
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
+                    _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
@@ -516,6 +517,56 @@ class Train:
                 + "M"
             )
 
+            # Test
+            self.student.eval()
+            self.student.ticket = True
+            meter_top1.reset()
+
+            with torch.no_grad():
+                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
+                    _tqdm.set_description("Test epoch: {}/{}".format(epoch, self.num_epochs))
+                    for images, targets in self.test_loader:
+                        if self.device == "cuda":
+                            images = images.cuda()
+                            targets = targets.cuda().float()
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze(1)
+
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
+                        n = images.size(0)
+                        meter_top1.update(prec1, n)
+
+                        _tqdm.set_postfix(top1="{:.4f}".format(meter_top1.avg))
+                        _tqdm.update(1)
+                        time.sleep(0.01)
+
+            Flops = self.student.get_flops()
+            self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=epoch)
+            self.writer.add_scalar("test/Flops", Flops, global_step=epoch)
+
+            self.logger.info(
+                "[Test] "
+                "Epoch {0} : "
+                "Prec@(1,) {top1:.2f}".format(
+                    epoch,
+                    top1=meter_top1.avg,
+                )
+            )
+
+            masks = []
+            for _, m in enumerate(self.student.mask_modules):
+                masks.append(round(m.mask.mean().item(), 2))
+            self.logger.info("[Test mask avg] Epoch {0} : ".format(epoch) + str(masks))
+
+            self.logger.info(
+                "[Test model Flops] Epoch {0} : ".format(epoch)
+                + str(Flops.item() / (10**6))
+                + "M"
+            )
+
+            # Save checkpoint based on validation accuracy
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
@@ -523,8 +574,9 @@ class Train:
                 self.save_student_ckpt(False, epoch)
 
             self.logger.info(
-                " => Best top1 accuracy before finetune : " + str(self.best_prec1)
+                " => Best top1 accuracy on validation before finetune : " + str(self.best_prec1)
             )
+
         self.logger.info("Train finished!")
 
     def main(self):
