@@ -10,7 +10,7 @@ import numpy as np
 from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
-from dataset import Dataset_selector  # ایمپورت Dataset_selector
+from data.dataset import Dataset_selector  # ایمپورت Dataset_selector
 
 class Finetune:
     def __init__(self, args):
