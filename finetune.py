@@ -10,13 +10,20 @@ import numpy as np
 from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_selector  # ایمپورت Dataset_selector
+from data.dataset import Dataset_selector  
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+
 
 class Finetune:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
         self.dataset_mode = args.dataset_mode
+        # تنظیم dataset_type مشابه train.py
+        if self.dataset_mode == "hardfake":
+            self.dataset_type = "hardfakevsrealfaces"
+        else:
+            self.dataset_type = args.dataset_type
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
@@ -102,7 +109,10 @@ class Finetune:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading student model")
-        self.student = eval(self.arch + "_sparse_" + self.dataset_mode)()
+        if self.dataset_mode == "hardfake":
+            self.student = ResNet_50_sparse_hardfakevsreal()
+        else:
+            self.student = eval(self.arch + "_sparse_" + self.dataset_type)()
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
