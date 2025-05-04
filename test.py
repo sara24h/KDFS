@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, meter
 from get_flops_and_params import get_flops_and_params
 
@@ -21,7 +21,7 @@ class Test:
         self.dataset_mode = args.dataset_mode  # 'hardfake' یا 'rvf10k'
 
     def dataload(self):
-        print("==> Loading validation dataset..")
+        print("==> Loading test dataset..")
         try:
             if self.dataset_mode == 'hardfake':
                 dataset = Dataset_selector(
@@ -47,8 +47,8 @@ class Test:
                     ddp=False
                 )
             
-            self.val_loader = dataset.loader_test
-            print(f"{self.dataset_mode} validation dataset loaded! Total batches: {len(self.val_loader)}")
+            self.test_loader = dataset.loader_test
+            print(f"{self.dataset_mode} test dataset loaded! Total batches: {len(self.test_loader)}")
         except Exception as e:
             print(f"Error loading dataset: {str(e)}")
             raise
@@ -57,7 +57,11 @@ class Test:
         print("==> Building student model..")
         try:
             print("Loading sparse student model")
-            self.student = ResNet_50_sparse_hardfakevsreal()
+            if self.dataset_mode == 'hardfake':
+                self.student = ResNet_50_sparse_hardfakevsreal()
+            else:  # rvf10k
+                self.student = ResNet_50_sparse_rvf10k()
+            
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
             state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
             self.student.load_state_dict(state_dict, strict=True)
@@ -74,8 +78,8 @@ class Test:
         self.student.ticket = True  # فعال کردن حالت ticket برای مدل sparse
         try:
             with torch.no_grad():
-                with tqdm(total=len(self.val_loader), ncols=100, desc="Testing") as _tqdm:
-                    for images, targets in self.val_loader:
+                with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
+                    for images, targets in self.test_loader:
                         images = images.to(self.device, non_blocking=True)
                         targets = targets.to(self.device, non_blocking=True).float()  # تبدیل به float برای طبقه‌بندی باینری
                         
