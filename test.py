@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
-from model.student.MobileNet_sparse import MobileNetV2_sparse
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse
 from utils import utils, meter
 from get_flops_and_params import get_flops_and_params
 import pandas as pd
