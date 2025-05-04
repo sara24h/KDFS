@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from get_flops_and_params import get_flops_and_params
 
@@ -112,12 +112,22 @@ class Finetune:
         )
 
         self.train_loader = dataset_instance.loader_train
-        self.val_loader = dataset_instance.loader_test
-        self.logger.info(f"{self.dataset_mode} dataset loaded! Train batches: {len(self.train_loader)}, Val batches: {len(self.val_loader)}")
+        self.val_loader = dataset_instance.loader_val
+        self.test_loader = dataset_instance.loader_test
+        self.logger.info(
+            f"{self.dataset_mode} dataset loaded! "
+            f"Train batches: {len(self.train_loader)}, "
+            f"Val batches: {len(self.val_loader)}, "
+            f"Test batches: {len(self.test_loader)}"
+        )
 
     def build_model(self):
         self.logger.info("==> Building sparse student model for fine-tuning..")
-        self.student = ResNet_50_sparse_hardfakevsreal()
+        if self.dataset_mode == 'hardfake':
+            self.student = ResNet_50_sparse_hardfakevsreal()
+        else:  # rvf10k
+            self.student = ResNet_50_sparse_rvf10k()
+        
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
         self.student.load_state_dict(state_dict, strict=False)
@@ -189,8 +199,8 @@ class Finetune:
             self.resume_student_ckpt()
 
         # اضافه کردن dataset_type به args اگر وجود ندارد
-        if not hasattr(self.args, 'dataset_mode'):
-            self.args.dataset_mode = "hardfakevsreal" if self.args.dataset_mode == "hardfake" else "rvf10k"
+        if not hasattr(self.args, 'dataset_type'):
+            self.args.dataset_type = "hardfakevsrealfaces" if self.args.dataset_mode == "hardfake" else "rvf10k"
 
         meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
@@ -247,6 +257,7 @@ class Finetune:
                 f"Prec@1 {meter_top1.avg:.2f}"
             )
 
+            # Validation
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
@@ -272,6 +283,32 @@ class Finetune:
                 f"[Finetune_val] Epoch {epoch+1}: Prec@1 {meter_top1.avg:.2f}"
             )
 
+            # Test
+            self.student.eval()
+            self.student.ticket = True
+            meter_top1.reset()
+            with torch.no_grad():
+                with tqdm(total=len(self.test_loader), ncols=100, desc=f"Finetune Test Epoch {epoch+1}/{self.finetune_num_epochs}") as _tqdm:
+                    for images, targets in self.test_loader:
+                        images = images.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True).float()
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze()
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
+                        n = images.size(0)
+                        meter_top1.update(prec1, n)
+                        _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
+                        _tqdm.update(1)
+                        time.sleep(0.01)
+
+            self.writer.add_scalar("finetune_test/acc/top1", meter_top1.avg, epoch + 1)
+
+            self.logger.info(
+                f"[Finetune_test] Epoch {epoch+1}: Prec@1 {meter_top1.avg:.2f}"
+            )
+
             masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
             self.logger.info(f"[Finetune Mask avg] Epoch {epoch+1}: {masks}")
 
@@ -286,11 +323,11 @@ class Finetune:
                 f" => Best top1 accuracy before finetune: {self.best_prec1_before_finetune:.2f}"
             )
             self.logger.info(
-                f" => Best top1 accuracy after finetune: {self.best_prec1_after_finetune:.2f}"
+                f" => Best top1 accuracy after finetune (val): {self.best_prec1_after_finetune:.2f}"
             )
 
         self.logger.info("Finetune finished!")
-        self.logger.info(f"Best top1 accuracy: {self.best_prec1_after_finetune:.2f}")
+        self.logger.info(f"Best top1 accuracy (val): {self.best_prec1_after_finetune:.2f}")
         (
             Flops_baseline,
             Flops,
