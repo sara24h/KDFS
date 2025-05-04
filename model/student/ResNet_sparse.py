@@ -99,10 +99,11 @@ class MaskedNet(nn.Module):
         Flops_total = torch.tensor(0.0, device=device)
         image_sizes = {
             "hardfakevsrealfaces": 300,
-            "rvf10k": 256
+            "rvf10k": 256,
+            "140k": 256  # اضافه کردن اندازه تصویر برای دیتاست 140k
         }
         dataset_type = getattr(self, "dataset_type", "hardfakevsrealfaces")
-        input_size = image_sizes[dataset_type]
+        input_size = image_sizes.get(dataset_type, 256)  # مقدار پیش‌فرض 256 در صورت عدم وجود
         
         conv1_h = (input_size - 7 + 2 * 3) // 2 + 1
         maxpool_h = (conv1_h - 3 + 2 * 1) // 2 + 1
@@ -118,7 +119,7 @@ class MaskedNet(nn.Module):
             m = m.to(device)
             Flops_shortcut_conv = 0
             Flops_shortcut_bn = 0
-            if len(self.mask_modules) in [48]:
+            if len(self.mask_modules) == 48:  # برای ResNet-50
                 if i % 3 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -136,7 +137,7 @@ class MaskedNet(nn.Module):
                         (m.out_channels // 4) * m.out_channels
                     )
                     Flops_shortcut_bn = m.feature_map_h * m.feature_map_w * m.out_channels
-            elif len(self.mask_modules) in [16, 32]:
+            elif len(self.mask_modules) in [16, 32]:  # برای مدل‌های دیگر
                 if i % 2 == 0:
                     Flops_conv = (
                         m.feature_map_h * m.feature_map_w * m.kernel_size * m.kernel_size *
@@ -331,4 +332,17 @@ def ResNet_50_sparse_rvf10k(
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
         dataset_type="rvf10k"
+    )
+
+def ResNet_50_sparse_140k(
+    gumbel_start_temperature=2.0, gumbel_end_temperature=0.5, num_epochs=200
+):
+    return ResNet_sparse(
+        block=Bottleneck_sparse,
+        num_blocks=[3, 4, 6, 3],
+        num_classes=1,  # تغییر به 1 برای خروجی باینری
+        gumbel_start_temperature=gumbel_start_temperature,
+        gumbel_end_temperature=gumbel_end_temperature,
+        num_epochs=num_epochs,
+        dataset_type="140k"
     )
