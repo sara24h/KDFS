@@ -17,13 +17,15 @@ from ptflops import get_model_complexity_info
 from data.dataset import FaceDataset, Dataset_selector
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train ResNet50 and MobileNetV2 models for fake vs real face classification.')
+    parser = argparse.ArgumentParser(description='Train ResNet50 and/or MobileNetV2 models for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
                         help='Dataset to use: hardfake, rvf10k, or 140k')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Path to the dataset directory containing images and CSV file(s)')
     parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
                         help='Directory to save the trained models and outputs')
+    parser.add_argument('--model', type=str, default='both', choices=['resnet50', 'mobilenetv2', 'both'],
+                        help='Model to train: resnet50, mobilenetv2, or both (default: both)')
     parser.add_argument('--img_height', type=int, default=300,
                         help='Height of input images (default: 300 for hardfake, 256 for rvf10k and 140k)')
     parser.add_argument('--img_width', type=int, default=300,
@@ -42,6 +44,7 @@ args = parse_args()
 dataset_mode = args.dataset_mode
 data_dir = args.data_dir
 teacher_dir = args.teacher_dir
+model_choice = args.model
 img_height = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_height
 img_width = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_width
 batch_size = args.batch_size
@@ -100,52 +103,58 @@ val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
 # تعریف مدل‌ها
-# ResNet50
-resnet50 = models.resnet50(weights='IMAGENET1K_V1')
-num_ftrs_resnet = resnet50.fc.in_features
-resnet50.fc = nn.Linear(num_ftrs_resnet, 1)
-resnet50 = resnet50.to(device)
+models_dict = {}
+if model_choice in ['resnet50', 'both']:
+    # ResNet50
+    resnet50 = models.resnet50(weights='IMAGENET1K_V1')
+    num_ftrs_resnet = resnet50.fc.in_features
+    resnet50.fc = nn.Linear(num_ftrs_resnet, 1)
+    resnet50 = resnet50.to(device)
+    # فریز کردن لایه‌ها
+    for param in resnet50.parameters():
+        param.requires_grad = False
+    for param in resnet50.layer4.parameters():
+        param.requires_grad = True
+    for param in resnet50.fc.parameters():
+        param.requires_grad = True
+    models_dict['ResNet50'] = resnet50
 
-# MobileNetV2
-mobilenet_v2 = models.mobilenet_v2(weights='IMAGENET1K_V1')
-num_ftrs_mobile = mobilenet_v2.classifier[1].in_features
-mobilenet_v2.classifier = nn.Sequential(
-    nn.Dropout(p=0.2),
-    nn.Linear(num_ftrs_mobile, 1)
-)
-mobilenet_v2 = mobilenet_v2.to(device)
-
-# فریز کردن لایه‌ها
-# ResNet50
-for param in resnet50.parameters():
-    param.requires_grad = False
-for param in resnet50.layer4.parameters():
-    param.requires_grad = True
-for param in resnet50.fc.parameters():
-    param.requires_grad = True
-
-# MobileNetV2
-for param in mobilenet_v2.parameters():
-    param.requires_grad = False
-for param in mobilenet_v2.features[18].parameters():  # Last InvertedResidual block
-    param.requires_grad = True
-for param in mobilenet_v2.classifier.parameters():
-    param.requires_grad = True
+if model_choice in ['mobilenetv2', 'both']:
+    # MobileNetV2
+    mobilenet_v2 = models.mobilenet_v2(weights='IMAGENET1K_V1')
+    num_ftrs_mobile = mobilenet_v2.classifier[1].in_features
+    mobilenet_v2.classifier = nn.Sequential(
+        nn.Dropout(p=0.2),
+        nn.Linear(num_ftrs_mobile, 1)
+    )
+    mobilenet_v2 = mobilenet_v2.to(device)
+    # فریز کردن لایه‌ها
+    for param in mobilenet_v2.parameters():
+        param.requires_grad = False
+    for param in mobilenet_v2.features[18].parameters():
+        param.requires_grad = True
+    for param in mobilenet_v2.classifier.parameters():
+        param.requires_grad = True
+    models_dict['MobileNetV2'] = mobilenet_v2
 
 # تعریف معیار و بهینه‌ساز
 criterion = nn.BCEWithLogitsLoss()
 
-# بهینه‌ساز برای ResNet50
-optimizer_resnet = optim.Adam([
-    {'params': resnet50.layer4.parameters(), 'lr': 1e-5},
-    {'params': resnet50.fc.parameters(), 'lr': lr}
-], weight_decay=1e-4)
+# بهینه‌سازها
+optimizers_dict = {}
+if 'ResNet50' in models_dict:
+    optimizer_resnet = optim.Adam([
+        {'params': models_dict['ResNet50'].layer4.parameters(), 'lr': 1e-5},
+        {'params': models_dict['ResNet50'].fc.parameters(), 'lr': lr}
+    ], weight_decay=1e-4)
+    optimizers_dict['ResNet50'] = optimizer_resnet
 
-# بهینه‌ساز برای MobileNetV2
-optimizer_mobile = optim.Adam([
-    {'params': mobilenet_v2.features[18].parameters(), 'lr': 1e-5},
-    {'params': mobilenet_v2.classifier.parameters(), 'lr': lr}
-], weight_decay=1e-4)
+if 'MobileNetV2' in models_dict:
+    optimizer_mobile = optim.Adam([
+        {'params': models_dict['MobileNetV2'].features[18].parameters(), 'lr': 1e-5},
+        {'params': models_dict['MobileNetV2'].classifier.parameters(), 'lr': lr}
+    ], weight_decay=1e-4)
+    optimizers_dict['MobileNetV2'] = optimizer_mobile
 
 # تابع آموزش
 def train_model(model, optimizer, model_name):
@@ -252,34 +261,27 @@ def visualize_predictions(model, model_name):
     display(IPImage(filename=file_path))
 
 # آموزش مدل‌ها
-print("Training ResNet50...")
-resnet50 = train_model(resnet50, optimizer_resnet, "ResNet50")
-print("\nTraining MobileNetV2...")
-mobilenet_v2 = train_model(mobilenet_v2, optimizer_mobile, "MobileNetV2")
+for model_name, model in models_dict.items():
+    print(f"\nTraining {model_name}...")
+    models_dict[model_name] = train_model(model, optimizers_dict[model_name], model_name)
 
 # تست مدل‌ها
-print("\nTesting ResNet50...")
-test_model(resnet50, "ResNet50")
-print("\nTesting MobileNetV2...")
-test_model(mobilenet_v2, "MobileNetV2")
+for model_name, model in models_dict.items():
+    print(f"\nTesting {model_name}...")
+    test_model(model, model_name)
 
 # نمایش تصاویر نمونه
-print("\nVisualizing ResNet50 predictions...")
-visualize_predictions(resnet50, "ResNet50")
-print("\nVisualizing MobileNetV2 predictions...")
-visualize_predictions(mobilenet_v2, "MobileNetV2")
+for model_name, model in models_dict.items():
+    print(f"\nVisualizing {model_name} predictions...")
+    visualize_predictions(model, model_name)
 
 # ذخیره مدل‌ها
-torch.save(resnet50.state_dict(), os.path.join(teacher_dir, 'teacher_model_resnet50.pth'))
-torch.save(mobilenet_v2.state_dict(), os.path.join(teacher_dir, 'teacher_model_mobilenetv2.pth'))
+for model_name, model in models_dict.items():
+    torch.save(model.state_dict(), os.path.join(teacher_dir, f'teacher_model_{model_name.lower()}.pth'))
 
 # محاسبه FLOPs و پارامترها
-print("\nResNet50 Complexity:")
-flops_resnet, params_resnet = get_model_complexity_info(resnet50, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-print('ResNet50 FLOPs:', flops_resnet)
-print('ResNet50 Parameters:', params_resnet)
-
-print("\nMobileNetV2 Complexity:")
-flops_mobile, params_mobile = get_model_complexity_info(mobilenet_v2, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-print('MobileNetV2 FLOPs:', flops_mobile)
-print('MobileNetV2 Parameters:', params_mobile)
+for model_name, model in models_dict.items():
+    print(f"\n{model_name} Complexity:")
+    flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+    print(f'{model_name} FLOPs: {flops}')
+    print(f'{model_name} Parameters: {params}')
