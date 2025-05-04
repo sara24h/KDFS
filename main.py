@@ -41,8 +41,8 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k"),
-        help="Dataset to use: hardfake or rvf10k",
+        choices=("hardfake", "rvf10k", "140k"),
+        help="Dataset to use: hardfake, rvf10k, or 140k",
     )
     parser.add_argument(
         "--dataset_dir",
@@ -67,6 +67,24 @@ def parse_args():
         type=str,
         default="/kaggle/input/rvf10k/valid.csv",
         help="The path to the rvf10k valid CSV file (for rvf10k mode)",
+    )
+    parser.add_argument(
+        "--realfake140k_train_csv",
+        type=str,
+        default="/kaggle/input/140k-real-and-fake-faces/train.csv",
+        help="The path to the 140k train CSV file (for 140k mode)",
+    )
+    parser.add_argument(
+        "--realfake140k_valid_csv",
+        type=str,
+        default="/kaggle/input/140k-real-and-fake-faces/valid.csv",
+        help="The path to the 140k valid CSV file (for 140k mode)",
+    )
+    parser.add_argument(
+        "--realfake140k_test_csv",
+        type=str,
+        default="/kaggle/input/140k-real-and-fake-faces/test.csv",
+        help="The path to the 140k test CSV file (for 140k mode)",
     )
     parser.add_argument(
         "--num_workers",
@@ -320,11 +338,20 @@ def validate_args(args):
             raise FileNotFoundError(f"Hardfake CSV file not found: {args.hardfake_csv_file}")
         if not os.path.exists(args.dataset_dir):
             raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
-    else:  # rvf10k
+    elif args.dataset_mode == "rvf10k":
         if not os.path.exists(args.rvf10k_train_csv):
             raise FileNotFoundError(f"RVF10k train CSV file not found: {args.rvf10k_train_csv}")
         if not os.path.exists(args.rvf10k_valid_csv):
             raise FileNotFoundError(f"RVF10k valid CSV file not found: {args.rvf10k_valid_csv}")
+        if not os.path.exists(args.dataset_dir):
+            raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
+    elif args.dataset_mode == "140k":
+        if not os.path.exists(args.realfake140k_train_csv):
+            raise FileNotFoundError(f"140k train CSV file not found: {args.realfake140k_train_csv}")
+        if not os.path.exists(args.realfake140k_valid_csv):
+            raise FileNotFoundError(f"140k valid CSV file not found: {args.realfake140k_valid_csv}")
+        if not os.path.exists(args.realfake140k_test_csv):
+            raise FileNotFoundError(f"140k test CSV file not found: {args.realfake140k_test_csv}")
         if not os.path.exists(args.dataset_dir):
             raise FileNotFoundError(f"Dataset directory not found: {args.dataset_dir}")
 
