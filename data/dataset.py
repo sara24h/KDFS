@@ -7,17 +7,18 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
+        self.img_column = img_column  # Dynamic column name
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
+        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
             image_size = 256 if '140k' in self.root_dir else 300
@@ -77,10 +78,13 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
+        # Set img_column based on dataset_mode
+        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
-                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided for hardfake mode")
+                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
             full_data = pd.read_csv(hardfake_csv_file)
 
             def create_image_path(row):
@@ -95,16 +99,10 @@ class Dataset_selector(Dataset):
             root_dir = hardfake_root_dir
 
             train_data, temp_data = train_test_split(
-                full_data,
-                test_size=0.3,
-                stratify=full_data['label'],
-                random_state=3407
+                full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
             )
             val_data, test_data = train_test_split(
-                temp_data,
-                test_size=0.5,
-                stratify=temp_data['label'],
-                random_state=3407
+                temp_data, test_size=0.5, stratify=temp_data['label'], random_state=3407
             )
             train_data = train_data.reset_index(drop=True)
             val_data = val_data.reset_index(drop=True)
@@ -112,7 +110,7 @@ class Dataset_selector(Dataset):
 
         elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
-                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided for rvf10k mode")
+                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
@@ -128,10 +126,7 @@ class Dataset_selector(Dataset):
             valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
             val_data, test_data = train_test_split(
-                valid_data,
-                test_size=0.5,
-                stratify=valid_data['label'],
-                random_state=3407
+                valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
             )
             val_data = val_data.reset_index(drop=True)
             test_data = test_data.reset_index(drop=True)
@@ -139,27 +134,21 @@ class Dataset_selector(Dataset):
 
         else:  # dataset_mode == '140k'
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
-                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided for 140k mode")
-            
-            # Load train, valid, and test data
+                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
             train_data = pd.read_csv(realfake140k_train_csv)
             val_data = pd.read_csv(realfake140k_valid_csv)
             test_data = pd.read_csv(realfake140k_test_csv)
-            # تنظیم مسیر پایه به دایرکتوری صحیح با خط تیره
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
-            # اطمینان از وجود ستون path
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
-            # مرتب‌سازی تصادفی داده‌ها برای اطمینان از توزیع متعادل
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
         print(f"Train label distribution:\n{train_data['label'].value_counts()}")
@@ -182,45 +171,31 @@ class Dataset_selector(Dataset):
                 print(f"Sample missing {split} images:", missing_images[:5])
 
         # Create datasets
-        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
-        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
-        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test)
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
         # Create data loaders
         if ddp:
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-                train_dataset, shuffle=True
-            )
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
             self.loader_train = DataLoader(
-                train_dataset,
-                batch_size=train_batch_size,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
-                sampler=train_sampler,
+                train_dataset, batch_size=train_batch_size, num_workers=num_workers,
+                pin_memory=pin_memory, sampler=train_sampler,
             )
         else:
             self.loader_train = DataLoader(
-                train_dataset,
-                batch_size=train_batch_size,
-                shuffle=True,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
+                train_dataset, batch_size=train_batch_size, shuffle=True,
+                num_workers=num_workers, pin_memory=pin_memory,
             )
 
         self.loader_val = DataLoader(
-            val_dataset,
-            batch_size=eval_batch_size,
-            shuffle=True,  # موقتاً برای تست فعال شده
-            num_workers=num_workers,
-            pin_memory=pin_memory,
+            val_dataset, batch_size=eval_batch_size, shuffle=True,
+            num_workers=num_workers, pin_memory=pin_memory,
         )
 
         self.loader_test = DataLoader(
-            test_dataset,
-            batch_size=eval_batch_size,
-            shuffle=True,  # موقتاً برای تست فعال شده
-            num_workers=num_workers,
-            pin_memory=pin_memory,
+            test_dataset, batch_size=eval_batch_size, shuffle=True,
+            num_workers=num_workers, pin_memory=pin_memory,
         )
 
         # Debug: Print loader sizes
@@ -243,7 +218,7 @@ if __name__ == "__main__":
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,  # به‌روزرسانی به 64
+        train_batch_size=64,
         eval_batch_size=64,
     )
 
