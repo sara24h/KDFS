@@ -20,7 +20,6 @@ class FaceDataset(Dataset):
         img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
-            # بازگشت تصویر خالی برای جلوگیری از توقف
             image_size = 256 if '140k' in self.root_dir else 300
             image = Image.new('RGB', (image_size, image_size), color='black')
             label = self.label_map[self.data['label'].iloc[idx]]
@@ -153,9 +152,10 @@ class Dataset_selector(Dataset):
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
-            train_data = train_data.reset_index(drop=True)
-            val_data = val_data.reset_index(drop=True)
-            test_data = test_data.reset_index(drop=True)
+            # مرتب‌سازی تصادفی داده‌ها برای اطمینان از توزیع متعادل
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
@@ -210,7 +210,7 @@ class Dataset_selector(Dataset):
         self.loader_val = DataLoader(
             val_dataset,
             batch_size=eval_batch_size,
-            shuffle=False,
+            shuffle=True,  # موقتاً برای تست فعال شده
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
@@ -218,7 +218,7 @@ class Dataset_selector(Dataset):
         self.loader_test = DataLoader(
             test_dataset,
             batch_size=eval_batch_size,
-            shuffle=False,
+            shuffle=True,  # موقتاً برای تست فعال شده
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
@@ -243,8 +243,8 @@ if __name__ == "__main__":
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=32,
-        eval_batch_size=32,
+        train_batch_size=64,  # به‌روزرسانی به 64
+        eval_batch_size=64,
     )
 
     # Example for rvf10k
@@ -253,8 +253,8 @@ if __name__ == "__main__":
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
         rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
         rvf10k_root_dir='/kaggle/input/rvf10k',
-        train_batch_size=32,
-        eval_batch_size=32,
+        train_batch_size=64,
+        eval_batch_size=64,
     )
 
     # Example for 140k Real and Fake Faces
@@ -264,6 +264,6 @@ if __name__ == "__main__":
         realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
         realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
-        train_batch_size=32,
-        eval_batch_size=32,
+        train_batch_size=64,
+        eval_batch_size=64,
     )
