@@ -67,7 +67,7 @@ class Finetune:
 
     def dataload(self):
         """لود کردن دیتاست‌ها با استفاده از Dataset_selector"""
-        if self.dataset_type == 'hardfake':
+        if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
             dataset = Dataset_selector(
@@ -79,7 +79,7 @@ class Finetune:
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
             )
-        elif self.dataset_type == 'rvf10k':
+        elif self.dataset_mode == 'rvf10k':
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             rvf10k_root_dir = self.dataset_dir
