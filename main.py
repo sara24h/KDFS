@@ -86,6 +86,12 @@ def parse_args():
         help="load the model from the specified checkpoint",
     )
     parser.add_argument(
+        "--finetune_resume",
+        type=str,
+        default=None,
+        help="load the model from the specified checkpoint in finetune",
+    )
+    parser.add_argument(
         "--ddp",
         action="store_true",
         help="Use the distributed data parallel",
