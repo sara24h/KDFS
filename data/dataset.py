@@ -11,8 +11,7 @@ class FaceDataset(Dataset):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-       
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0,'Real': 1, 'Fake': 0} 
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
@@ -86,15 +85,22 @@ class Dataset_selector(Dataset):
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
 
-            # Split into train and validation
-            train_data, val_data = train_test_split(
+            # Split into train, validation, and test
+            train_data, temp_data = train_test_split(
                 full_data,
-                test_size=0.2,
+                test_size=0.3,  # 30% برای validation + test
                 stratify=full_data['label'],
+                random_state=3407
+            )
+            val_data, test_data = train_test_split(
+                temp_data,
+                test_size=0.5,  # نصف 30% برای validation و نصف برای test
+                stratify=temp_data['label'],
                 random_state=3407
             )
             train_data = train_data.reset_index(drop=True)
             val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
 
         else:  # dataset_mode == 'rvf10k'
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
@@ -103,7 +109,7 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
-                folder = 'fake' if row['label'] == 0 else 'real'  # اصلاح برای مقادیر عددی
+                folder = 'fake' if row['label'] == 0 else 'real'
                 img_name = row['id']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
@@ -112,9 +118,20 @@ class Dataset_selector(Dataset):
 
             train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
 
-            # Load rvf10k valid data
-            val_data = pd.read_csv(rvf10k_valid_csv)
-            val_data['images_id'] = val_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+            # Load rvf10k valid data and split into validation and test
+            valid_data = pd.read_csv(rvf10k_valid_csv)
+            valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+
+            # Split valid_data into validation and test
+            val_data, test_data = train_test_split(
+                valid_data,
+                test_size=0.5,  # 50% برای validation و 50% برای test
+                stratify=valid_data['label'],
+                random_state=3407
+            )
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
+
             root_dir = rvf10k_root_dir
 
         # Debug: Print data statistics
@@ -125,29 +142,25 @@ class Dataset_selector(Dataset):
         print(f"Sample validation image paths:\n{val_data['images_id'].head()}")
         print(f"Total validation dataset size: {len(val_data)}")
         print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+        print(f"Sample test image paths:\n{test_data['images_id'].head()}")
+        print(f"Total test dataset size: {len(test_data)}")
+        print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         # Check for missing images
-        missing_train_images = []
-        for img_path in train_data['images_id']:
-            full_path = os.path.join(root_dir, img_path)
-            if not os.path.exists(full_path):
-                missing_train_images.append(full_path)
-        if missing_train_images:
-            print(f"Missing train images: {len(missing_train_images)}")
-            print("Sample missing train images:", missing_train_images[:5])
-
-        missing_val_images = []
-        for img_path in val_data['images_id']:
-            full_path = os.path.join(root_dir, img_path)
-            if not os.path.exists(full_path):
-                missing_val_images.append(full_path)
-        if missing_val_images:
-            print(f"Missing validation images: {len(missing_val_images)}")
-            print("Sample missing validation images:", missing_val_images[:5])
+        for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
+            missing_images = []
+            for img_path in data['images_id']:
+                full_path = os.path.join(root_dir, img_path)
+                if not os.path.exists(full_path):
+                    missing_images.append(full_path)
+            if missing_images:
+                print(f"Missing {split} images: {len(missing_images)}")
+                print(f"Sample missing {split} images:", missing_images[:5])
 
         # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test)
 
         # Create data loaders
         if ddp:
@@ -170,33 +183,35 @@ class Dataset_selector(Dataset):
                 pin_memory=pin_memory,
             )
 
-        self.loader_test = DataLoader(
+        self.loader_val = DataLoader(
             val_dataset,
             batch_size=eval_batch_size,
-            shuffle=True,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+        self.loader_test = DataLoader(
+            test_dataset,
+            batch_size=eval_batch_size,
+            shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
 
         # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
-        print(f"Validation loader batches: {len(self.loader_test)}")
+        print(f"Validation loader batches: {len(self.loader_val)}")
+        print(f"Test loader batches: {len(self.loader_test)}")
 
         # Test a sample batch
-        try:
-            sample = next(iter(self.loader_train))
-            print(f"Sample train batch image shape: {sample[0].shape}")
-            print(f"Sample train batch labels: {sample[1]}")
-        except Exception as e:
-            print(f"Error loading sample train batch: {e}")
-
-        try:
-            sample = next(iter(self.loader_test))
-            print(f"Sample validation batch image shape: {sample[0].shape}")
-            print(f"Sample validation batch labels: {sample[1]}")
-        except Exception as e:
-            print(f"Error loading sample validation batch: {e}")
-
+        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
+            try:
+                sample = next(iter(loader))
+                print(f"Sample {name} batch image shape: {sample[0].shape}")
+                print(f"Sample {name} batch labels: {sample[1]}")
+            except Exception as e:
+                print(f"Error loading sample {name} batch: {e}")
 
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
@@ -217,5 +232,3 @@ if __name__ == "__main__":
         train_batch_size=32,
         eval_batch_size=32,
     )
-
-
