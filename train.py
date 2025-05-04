@@ -20,6 +20,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
+        "140k": 5000.0,  # مقدار فرضی، باید با مقدار واقعی جایگزین شود
     }
 }
 
@@ -64,8 +65,12 @@ class Train:
             self.args.dataset_type = "rvf10k"
             self.num_classes = 1
             self.image_size = 256
+        elif self.dataset_mode == "140k":
+            self.args.dataset_type = "140k"
+            self.num_classes = 1
+            self.image_size = 256
         else:
-            raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
     def result_init(self):
         if not os.path.exists(self.result_dir):
@@ -101,8 +106,8 @@ class Train:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        if self.dataset_mode not in ['hardfake', 'rvf10k']:
-            raise ValueError("dataset_mode must be 'hardfake' or 'rvf10k'")
+        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
@@ -110,13 +115,32 @@ class Train:
             rvf10k_train_csv = None
             rvf10k_valid_csv = None
             rvf10k_root_dir = None
-        else:
+            realfake140k_train_csv = None
+            realfake140k_valid_csv = None
+            realfake140k_test_csv = None
+            realfake140k_root_dir = None
+        elif self.dataset_mode == 'rvf10k':
             hardfake_csv_file = None
             hardfake_root_dir = None
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             rvf10k_root_dir = self.dataset_dir
+            realfake140k_train_csv = None
+            realfake140k_valid_csv = None
+            realfake140k_test_csv = None
+            realfake140k_root_dir = None
+        else:  # dataset_mode == '140k'
+            hardfake_csv_file = None
+            hardfake_root_dir = None
+            rvf10k_train_csv = None
+            rvf10k_valid_csv = None
+            rvf10k_root_dir = None
+            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake140k_root_dir = self.dataset_dir
 
+        # بررسی وجود فایل‌های CSV
         if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
             raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         if self.dataset_mode == 'rvf10k':
@@ -124,6 +148,13 @@ class Train:
                 raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
             if not os.path.exists(rvf10k_valid_csv):
                 raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
+        if self.dataset_mode == '140k':
+            if not os.path.exists(realfake140k_train_csv):
+                raise FileNotFoundError(f"Train CSV file not found: {realfake140k_train_csv}")
+            if not os.path.exists(realfake140k_valid_csv):
+                raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
+            if not os.path.exists(realfake140k_test_csv):
+                raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -132,6 +163,10 @@ class Train:
             rvf10k_train_csv=rvf10k_train_csv,
             rvf10k_valid_csv=rvf10k_valid_csv,
             rvf10k_root_dir=rvf10k_root_dir,
+            realfake140k_train_csv=realfake140k_train_csv,
+            realfake140k_valid_csv=realfake140k_valid_csv,
+            realfake140k_test_csv=realfake140k_test_csv,
+            realfake140k_root_dir=realfake140k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
@@ -181,7 +216,6 @@ class Train:
         resnet.fc = nn.Linear(num_ftrs, 1)
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         
-       
         state_dict = ckpt_teacher
         model_state_dict = resnet.state_dict()
         new_state_dict = {}
@@ -221,7 +255,7 @@ class Train:
                 gumbel_end_temperature=self.gumbel_end_temperature,
                 num_epochs=self.num_epochs,
             )
-        else:
+        else:  # rvf10k or 140k
             self.student = ResNet_50_sparse_rvf10k(
                 gumbel_start_temperature=self.gumbel_start_temperature,
                 gumbel_end_temperature=self.gumbel_end_temperature,
@@ -573,4 +607,3 @@ class Train:
         self.define_loss()
         self.define_optim()
         self.train()
-     
