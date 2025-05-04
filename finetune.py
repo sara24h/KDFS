@@ -94,7 +94,7 @@ class Finetune:
                 pin_memory=self.pin_memory,
             )
         else:
-            raise ValueError(f"Unknown dataset_type: {self.dataset_mode}")
+            raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
         self.train_loader, self.val_loader = dataset.loader_train, dataset.loader_val
         self.logger.info("Dataset has been loaded!")
@@ -102,7 +102,7 @@ class Finetune:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading student model")
-        self.student = eval(self.arch + "_sparse_" + self.dataset_type)()
+        self.student = eval(self.arch + "_sparse_" + self.dataset_mode)()
         ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
