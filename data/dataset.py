@@ -21,12 +21,12 @@ class FaceDataset(Dataset):
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
             # بازگشت تصویر خالی برای جلوگیری از توقف
-            image_size = 256 if self.root_dir.endswith('real_vs_fake/real_vs_fake') else 300
+            image_size = 256 if '140k' in self.root_dir else 300
             image = Image.new('RGB', (image_size, image_size), color='black')
             label = self.label_map[self.data['label'].iloc[idx]]
             if self.transform:
                 image = self.transform(image)
-            return image, torch.tensor(label, dtype=torch.float)  # تغییر به float برای BCEWithLogitsLoss
+            return image, torch.tensor(label, dtype=torch.float)
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
@@ -146,8 +146,8 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(realfake140k_train_csv)
             val_data = pd.read_csv(realfake140k_valid_csv)
             test_data = pd.read_csv(realfake140k_test_csv)
-            # تنظیم مسیر پایه به دایرکتوری تصاویر
-            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real_vs_fake')
+            # تنظیم مسیر پایه به دایرکتوری صحیح با خط تیره
+            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
             # اطمینان از وجود ستون path
             if 'path' not in train_data.columns:
