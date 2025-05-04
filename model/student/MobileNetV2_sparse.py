@@ -34,7 +34,9 @@ class MaskedNet(nn.Module):
                 m.checkpoint = copy.deepcopy(m.state_dict())
 
     def rewind_weights(self):
-        for m in self.mask_modules:
+        for m in self
+
+.mask_modules:
             m.rewind_weights()
         for m in self.modules():
             if (
@@ -189,7 +191,7 @@ class InvertedResidual_sparse(nn.Module):
 class MobileNetV2_sparse(MaskedNet):
     def __init__(
         self,
-        num_classes=1000,
+        num_classes=2,  # Changed to 2 for binary classification
         width_mult=1.0,
         gumbel_start_temperature=2,
         gumbel_end_temperature=0.1,
@@ -299,8 +301,8 @@ def MobileNetV2_sparse_imagenet(
     gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=350
 ):
     return MobileNetV2_sparse(
-        num_classes=1000,
-        width_mult=1.0,
+        num_classes=2,  # Changed to 2 for binary classification
+        width_mult= Yok1.0,
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
