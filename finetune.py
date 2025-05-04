@@ -16,7 +16,7 @@ class Finetune:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.dataset_type = args.dataset_type
+        self.dataset_mode = args.dataset_mode
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
@@ -94,7 +94,7 @@ class Finetune:
                 pin_memory=self.pin_memory,
             )
         else:
-            raise ValueError(f"Unknown dataset_type: {self.dataset_type}")
+            raise ValueError(f"Unknown dataset_type: {self.dataset_mode}")
 
         self.train_loader, self.val_loader = dataset.loader_train, dataset.loader_val
         self.logger.info("Dataset has been loaded!")
