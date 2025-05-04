@@ -11,7 +11,7 @@ from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 
 class Finetune:
     def __init__(self, args):
@@ -20,8 +20,12 @@ class Finetune:
         self.dataset_mode = args.dataset_mode
         if self.dataset_mode == "hardfake":
             self.dataset_type = "hardfakevsrealfaces"
+        elif self.dataset_mode == "rvf10k":
+            self.dataset_type = "rvf10k"
+        elif self.dataset_mode == "140k":
+            self.dataset_type = "140k"
         else:
-            self.dataset_type = args.dataset_type
+            raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
@@ -63,7 +67,7 @@ class Finetune:
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = strazor = str(self.seed)
+        os.environ["PYTHONHASHSEED"] = str(self.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -98,10 +102,28 @@ class Finetune:
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
             )
+        elif self.dataset_mode == '140k':
+            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake140k_root_dir = self.dataset_dir
+            dataset = Dataset_selector(
+                dataset_mode='140k',
+                realfake140k_train_csv=realfake140k_train_csv,
+                realfake140k_valid_csv=realfake140k_valid_csv,
+                realfake140k_test_csv=realfake140k_test_csv,
+                realfake140k_root_dir=realfake140k_root_dir,
+                train_batch_size=self.finetune_train_batch_size,
+                eval_batch_size=self.finetune_eval_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+            )
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
-        self.train_loader, self.val_loader = dataset.loader_train, dataset.loader_val
+        self.train_loader = dataset.loader_train
+        self.val_loader = dataset.loader_val
+        self.test_loader = dataset.loader_test
         self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
@@ -111,11 +133,12 @@ class Finetune:
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
-        else:
-            self.student = eval(self.arch + "_sparse_" + self.dataset_type)()
-        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
+        else:  # rvf10k or 140k
+            self.student = ResNet_50_sparse_rvf10k()
+        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
+        self.student = self.student.to(self.device)
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss()  # برای مسئله باینری
@@ -144,7 +167,7 @@ class Finetune:
         )
 
     def resume_student_ckpt(self):
-        ckpt_student = torch.load(self.finetune_resume)
+        ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.load_state_dict(ckpt_student["student"])
@@ -181,6 +204,7 @@ class Finetune:
 
     def finetune(self):
         if self.device == "cuda":
+            torch.cuda.empty_cache()
             self.student = self.student.cuda()
             self.ori_loss = self.ori_loss.cuda()
         if self.finetune_resume:
@@ -209,10 +233,10 @@ class Finetune:
                     self.finetune_optim_weight.zero_grad()
                     if self.device == "cuda":
                         images = images.cuda()
-                        targets = targets.cuda()
+                        targets = targets.cuda().float()
                     logits_student, _ = self.student(images)
                     logits_student = logits_student.squeeze(1)  # برای مسئله باینری
-                    ori_loss = self.ori_loss(logits_student, targets.float())
+                    ori_loss = self.ori_loss(logits_student, targets)
                     total_loss = ori_loss
                     total_loss.backward()
                     self.finetune_optim_weight.step()
@@ -257,7 +281,7 @@ class Finetune:
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
-                            targets = targets.cuda()
+                            targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
