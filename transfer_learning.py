@@ -224,12 +224,11 @@ def test_model(model, model_name):
     print(f'{model_name} Test Loss: {test_loss_avg:.4f}, Test Accuracy: {test_accuracy:.2f}%')
     return test_loss_avg, test_accuracy
 
-# تابع نمایش تصاویر نمونه
 def visualize_predictions(model, model_name):
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
-    random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
-    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+    random_indices = random.sample(range(len(val_data)), min(20, len(val_data)))  # انتخاب 20 نمونه تصادفی
+    fig, axes = plt.subplots(4, 5, figsize=(20, 16))  # شبکه 4x5 برای 20 تصویر
     axes = axes.ravel()
 
     with torch.no_grad():
@@ -256,7 +255,7 @@ def visualize_predictions(model, model_name):
             print(f"{model_name} Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
     plt.tight_layout()
-    file_path = os.path.join(teacher_dir, f'test_samples_{model_name.lower()}.png')
+    file_path = os.path.join(teacher_dir, f'test_samples_{model_name.lower()}_20.png')
     plt.savefig(file_path)
     display(IPImage(filename=file_path))
 
