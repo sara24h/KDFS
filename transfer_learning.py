@@ -109,7 +109,6 @@ model = model.to(device)
 for param in model.parameters():
     param.requires_grad = False
 
-
 for param in model.layer4.parameters():
     param.requires_grad = True
 for param in model.fc.parameters():
@@ -121,6 +120,10 @@ optimizer = optim.Adam([
     {'params': model.layer4.parameters(), 'lr': 1e-5},
     {'params': model.fc.parameters(), 'lr': lr}
 ], weight_decay=1e-4)
+
+
+best_val_acc = 0.0
+best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
 
 
 for epoch in range(epochs):
@@ -146,7 +149,7 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-   
+
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -165,6 +168,16 @@ for epoch in range(epochs):
     val_loss = val_loss / len(val_loader)
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+
+    
+    if val_accuracy > best_val_acc:
+        best_val_acc = val_accuracy
+        torch.save(model.state_dict(), best_model_path)
+        print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+
+
+torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
+print(f'Saved final model at epoch {epochs}')
 
 
 model.eval()
@@ -218,9 +231,6 @@ plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
-
-
-torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
 
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
