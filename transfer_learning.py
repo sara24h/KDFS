@@ -17,7 +17,7 @@ from ptflops import get_model_complexity_info
 from data.dataset import FaceDataset, Dataset_selector
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification.')
+    parser = argparse.ArgumentParser(description='Train a ResNet50 model with single output for fake vs real face classification with 5-fold cross-validation.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
                         help='Dataset to use: hardfake, rvf10k, or 140k')
     parser.add_argument('--data_dir', type=str, required=True,
@@ -34,6 +34,8 @@ def parse_args():
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.0001,
                         help='Learning rate for the optimizer')
+    parser.add_argument('--n_folds', type=int, default=5,
+                        help='Number of folds for cross-validation')
     return parser.parse_args()
 
 args = parse_args()
@@ -47,6 +49,7 @@ img_width = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_width
 batch_size = args.batch_size
 epochs = args.epochs
 lr = args.lr
+n_folds = args.n_folds
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # بررسی وجود دایرکتوری‌ها
@@ -65,7 +68,8 @@ if dataset_mode == 'hardfake':
         eval_batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
-        ddp=False
+        ddp=False,
+        n_folds=n_folds
     )
 elif dataset_mode == 'rvf10k':
     dataset = Dataset_selector(
@@ -77,7 +81,8 @@ elif dataset_mode == 'rvf10k':
         eval_batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
-        ddp=False
+        ddp=False,
+        n_folds=n_folds
     )
 elif dataset_mode == '140k':
     dataset = Dataset_selector(
@@ -90,89 +95,116 @@ elif dataset_mode == '140k':
         eval_batch_size=batch_size,
         num_workers=4,
         pin_memory=True,
-        ddp=False
+        ddp=False,
+        n_folds=n_folds
     )
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', or '140k'.")
 
-train_loader = dataset.loader_train
-val_loader = dataset.loader_val
-test_loader = dataset.loader_test
-
 # تعریف مدل
-model = models.resnet50(weights='IMAGENET1K_V1')
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 1)
-model = model.to(device)
-
-# فریز کردن لایه‌ها
-for param in model.parameters():
-    param.requires_grad = False
-
-# آزاد کردن لایه‌های layer4 و fc
-for param in model.layer4.parameters():
-    param.requires_grad = True
-for param in model.fc.parameters():
-    param.requires_grad = True
+def initialize_model():
+    model = models.resnet50(weights='IMAGENET1K_V1')
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 1)
+    model = model.to(device)
+    # فریز کردن لایه‌ها
+    for param in model.parameters():
+        param.requires_grad = False
+    # آزاد کردن لایه‌های layer4 و fc
+    for param in model.layer4.parameters():
+        param.requires_grad = True
+    for param in model.fc.parameters():
+        param.requires_grad = True
+    return model
 
 # تعریف معیار و بهینه‌ساز
 criterion = nn.BCEWithLogitsLoss()
-optimizer = optim.Adam([
-    {'params': model.layer4.parameters(), 'lr': 1e-5},
-    {'params': model.fc.parameters(), 'lr': lr}
-], weight_decay=1e-4)
 
-# حلقه آموزش
-for epoch in range(epochs):
-    model.train()
-    running_loss = 0.0
-    correct_train = 0
-    total_train = 0
-    for images, labels in train_loader:
-        images = images.to(device)
-        labels = labels.to(device).float()
-        optimizer.zero_grad()
-        outputs = model(images).squeeze(1)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.item()
+# لیست برای ذخیره معیارهای هر فولد
+fold_train_losses = []
+fold_train_accuracies = []
+fold_val_losses = []
+fold_val_accuracies = []
 
-        preds = (torch.sigmoid(outputs) > 0.5).float()
-        correct_train += (preds == labels).sum().item()
-        total_train += labels.size(0)
+# حلقه روی فولدها
+for fold, (train_loader, val_loader) in enumerate(dataset.fold_loaders):
+    print(f'\nTraining Fold {fold + 1}/{n_folds}')
+    
+    # مقداردهی اولیه مدل برای هر فولد
+    model = initialize_model()
+    optimizer = optim.Adam([
+        {'params': model.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.fc.parameters(), 'lr': lr}
+    ], weight_decay=1e-4)
 
-    train_loss = running_loss / len(train_loader)
-    train_accuracy = 100 * correct_train / total_train
-    print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
-
-    # اعتبارسنجی
-    model.eval()
-    val_loss = 0.0
-    correct_val = 0
-    total_val = 0
-    with torch.no_grad():
-        for images, labels in val_loader:
+    # حلقه آموزش برای هر فولد
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+        correct_train = 0
+        total_train = 0
+        for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device).float()
+            optimizer.zero_grad()
             outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
-            val_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+
             preds = (torch.sigmoid(outputs) > 0.5).float()
-            correct_val += (preds == labels).sum().item()
-            total_val += labels.size(0)
+            correct_train += (preds == labels).sum().item()
+            total_train += labels.size(0)
 
-    val_loss = val_loss / len(val_loader)
-    val_accuracy = 100 * correct_val / total_val
-    print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+        train_loss = running_loss / len(train_loader)
+        train_accuracy = 100 * correct_train / total_train
+        print(f'Fold {fold + 1}, Epoch {epoch + 1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-# تست
+        # اعتبارسنجی
+        model.eval()
+        val_loss = 0.0
+        correct_val = 0
+        total_val = 0
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images = images.to(device)
+                labels = labels.to(device).float()
+                outputs = model(images).squeeze(1)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item()
+                preds = (torch.sigmoid(outputs) > 0.5).float()
+                correct_val += (preds == labels).sum().item()
+                total_val += labels.size(0)
+
+        val_loss = val_loss / len(val_loader)
+        val_accuracy = 100 * correct_val / total_val
+        print(f'Fold {fold + 1}, Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+
+    # ذخیره معیارهای این فولد
+    fold_train_losses.append(train_loss)
+    fold_train_accuracies.append(train_accuracy)
+    fold_val_losses.append(val_loss)
+    fold_val_accuracies.append(val_accuracy)
+
+    # ذخیره مدل برای این فولد
+    torch.save(model.state_dict(), os.path.join(teacher_dir, f'teacher_model_fold_{fold + 1}.pth'))
+
+# گزارش میانگین معیارها
+print('\nCross-Validation Results:')
+print(f'Average Train Loss: {np.mean(fold_train_losses):.4f} ± {np.std(fold_train_losses):.4f}')
+print(f'Average Train Accuracy: {np.mean(fold_train_accuracies):.2f}% ± {np.std(fold_train_accuracies):.2f}%')
+print(f'Average Validation Loss: {np.mean(fold_val_losses):.4f} ± {np.std(fold_val_losses):.4f}')
+print(f'Average Validation Accuracy: {np.mean(fold_val_accuracies):.2f}% ± {np.std(fold_val_accuracies):.2f}%')
+
+# تست با بهترین مدل (مثلاً آخرین فولد)
+model.load_state_dict(torch.load(os.path.join(teacher_dir, f'teacher_model_fold_{n_folds}.pth')))
 model.eval()
 test_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for images, labels in test_loader:
+    for images, labels in dataset.loader_test:
         images = images.to(device)
         labels = labels.to(device).float()
         outputs = model(images).squeeze(1)
@@ -181,7 +213,7 @@ with torch.no_grad():
         preds = (torch.sigmoid(outputs) > 0.5).float()
         correct += (preds == labels).sum().item()
         total += labels.size(0)
-print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
+print(f'Test Loss: {test_loss / len(dataset.loader_test):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 # نمایش تصاویر نمونه
 val_data = dataset.loader_test.dataset.data
@@ -218,9 +250,6 @@ plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
-
-# ذخیره مدل
-torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
 # محاسبه FLOPs و پارامترها
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
