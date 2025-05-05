@@ -24,16 +24,26 @@ class FaceDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.dataset_mode == 'hardfake':
-            img_name = os.path.join(self.root_dir, self.data.iloc[idx]['images_id'])
+            img_name = self.data.iloc[idx]['images_id']
             label = self.data.iloc[idx]['label']
+            # افزودن زیرپوشه fake/ یا real/ بر اساس label
+            subfolder = 'fake' if label == 0 else 'real'
+            # اطمینان از اینکه نام فایل پسوند .jpg دارد
+            if not img_name.endswith('.jpg'):
+                img_name = img_name + '.jpg'
+            img_path = os.path.join(self.root_dir, subfolder, img_name)
         else:  # rvf10k or 140k
-            img_name = os.path.join(self.root_dir, self.data.iloc[idx]['path'])
+            img_path = os.path.join(self.root_dir, self.data.iloc[idx]['path'])
             label = 1 if self.data.iloc[idx]['label'] == 'real' else 0
 
-        image = Image.open(img_name).convert('RGB')
+        # بررسی وجود فایل
+        if not os.path.exists(img_path):
+            raise FileNotFoundError(f"Image not found: {img_path}")
+        
+        image = Image.open(img_path).convert('RGB')
         if self.transform:
             image = self.transform(image)
-        return image, label
+        return image, torch.tensor(label, dtype=torch.float)
 
 class DatasetSelector:
     def __init__(self, dataset_mode, data_dir, train_batch_size, eval_batch_size, num_workers=4, pin_memory=True):
@@ -267,7 +277,14 @@ with torch.no_grad():
         img_column = 'path' if dataset_mode in ['rvf10k', '140k'] else 'images_id'
         img_name = row[img_column]
         label = row['label']
-        img_path = os.path.join(dataset.loader_test.dataset.root_dir, img_name)
+        if dataset_mode == 'hardfake':
+            subfolder = 'fake' if label == 0 else 'real'
+            if not img_name.endswith('.jpg'):
+                img_name = img_name + '.jpg'
+            img_path = os.path.join(dataset.loader_test.dataset.root_dir, subfolder, img_name)
+        else:
+            img_path = os.path.join(dataset.loader_test.dataset.root_dir, img_name)
+        
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
