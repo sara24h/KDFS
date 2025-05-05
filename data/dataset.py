@@ -52,7 +52,8 @@ class Dataset_selector(Dataset):
         num_workers=8,
         pin_memory=True,
         ddp=False,
-        n_folds=5,  # Number of folds for cross-validation
+        n_folds=0,  # Default to 0 (no K-Fold)
+        seed=3407
     ):
         if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
@@ -60,6 +61,7 @@ class Dataset_selector(Dataset):
         self.dataset_mode = dataset_mode
         self.n_folds = n_folds
         self.ddp = ddp
+        self.seed = seed
 
         # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
@@ -102,12 +104,24 @@ class Dataset_selector(Dataset):
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
 
-            # Split into train+val and test
-            train_val_data, test_data = train_test_split(
-                full_data, test_size=0.15, stratify=full_data['label'], random_state=3407
-            )
-            train_val_data = train_val_data.reset_index(drop=True)
-            test_data = test_data.reset_index(drop=True)
+            if n_folds == 0:
+                # Standard train/val/test split
+                train_val_data, test_data = train_test_split(
+                    full_data, test_size=0.15, stratify=full_data['label'], random_state=seed
+                )
+                train_data, val_data = train_test_split(
+                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
+                )
+                train_data = train_data.reset_index(drop=True)
+                val_data = val_data.reset_index(drop=True)
+                test_data = test_data.reset_index(drop=True)
+            else:
+                # K-Fold: Only split train+val and test
+                train_val_data, test_data = train_test_split(
+                    full_data, test_size=0.15, stratify=full_data['label'], random_state=seed
+                )
+                train_val_data = train_val_data.reset_index(drop=True)
+                test_data = test_data.reset_index(drop=True)
 
         elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
@@ -126,16 +140,28 @@ class Dataset_selector(Dataset):
             valid_data = pd.read_csv(rvf10k_valid_csv)
             valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
-            # Combine train and valid for cross-validation
+            # Combine train and valid
             train_val_data = pd.concat([train_data, valid_data], ignore_index=True)
-            train_val_data = train_val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            train_val_data = train_val_data.sample(frac=1, random_state=seed).reset_index(drop=True)
 
-            # Split off test set
-            train_val_data, test_data = train_test_split(
-                train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=3407
-            )
-            train_val_data = train_val_data.reset_index(drop=True)
-            test_data = test_data.reset_index(drop=True)
+            if n_folds == 0:
+                # Standard train/val/test split
+                train_val_data, test_data = train_test_split(
+                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
+                )
+                train_data, val_data = train_test_split(
+                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
+                )
+                train_data = train_data.reset_index(drop=True)
+                val_data = val_data.reset_index(drop=True)
+                test_data = test_data.reset_index(drop=True)
+            else:
+                # K-Fold: Only split train+val and test
+                train_val_data, test_data = train_test_split(
+                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
+                )
+                train_val_data = train_val_data.reset_index(drop=True)
+                test_data = test_data.reset_index(drop=True)
             root_dir = rvf10k_root_dir
 
         else:  # dataset_mode == '140k'
@@ -149,20 +175,39 @@ class Dataset_selector(Dataset):
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
-            # Combine train and valid for cross-validation
+            # Combine train and valid
             train_val_data = pd.concat([train_data, valid_data], ignore_index=True)
-            train_val_data = train_val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
-            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            train_val_data = train_val_data.sample(frac=1, random_state=seed).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=seed).reset_index(drop=True)
+
+            if n_folds == 0:
+                # Standard train/val/test split
+                train_data, val_data = train_test_split(
+                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
+                )
+                train_data = train_data.reset_index(drop=True)
+                val_data = val_data.reset_index(drop=True)
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        print(f"Total train+val dataset size: {len(train_val_data)}")
-        print(f"Train+val label distribution:\n{train_val_data['label'].value_counts()}")
+        if n_folds == 0:
+            print(f"Total train dataset size: {len(train_data)}")
+            print(f"Train label distribution:\n{train_data['label'].value_counts()}")
+            print(f"Total validation dataset size: {len(val_data)}")
+            print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+        else:
+            print(f"Total train+val dataset size: {len(train_val_data)}")
+            print(f"Train+val label distribution:\n{train_val_data['label'].value_counts()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         # Check for missing images
-        for split, data in [('train+val', train_val_data), ('test', test_data)]:
+        data_splits = [('test', test_data)]
+        if n_folds == 0:
+            data_splits.extend([('train', train_data), ('validation', val_data)])
+        else:
+            data_splits.append((' Garrisontrain+val', train_val_data))
+        for split, data in data_splits:
             missing_images = []
             for img_path in data[img_column]:
                 full_path = os.path.join(root_dir, img_path)
@@ -179,61 +224,97 @@ class Dataset_selector(Dataset):
             num_workers=num_workers, pin_memory=pin_memory,
         )
 
-        # Create base dataset for train+val
-        train_val_dataset = FaceDataset(train_val_data, root_dir, transform=transform_train, img_column=img_column)
+        if n_folds == 0:
+            # Create train and validation datasets
+            train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
+            val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
 
-        # Initialize K-Fold
-        kfold = KFold(n_splits=n_folds, shuffle=True, random_state=3407)
-        self.fold_loaders = []
-
-        # Create DataLoader for each fold
-        for fold, (train_idx, val_idx) in enumerate(kfold.split(train_val_data)):
-            print(f"\nFold {fold + 1} statistics:")
-            train_data_fold = train_val_data.iloc[train_idx].reset_index(drop=True)
-            val_data_fold = train_val_data.iloc[val_idx].reset_index(drop=True)
-            print(f"Train fold size: {len(train_data_fold)}")
-            print(f"Train fold label distribution:\n{train_data_fold['label'].value_counts()}")
-            print(f"Validation fold size: {len(val_data_fold)}")
-            print(f"Validation fold label distribution:\n{val_data_fold['label'].value_counts()}")
-
-            # Create datasets for this fold
-            train_dataset_fold = Subset(train_val_dataset, train_idx)
-            val_dataset_fold = Subset(train_val_dataset, val_idx)
-
-            # Create DataLoader for training
+            # Create DataLoaders for train and validation
             if ddp:
-                train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset_fold, shuffle=True)
-                train_loader = DataLoader(
-                    train_dataset_fold, batch_size=train_batch_size, sampler=train_sampler,
+                train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+                self.loader_train = DataLoader(
+                    train_dataset, batch_size=train_batch_size, sampler=train_sampler,
                     num_workers=num_workers, pin_memory=pin_memory,
                 )
             else:
-                train_loader = DataLoader(
-                    train_dataset_fold, batch_size=train_batch_size, shuffle=True,
+                self.loader_train = DataLoader(
+                    train_dataset, batch_size=train_batch_size, shuffle=True,
                     num_workers=num_workers, pin_memory=pin_memory,
                 )
-
-            # Create DataLoader for validation
-            val_loader = DataLoader(
-                val_dataset_fold, batch_size=eval_batch_size, shuffle=False,
+            self.loader_val = DataLoader(
+                val_dataset, batch_size=eval_batch_size, shuffle=False,
                 num_workers=num_workers, pin_memory=pin_memory,
             )
 
-            self.fold_loaders.append((train_loader, val_loader))
+            # Debug: Print loader sizes
+            print(f"Train loader batches: {len(self.loader_train)}")
+            print(f"Validation loader batches: {len(self.loader_val)}")
+            print(f"Test loader batches: {len(self.loader_test)}")
 
-        # Debug: Print loader sizes
-        for fold, (train_loader, val_loader) in enumerate(self.fold_loaders):
-            print(f"Fold {fold + 1}:")
-            print(f"  Train loader batches: {len(train_loader)}")
-            print(f"  Validation loader batches: {len(val_loader)}")
+            # Test sample batches
+            for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
+                try:
+                    sample = next(iter(loader))
+                    print(f"Sample {name} batch image shape: {sample[0].shape}")
+                    print(f"Sample {name} batch labels: {sample[1]}")
+                except Exception as e:
+                    print(f"Error loading sample {name} batch: {e}")
+        else:
+            # Create base dataset for train+val
+            train_val_dataset = FaceDataset(train_val_data, root_dir, transform=transform_train, img_column=img_column)
 
-        # Test a sample batch from test loader
-        try:
-            sample = next(iter(self.loader_test))
-            print(f"Sample test batch image shape: {sample[0].shape}")
-            print(f"Sample test batch labels: {sample[1]}")
-        except Exception as e:
-            print(f"Error loading sample test batch: {e}")
+            # Initialize K-Fold
+            kfold = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
+            self.fold_loaders = []
+
+            # Create DataLoader for each fold
+            for fold, (train_idx, val_idx) in enumerate(kfold.split(train_val_data)):
+                print(f"\nFold {fold + 1} statistics:")
+                train_data_fold = train_val_data.iloc[train_idx].reset_index(drop=True)
+                val_data_fold = train_val_data.iloc[val_idx].reset_index(drop=True)
+                print(f"Train fold size: {len(train_data_fold)}")
+                print(f"Train fold label distribution:\n{train_data_fold['label'].value_counts()}")
+                print(f"Validation fold size: {len(val_data_fold)}")
+                print(f"Validation fold label distribution:\n{val_data_fold['label'].value_counts()}")
+
+                # Create datasets for this fold
+                train_dataset_fold = Subset(train_val_dataset, train_idx)
+                val_dataset_fold = Subset(train_val_dataset, val_idx)
+
+                # Create DataLoader for training
+                if ddp:
+                    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset_fold, shuffle=True)
+                    train_loader = DataLoader(
+                        train_dataset_fold, batch_size=train_batch_size, sampler=train_sampler,
+                        num_workers=num_workers, pin_memory=pin_memory,
+                    )
+                else:
+                    train_loader = DataLoader(
+                        train_dataset_fold, batch_size=train_batch_size, shuffle=True,
+                        num_workers=num_workers, pin_memory=pin_memory,
+                    )
+
+                # Create DataLoader for validation
+                val_loader = DataLoader(
+                    val_dataset_fold, batch_size=eval_batch_size, shuffle=False,
+                    num_workers=num_workers, pin_memory=pin_memory,
+                )
+
+                self.fold_loaders.append({'train_loader': train_loader, 'val_loader': val_loader})
+
+            # Debug: Print loader sizes
+            for fold, fold_data in enumerate(self.fold_loaders):
+                print(f"Fold {fold + 1}:")
+                print(f"  Train loader batches: {len(fold_data['train_loader'])}")
+                print(f"  Validation loader batches: {len(fold_data['val_loader'])}")
+
+            # Test a sample batch from test loader
+            try:
+                sample = next(iter(self.loader_test))
+                print(f"Sample test batch image shape: {sample[0].shape}")
+                print(f"Sample test batch labels: {sample[1]}")
+            except Exception as e:
+                print(f"Error loading sample test batch: {e}")
 
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
@@ -243,7 +324,7 @@ if __name__ == "__main__":
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
         train_batch_size=64,
         eval_batch_size=64,
-        n_folds=5,
+        n_folds=0,  # For transfer learning
     )
 
     # Example for rvf10k
@@ -254,7 +335,7 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=64,
         eval_batch_size=64,
-        n_folds=5,
+        n_folds=0,
     )
 
     # Example for 140k Real and Fake Faces
@@ -266,5 +347,5 @@ if __name__ == "__main__":
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
-        n_folds=5,
+        n_folds=0,
     )
