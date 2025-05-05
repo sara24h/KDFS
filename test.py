@@ -19,8 +19,8 @@ class Test:
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
         self.dataset_mode = args.dataset_mode
-        self.n_folds = args.n_folds if hasattr(args, 'n_folds') else 5  # تعداد فولدها
-        self.result_dir = args.result_dir  # مسیر ذخیره نتایج فاین‌تیون
+        self.n_folds = args.n_folds if hasattr(args, 'n_folds') else 5
+        self.result_dir = args.result_dir
 
     def dataload(self):
         print("==> Loading test dataset..")
@@ -62,7 +62,6 @@ class Test:
             else:  # rvf10k
                 self.student = ResNet_50_sparse_rvf10k()
             
-            # مسیر چک‌پوینت برای فولد خاص
             ckpt_path = os.path.join(
                 self.result_dir,
                 f"student_model_fold_{fold_idx + 1}",
@@ -74,7 +73,7 @@ class Test:
             self.student.load_state_dict(state_dict, strict=True)
             self.student.to(self.device)
             print(f"Model for fold {fold_idx + 1} loaded on {self.device}")
-            return ckpt_student.get("best_prec1_after_finetune", 0)  # دقت اعتبارسنجی
+            return ckpt_student.get("best_prec1_after_finetune", 0)
         except Exception as e:
             print(f"Error building model for fold {fold_idx + 1}: {str(e)}")
             raise
@@ -127,40 +126,37 @@ class Test:
                     'test_acc': test_acc
                 })
                 
-                # به‌روزرسانی بهترین فولد
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
                     best_fold = fold_idx + 1
 
-            # گزارش میانگین و انحراف معیار
+            # گزارش بهترین فولد و تست آن
+            print(f"\nBest Fold: Fold {best_fold} with Validation Accuracy: {best_val_acc:.2f}%")
+            best_fold_result = next(result for result in fold_results if result['fold'] == best_fold)
+            print(f"Test Accuracy for Best Fold ({best_fold}): {best_fold_result['test_acc']:.2f}%")
+
+            # گزارش میانگین و انحراف معیار برای همه فولدها
             test_accs = [result['test_acc'] for result in fold_results]
             avg_test_acc = np.mean(test_accs)
             std_test_acc = np.std(test_accs)
             print(f"\nK-Fold Test Results:")
             print(f"Average test accuracy across {self.n_folds} folds: {avg_test_acc:.2f} ± {std_test_acc:.2f}%")
-            print(f"Best fold: Fold {best_fold} with validation accuracy: {best_val_acc:.2f}%")
 
             # محاسبه FLOPs و پارامترها برای بهترین مدل
             print(f"\nCalculating FLOPs and Params for best model (Fold {best_fold})")
-            self.build_model(best_fold - 1)  # بارگذاری مدل بهترین فولد
-            (
-  # محاسبه FLOPs و پارامترها
-            (
-                Flops_baseline,
-                Flops,
-                Flops_reduction,
-                Params_baseline,
-                Params,
-                Params_reduction,
-            ) = get_flops_and_params(args=self.args)
-            print(
-                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
-                f"Params reduction: {Params_reduction:.2f}%"
-            )
-            print(
-                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
-                f"Flops reduction: {Flops_reduction:.2f}%"
-            )
+            self.build_model(best_fold - 1)
+            try:
+                Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction = get_flops_and_params(args=self.args)
+                print(
+                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                    f"Params reduction: {Params_reduction:.2f}%"
+                )
+                print(
+                    f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+                    f"Flops reduction: {Flops_reduction:.2f}%"
+                )
+            except Exception as e:
+                print(f"Error calculating FLOPs and Params: {str(e)}")
         except Exception as e:
             print(f"Error in test pipeline: {str(e)}")
             raise
