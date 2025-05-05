@@ -1,260 +1,306 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
 import os
 import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import models, transforms
 from PIL import Image
-from sklearn.model_selection import KFold
-from torch.utils.data import Subset
+import argparse
+import random
+import matplotlib.pyplot as plt
+from IPython.display import Image as IPImage, display
+from ptflops import get_model_complexity_info
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
-        self.data = data_frame
+    def __init__(self, csv_file, root_dir, dataset_mode, transform=None):
+        self.data = pd.read_csv(csv_file)
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column
-        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
-        self.missing_images = 0  # برای شمارش تصاویر گمشده
+        self.dataset_mode = dataset_mode
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
-        if not os.path.exists(img_name):
-            self.missing_images += 1
-            print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if '140k' in self.root_dir else 300
-            image = Image.new('RGB', (image_size, image_size), color='black')
-            label = self.label_map[self.data['label'].iloc[idx]]
-            if self.transform:
-                image = self.transform(image)
-            return image, torch.tensor(label, dtype=torch.float)
-        image = Image.open(img_name).convert('RGB')
-        label = self.label_map[self.data['label'].iloc[idx]]
+        if self.dataset_mode == 'hardfake':
+            img_name = self.data.iloc[idx]['images_id']
+            label = self.data.iloc[idx]['label']
+            # افزودن مسیر fake/ یا real/ بر اساس label
+            subfolder = 'fake' if label == 0 else 'real'
+            img_path = os.path.join(self.root_dir, subfolder, img_name)
+        else:  # rvf10k or 140k
+            img_path = os.path.join(self.root_dir, self.data.iloc[idx]['path'])
+            label = 1 if self.data.iloc[idx]['label'] == 'real' else 0
+
+        image = Image.open(img_path).convert('RGB')
         if self.transform:
             image = self.transform(image)
-        return image, torch.tensor(label, dtype=torch.float)
-
-    def get_missing_images_count(self):
-        return self.missing_images
+        return image, label
 
 class DatasetSelector:
-    def __init__(
-        self,
-        dataset_mode,  # 'hardfake', 'rvf10k', or '140k'
-        hardfake_csv_file=None,
-        hardfake_root_dir=None,
-        rvf10k_train_csv=None,
-        rvf10k_valid_csv=None,
-        rvf10k_root_dir=None,
-        realfake140k_train_csv=None,
-        realfake140k_valid_csv=None,
-        realfake140k_test_csv=None,
-        realfake140k_root_dir=None,
-        train_batch_size=32,
-        eval_batch_size=32,
-        num_workers=8,
-        pin_memory=True,
-        ddp=False,
-        k_folds=5,  # تعداد foldها برای K-Fold Cross Validation
-        seed=3407,  # برای تکرارپذیری
-    ):
-        if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
-
+    def __init__(self, dataset_mode, data_dir, train_batch_size, eval_batch_size, num_workers=4, pin_memory=True):
         self.dataset_mode = dataset_mode
-        self.k_folds = k_folds
-        self.seed = seed
+        self.data_dir = data_dir
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
 
-        # Define image size based on dataset_mode
-        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
+        # تنظیم اندازه تصویر
+        self.img_size = 300 if dataset_mode == 'hardfake' else 256
 
-        # Define transforms
-        transform_train = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomCrop(image_size[0], padding=8),
-            transforms.RandomRotation(20),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+        # تعریف تبدیل‌ها
+        self.transform_train = transforms.Compose([
+            transforms.Resize((self.img_size, self.img_size)),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        self.transform_eval = transforms.Compose([
+            transforms.Resize((self.img_size, self.img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
-        transform_test = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ])
-
-        # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
-
-        # Load full data based on dataset_mode
+        # تنظیم دیتاست‌ها
         if dataset_mode == 'hardfake':
-            if not hardfake_csv_file or not hardfake_root_dir:
-                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
-            full_data = pd.read_csv(hardfake_csv_file)
-
-            def create_image_path(row):
-                folder = 'fake' if row['label'] in [0, 'fake', 'Fake'] else 'real'
-                img_name = row['images_id']
-                img_name = os.path.basename(img_name)
-                if not img_name.endswith('.jpg'):
-                    img_name += '.jpg'
-                return os.path.join(folder, img_name)
-
-            full_data['images_id'] = full_data.apply(create_image_path, axis=1)
-            root_dir = hardfake_root_dir
-            test_data = None  # تست جداگانه ندارد
-
+            self.loader_train = self._create_loader(
+                csv_file=os.path.join(data_dir, 'data.csv'),
+                root_dir=data_dir,
+                transform=self.transform_train,
+                is_train=True
+            )
+            self.loader_val = self._create_loader(
+                csv_file=os.path.join(data_dir, 'data.csv'),
+                root_dir=data_dir,
+                transform=self.transform_eval,
+                is_train=False
+            )
+            self.loader_test = self.loader_val
         elif dataset_mode == 'rvf10k':
-            if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
-                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
-            train_data = pd.read_csv(rvf10k_train_csv)
-            valid_data = pd.read_csv(rvf10k_valid_csv)
-
-            def create_image_path(row, split='train'):
-                folder = 'fake' if row['label'] == 0 else 'real'
-                img_name = row['id']
-                img_name = os.path.basename(img_name)
-                if not img_name.endswith('.jpg'):
-                    img_name += '.jpg'
-                return os.path.join('rvf10k', split, folder, img_name)
-
-            train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
-            valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
-            full_data = pd.concat([train_data, valid_data]).reset_index(drop=True)
-            root_dir = rvf10k_root_dir
-            test_data = None  # تست جداگانه ندارد
-
-        else:  # dataset_mode == '140k'
-            if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
-                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
-            train_data = pd.read_csv(realfake140k_train_csv)
-            valid_data = pd.read_csv(realfake140k_valid_csv)
-            test_data = pd.read_csv(realfake140k_test_csv)
-            full_data = pd.concat([train_data, valid_data]).reset_index(drop=True)  # فقط train و valid برای K-Fold
-            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
-
-            if 'path' not in full_data.columns:
-                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
-
-        # Create full dataset
-        full_dataset = FaceDataset(full_data, root_dir, transform=transform_train, img_column=img_column)
-
-        # Initialize K-Fold
-        kf = KFold(n_splits=self.k_folds, shuffle=True, random_state=self.seed)
-
-        # Store DataLoaders for each fold
-        self.fold_loaders = []
-        for fold, (train_idx, val_idx) in enumerate(kf.split(range(len(full_dataset)))):
-            # Create Subset for train and validation
-            train_subset = Subset(full_dataset, train_idx)
-            val_subset = Subset(full_dataset, val_idx)
-
-            # Create DataLoader for train
-            if ddp:
-                train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, shuffle=True)
-                train_loader = DataLoader(
-                    train_subset, batch_size=train_batch_size, num_workers=num_workers,
-                    pin_memory=pin_memory, sampler=train_sampler,
-                )
-            else:
-                train_loader = DataLoader(
-                    train_subset, batch_size=train_batch_size, shuffle=True,
-                    num_workers=num_workers, pin_memory=pin_memory,
-                )
-
-            # Create DataLoader for validation
-            val_loader = DataLoader(
-                val_subset, batch_size=eval_batch_size, shuffle=False,
-                num_workers=num_workers, pin_memory=pin_memory,
+            self.loader_train = self._create_loader(
+                csv_file=os.path.join(data_dir, 'train.csv'),
+                root_dir=data_dir,
+                transform=self.transform_train,
+                is_train=True
+            )
+            self.loader_val = self._create_loader(
+                csv_file=os.path.join(data_dir, 'valid.csv'),
+                root_dir=data_dir,
+                transform=self.transform_eval,
+                is_train=False
+            )
+            self.loader_test = self.loader_val
+        elif dataset_mode == '140k':
+            self.loader_train = self._create_loader(
+                csv_file=os.path.join(data_dir, 'train.csv'),
+                root_dir=os.path.join(data_dir, 'real_vs_fake/real-vs-fake'),
+                transform=self.transform_train,
+                is_train=True
+            )
+            self.loader_val = self._create_loader(
+                csv_file=os.path.join(data_dir, 'valid.csv'),
+                root_dir=os.path.join(data_dir, 'real_vs_fake/real-vs-fake'),
+                transform=self.transform_eval,
+                is_train=False
+            )
+            self.loader_test = self._create_loader(
+                csv_file=os.path.join(data_dir, 'test.csv'),
+                root_dir=os.path.join(data_dir, 'real_vs_fake/real-vs-fake'),
+                transform=self.transform_eval,
+                is_train=False
             )
 
-            # محاسبه آمار توزیع برچسب‌ها
-            train_labels = full_data.iloc[train_idx]['label'].map(self.label_map)
-            val_labels = full_data.iloc[val_idx]['label'].map(self.label_map)
-            train_real_count = sum(train_labels == 1)
-            train_fake_count = sum(train_labels == 0)
-            val_real_count = sum(val_labels == 1)
-            val_fake_count = sum(val_labels == 0)
+    def _create_loader(self, csv_file, root_dir, transform, is_train):
+        dataset = FaceDataset(
+            csv_file=csv_file,
+            root_dir=root_dir,
+            dataset_mode=self.dataset_mode,
+            transform=transform
+        )
+        batch_size = self.train_batch_size if is_train else self.eval_batch_size
+        shuffle = is_train
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory
+        )
 
-            self.fold_loaders.append({
-                'fold': fold,
-                'train_loader': train_loader,
-                'val_loader': val_loader,
-                'train_stats': {'real': train_real_count, 'fake': train_fake_count},
-                'val_stats': {'real': val_real_count, 'fake': val_fake_count}
-            })
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train a ResNet50 model for fake vs real face classification.')
+    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
+                        help='Dataset to use: hardfake, rvf10k, or 140k')
+    parser.add_argument('--data_dir', type=str, required=True,
+                        help='Path to the dataset directory containing images and CSV file(s)')
+    parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
+                        help='Directory to save the trained model and outputs')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='Batch size for training')
+    parser.add_argument('--epochs', type=int, default=15,
+                        help='Number of training epochs')
+    parser.add_argument('--lr', type=float, default=0.0001,
+                        help='Learning rate for the optimizer')
+    return parser.parse_args()
 
-        # Create test DataLoader if available (only for 140k)
-        if test_data is not None:
-            test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
-            self.loader_test = DataLoader(
-                test_dataset, batch_size=eval_batch_size, shuffle=False,
-                num_workers=num_workers, pin_memory=pin_memory,
-            )
+args = parse_args()
+
+# تنظیم پارامترها
+dataset_mode = args.dataset_mode
+data_dir = args.data_dir
+teacher_dir = args.teacher_dir
+batch_size = args.batch_size
+epochs = args.epochs
+lr = args.lr
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# بررسی وجود دایرکتوری‌ها
+if not os.path.exists(data_dir):
+    raise FileNotFoundError(f"Directory {data_dir} not found!")
+if not os.path.exists(teacher_dir):
+    os.makedirs(teacher_dir)
+
+# بارگذاری داده‌ها
+dataset = DatasetSelector(
+    dataset_mode=dataset_mode,
+    data_dir=data_dir,
+    train_batch_size=batch_size,
+    eval_batch_size=batch_size
+)
+
+train_loader = dataset.loader_train
+val_loader = dataset.loader_val
+test_loader = dataset.loader_test
+
+# تعریف مدل
+model = models.resnet50(weights='IMAGENET1K_V1')
+num_ftrs = model.fc.in_features
+model.fc = nn.Linear(num_ftrs, 1)
+model = model.to(device)
+
+# فریز کردن لایه‌ها
+for param in model.parameters():
+    param.requires_grad = False
+for param in model.layer4.parameters():
+    param.requires_grad = True
+for param in model.fc.parameters():
+    param.requires_grad = True
+
+# تعریف معیار و بهینه‌ساز
+criterion = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam([
+    {'params': model.layer4.parameters(), 'lr': 1e-5},
+    {'params': model.fc.parameters(), 'lr': lr}
+], weight_decay=1e-4)
+
+# حلقه آموزش
+for epoch in range(epochs):
+    model.train()
+    running_loss = 0.0
+    correct_train = 0
+    total_train = 0
+    for images, labels in train_loader:
+        images = images.to(device)
+        labels = labels.to(device).float()
+        optimizer.zero_grad()
+        outputs = model(images).squeeze(1)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+
+        preds = (torch.sigmoid(outputs) > 0.5).float()
+        correct_train += (preds == labels).sum().item()
+        total_train += labels.size(0)
+
+    train_loss = running_loss / len(train_loader)
+    train_accuracy = 100 * correct_train / total_train
+    print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+
+    # اعتبارسنجی
+    model.eval()
+    val_loss = 0.0
+    correct_val = 0
+    total_val = 0
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images = images.to(device)
+            labels = labels.to(device).float()
+            outputs = model(images).squeeze(1)
+            loss = criterion(outputs, labels)
+            val_loss += loss.item()
+            preds = (torch.sigmoid(outputs) > 0.5).float()
+            correct_val += (preds == labels).sum().item()
+            total_val += labels.size(0)
+
+    val_loss = val_loss / len(val_loader)
+    val_accuracy = 100 * correct_val / total_val
+    print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+
+# تست
+model.eval()
+test_loss = 0.0
+correct = 0
+total = 0
+with torch.no_grad():
+    for images, labels in test_loader:
+        images = images.to(device)
+        labels = labels.to(device).float()
+        outputs = model(images).squeeze(1)
+        loss = criterion(outputs, labels)
+        test_loss += loss.item()
+        preds = (torch.sigmoid(outputs) > 0.5).float()
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
+
+# نمایش تصاویر نمونه
+val_data = dataset.loader_test.dataset.data
+transform_test = dataset.loader_test.dataset.transform
+
+random_indices = random.sample(range(len(val_data)), min(10, len(val_data)))
+fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+axes = axes.ravel()
+
+with torch.no_grad():
+    for i, idx in enumerate(random_indices):
+        row = val_data.iloc[idx]
+        img_column = 'path' if dataset_mode in ['rvf10k', '140k'] else 'images_id'
+        img_name = row[img_column]
+        label = row['label']
+        if dataset_mode == 'hardfake':
+            subfolder = 'fake' if label == 0 else 'real'
+            img_path = os.path.join(dataset.loader_test.dataset.root_dir, subfolder, img_name)
         else:
-            self.loader_test = None
+            img_path = os.path.join(dataset.loader_test.dataset.root_dir, img_name)
+        if not os.path.exists(img_path):
+            print(f"Warning: Image not found: {img_path}")
+            axes[i].set_title("Image not found")
+            axes[i].axis('off')
+            continue
+        image = Image.open(img_path).convert('RGB')
+        image_transformed = transform_test(image).unsqueeze(0).to(device)
+        output = model(image_transformed).squeeze(1)
+        prob = torch.sigmoid(output).item()
+        predicted_label = 'real' if prob > 0.5 else 'fake'
+        true_label = 'real' if label == 1 else 'fake'
+        axes[i].imshow(image)
+        axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+        axes[i].axis('off')
+        print(f"Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
 
-        # Debug: Print fold statistics
-        print(f"{dataset_mode} dataset statistics for {self.k_folds}-Fold Cross Validation:")
-        for fold_data in self.fold_loaders:
-            fold = fold_data['fold']
-            train_loader = fold_data['train_loader']
-            val_loader = fold_data['val_loader']
-            train_stats = fold_data['train_stats']
-            val_stats = fold_data['val_stats']
-            print(f"Fold {fold + 1}:")
-            print(f"  Train batches: {len(train_loader)}, Real: {train_stats['real']}, Fake: {train_stats['fake']}")
-            print(f"  Validation batches: {len(val_loader)}, Real: {val_stats['real']}, Fake: {val_stats['fake']}")
+plt.tight_layout()
+file_path = os.path.join(teacher_dir, 'test_samples.png')
+plt.savefig(file_path)
+display(IPImage(filename=file_path))
 
-        if self.loader_test:
-            print(f"Test batches: {len(self.loader_test)}")
-            try:
-                sample = next(iter(self.loader_test))
-                print(f"Sample test batch image shape: {sample[0].shape}")
-                print(f"Sample test batch labels: {sample[1]}")
-            except Exception as e:
-                print(f"Error loading sample test batch: {e}")
+# ذخیره مدل
+torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-        # گزارش تصاویر گمشده
-        print(f"Total missing images: {full_dataset.get_missing_images_count()}")
-        if self.loader_test:
-            print(f"Test dataset missing images: {test_dataset.get_missing_images_count()}")
-
-if __name__ == "__main__":
-    # Example for hardfakevsrealfaces
-    dataset_hardfake = DatasetSelector(
-        dataset_mode='hardfake',
-        hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
-        hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,
-        eval_batch_size=64,
-        k_folds=5,
-    )
-
-    # Example for rvf10k
-    dataset_rvf10k = DatasetSelector(
-        dataset_mode='rvf10k',
-        rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
-        rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
-        rvf10k_root_dir='/kaggle/input/rvf10k',
-        train_batch_size=64,
-        eval_batch_size=64,
-        k_folds=5,
-    )
-
-    # Example for 140k Real and Fake Faces
-    dataset_140k = DatasetSelector(
-        dataset_mode='140k',
-        realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
-        realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
-        realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
-        realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
-        train_batch_size=64,
-        eval_batch_size=64,
-        k_folds=5,
-    )
+# محاسبه FLOPs و پارامترها
+img_size = 300 if dataset_mode == 'hardfake' else 256
+flops, params = get_model_complexity_info(model, (3, img_size, img_size), as_strings=True, print_per_layer_stat=True)
+print('FLOPs:', flops)
+print('Parameters:', params)
