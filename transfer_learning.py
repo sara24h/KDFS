@@ -95,38 +95,40 @@ elif dataset_mode == '140k':
 else:
     raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', or '140k'.")
 
+train_loader = dataset.loader_train
+val_loader = dataset.loader_val
+test_loader = dataset.loader_test
+
 # تعریف مدل
-def initialize_model():
-    model = models.resnet50(weights='IMAGENET1K_V1')
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 1)
-    model = model.to(device)
-    # فریز کردن لایه‌ها
-    for param in model.parameters():
-        param.requires_grad = False
-    # آزاد کردن لایه‌های layer4 و fc
-    for param in model.layer4.parameters():
-        param.requires_grad = True
-    for param in model.fc.parameters():
-        param.requires_grad = True
-    return model
+model = models.resnet50(weights='IMAGENET1K_V1')
+num_ftrs = model.fc.in_features
+model.fc = nn.Linear(num_ftrs, 1)
+model = model.to(device)
+
+# فریز کردن لایه‌ها
+for param in model.parameters():
+    param.requires_grad = False
+
+# آزاد کردن لایه‌های layer4 و fc
+for param in model.layer4.parameters():
+    param.requires_grad = True
+for param in model.fc.parameters():
+    param.requires_grad = True
 
 # تعریف معیار و بهینه‌ساز
 criterion = nn.BCEWithLogitsLoss()
-model = initialize_model()
 optimizer = optim.Adam([
     {'params': model.layer4.parameters(), 'lr': 1e-5},
     {'params': model.fc.parameters(), 'lr': lr}
 ], weight_decay=1e-4)
 
-# آموزش مدل
-print('\nTraining Model')
+# حلقه آموزش
 for epoch in range(epochs):
     model.train()
     running_loss = 0.0
     correct_train = 0
     total_train = 0
-    for images, labels in dataset.loader_train:
+    for images, labels in train_loader:
         images = images.to(device)
         labels = labels.to(device).float()
         optimizer.zero_grad()
@@ -140,9 +142,9 @@ for epoch in range(epochs):
         correct_train += (preds == labels).sum().item()
         total_train += labels.size(0)
 
-    train_loss = running_loss / len(dataset.loader_train)
+    train_loss = running_loss / len(train_loader)
     train_accuracy = 100 * correct_train / total_train
-    print(f'Epoch {epoch + 1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+    print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
     # اعتبارسنجی
     model.eval()
@@ -150,7 +152,7 @@ for epoch in range(epochs):
     correct_val = 0
     total_val = 0
     with torch.no_grad():
-        for images, labels in dataset.loader_valid:
+        for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device).float()
             outputs = model(images).squeeze(1)
@@ -160,20 +162,17 @@ for epoch in range(epochs):
             correct_val += (preds == labels).sum().item()
             total_val += labels.size(0)
 
-    val_loss = val_loss / len(dataset.loader_valid)
+    val_loss = val_loss / len(val_loader)
     val_accuracy = 100 * correct_val / total_val
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-# ذخیره مدل
-torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
-
-# تست مدل
+# تست
 model.eval()
 test_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for images, labels in dataset.loader_test:
+    for images, labels in test_loader:
         images = images.to(device)
         labels = labels.to(device).float()
         outputs = model(images).squeeze(1)
@@ -182,7 +181,7 @@ with torch.no_grad():
         preds = (torch.sigmoid(outputs) > 0.5).float()
         correct += (preds == labels).sum().item()
         total += labels.size(0)
-print(f'Test Loss: {test_loss / len(dataset.loader_test):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
+print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 # نمایش تصاویر نمونه
 val_data = dataset.loader_test.dataset.data
@@ -219,6 +218,9 @@ plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
+
+# ذخیره مدل
+torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
 # محاسبه FLOPs و پارامترها
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
