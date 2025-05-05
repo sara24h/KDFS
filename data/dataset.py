@@ -1,25 +1,23 @@
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import os
 import pandas as pd
 from PIL import Image
-from sklearn.model_selection import train_test_split, KFold
-import numpy as np
+from sklearn.model_selection import train_test_split
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
+    def __init__(self, data_frame, root_dir, transform=None):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
+        img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
         if not os.path.exists(img_name):
             print(f"Warning: Image not found: {img_name}")
             image_size = 256 if '140k' in self.root_dir else 300
@@ -52,16 +50,11 @@ class Dataset_selector(Dataset):
         num_workers=8,
         pin_memory=True,
         ddp=False,
-        n_folds=0,  # Default to 0 (no K-Fold)
-        seed=3407
     ):
         if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
         self.dataset_mode = dataset_mode
-        self.n_folds = n_folds
-        self.ddp = ddp
-        self.seed = seed
 
         # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
@@ -84,13 +77,10 @@ class Dataset_selector(Dataset):
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
-        # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
-
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
-                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
+                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided for hardfake mode")
             full_data = pd.read_csv(hardfake_csv_file)
 
             def create_image_path(row):
@@ -104,28 +94,25 @@ class Dataset_selector(Dataset):
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
 
-            if n_folds == 0:
-                # Standard train/val/test split
-                train_val_data, test_data = train_test_split(
-                    full_data, test_size=0.15, stratify=full_data['label'], random_state=seed
-                )
-                train_data, val_data = train_test_split(
-                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
-                )
-                train_data = train_data.reset_index(drop=True)
-                val_data = val_data.reset_index(drop=True)
-                test_data = test_data.reset_index(drop=True)
-            else:
-                # K-Fold: Only split train+val and test
-                train_val_data, test_data = train_test_split(
-                    full_data, test_size=0.15, stratify=full_data['label'], random_state=seed
-                )
-                train_val_data = train_val_data.reset_index(drop=True)
-                test_data = test_data.reset_index(drop=True)
+            train_data, temp_data = train_test_split(
+                full_data,
+                test_size=0.3,
+                stratify=full_data['label'],
+                random_state=3407
+            )
+            val_data, test_data = train_test_split(
+                temp_data,
+                test_size=0.5,
+                stratify=temp_data['label'],
+                random_state=3407
+            )
+            train_data = train_data.reset_index(drop=True)
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
 
         elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
-                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
+                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided for rvf10k mode")
             train_data = pd.read_csv(rvf10k_train_csv)
 
             def create_image_path(row, split='train'):
@@ -140,74 +127,51 @@ class Dataset_selector(Dataset):
             valid_data = pd.read_csv(rvf10k_valid_csv)
             valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
 
-            # Combine train and valid
-            train_val_data = pd.concat([train_data, valid_data], ignore_index=True)
-            train_val_data = train_val_data.sample(frac=1, random_state=seed).reset_index(drop=True)
-
-            if n_folds == 0:
-                # Standard train/val/test split
-                train_val_data, test_data = train_test_split(
-                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
-                )
-                train_data, val_data = train_test_split(
-                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
-                )
-                train_data = train_data.reset_index(drop=True)
-                val_data = val_data.reset_index(drop=True)
-                test_data = test_data.reset_index(drop=True)
-            else:
-                # K-Fold: Only split train+val and test
-                train_val_data, test_data = train_test_split(
-                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
-                )
-                train_val_data = train_val_data.reset_index(drop=True)
-                test_data = test_data.reset_index(drop=True)
+            val_data, test_data = train_test_split(
+                valid_data,
+                test_size=0.5,
+                stratify=valid_data['label'],
+                random_state=3407
+            )
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
             root_dir = rvf10k_root_dir
 
         else:  # dataset_mode == '140k'
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
-                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
+                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided for 140k mode")
+            
+            # Load train, valid, and test data
             train_data = pd.read_csv(realfake140k_train_csv)
-            valid_data = pd.read_csv(realfake140k_valid_csv)
+            val_data = pd.read_csv(realfake140k_valid_csv)
             test_data = pd.read_csv(realfake140k_test_csv)
+            # تنظیم مسیر پایه به دایرکتوری صحیح با خط تیره
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
+            # اطمینان از وجود ستون path
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
-            # Combine train and valid
-            train_val_data = pd.concat([train_data, valid_data], ignore_index=True)
-            train_val_data = train_val_data.sample(frac=1, random_state=seed).reset_index(drop=True)
-            test_data = test_data.sample(frac=1, random_state=seed).reset_index(drop=True)
-
-            if n_folds == 0:
-                # Standard train/val/test split
-                train_data, val_data = train_test_split(
-                    train_val_data, test_size=0.15, stratify=train_val_data['label'], random_state=seed
-                )
-                train_data = train_data.reset_index(drop=True)
-                val_data = val_data.reset_index(drop=True)
+            # مرتب‌سازی تصادفی داده‌ها برای اطمینان از توزیع متعادل
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        if n_folds == 0:
-            print(f"Total train dataset size: {len(train_data)}")
-            print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-            print(f"Total validation dataset size: {len(val_data)}")
-            print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        else:
-            print(f"Total train+val dataset size: {len(train_val_data)}")
-            print(f"Train+val label distribution:\n{train_val_data['label'].value_counts()}")
+        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        print(f"Sample train image paths:\n{train_data[img_column].head()}")
+        print(f"Total train dataset size: {len(train_data)}")
+        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
+        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
+        print(f"Total validation dataset size: {len(val_data)}")
+        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+        print(f"Sample test image paths:\n{test_data[img_column].head()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         # Check for missing images
-        data_splits = [('test', test_data)]
-        if n_folds == 0:
-            data_splits.extend([('train', train_data), ('validation', val_data)])
-        else:
-            data_splits.append((' Garrisontrain+val', train_val_data))
-        for split, data in data_splits:
+        for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
             for img_path in data[img_column]:
                 full_path = os.path.join(root_dir, img_path)
@@ -217,104 +181,61 @@ class Dataset_selector(Dataset):
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
-        # Create test dataset and loader
-        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
-        self.loader_test = DataLoader(
-            test_dataset, batch_size=eval_batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=pin_memory,
-        )
+        # Create datasets
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test)
 
-        if n_folds == 0:
-            # Create train and validation datasets
-            train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
-            val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
-
-            # Create DataLoaders for train and validation
-            if ddp:
-                train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
-                self.loader_train = DataLoader(
-                    train_dataset, batch_size=train_batch_size, sampler=train_sampler,
-                    num_workers=num_workers, pin_memory=pin_memory,
-                )
-            else:
-                self.loader_train = DataLoader(
-                    train_dataset, batch_size=train_batch_size, shuffle=True,
-                    num_workers=num_workers, pin_memory=pin_memory,
-                )
-            self.loader_val = DataLoader(
-                val_dataset, batch_size=eval_batch_size, shuffle=False,
-                num_workers=num_workers, pin_memory=pin_memory,
+        # Create data loaders
+        if ddp:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_dataset, shuffle=True
+            )
+            self.loader_train = DataLoader(
+                train_dataset,
+                batch_size=train_batch_size,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                sampler=train_sampler,
+            )
+        else:
+            self.loader_train = DataLoader(
+                train_dataset,
+                batch_size=train_batch_size,
+                shuffle=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
             )
 
-            # Debug: Print loader sizes
-            print(f"Train loader batches: {len(self.loader_train)}")
-            print(f"Validation loader batches: {len(self.loader_val)}")
-            print(f"Test loader batches: {len(self.loader_test)}")
+        self.loader_val = DataLoader(
+            val_dataset,
+            batch_size=eval_batch_size,
+            shuffle=True,  # موقتاً برای تست فعال شده
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
-            # Test sample batches
-            for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
-                try:
-                    sample = next(iter(loader))
-                    print(f"Sample {name} batch image shape: {sample[0].shape}")
-                    print(f"Sample {name} batch labels: {sample[1]}")
-                except Exception as e:
-                    print(f"Error loading sample {name} batch: {e}")
-        else:
-            # Create base dataset for train+val
-            train_val_dataset = FaceDataset(train_val_data, root_dir, transform=transform_train, img_column=img_column)
+        self.loader_test = DataLoader(
+            test_dataset,
+            batch_size=eval_batch_size,
+            shuffle=True,  # موقتاً برای تست فعال شده
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
-            # Initialize K-Fold
-            kfold = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
-            self.fold_loaders = []
+        # Debug: Print loader sizes
+        print(f"Train loader batches: {len(self.loader_train)}")
+        print(f"Validation loader batches: {len(self.loader_val)}")
+        print(f"Test loader batches: {len(self.loader_test)}")
 
-            # Create DataLoader for each fold
-            for fold, (train_idx, val_idx) in enumerate(kfold.split(train_val_data)):
-                print(f"\nFold {fold + 1} statistics:")
-                train_data_fold = train_val_data.iloc[train_idx].reset_index(drop=True)
-                val_data_fold = train_val_data.iloc[val_idx].reset_index(drop=True)
-                print(f"Train fold size: {len(train_data_fold)}")
-                print(f"Train fold label distribution:\n{train_data_fold['label'].value_counts()}")
-                print(f"Validation fold size: {len(val_data_fold)}")
-                print(f"Validation fold label distribution:\n{val_data_fold['label'].value_counts()}")
-
-                # Create datasets for this fold
-                train_dataset_fold = Subset(train_val_dataset, train_idx)
-                val_dataset_fold = Subset(train_val_dataset, val_idx)
-
-                # Create DataLoader for training
-                if ddp:
-                    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset_fold, shuffle=True)
-                    train_loader = DataLoader(
-                        train_dataset_fold, batch_size=train_batch_size, sampler=train_sampler,
-                        num_workers=num_workers, pin_memory=pin_memory,
-                    )
-                else:
-                    train_loader = DataLoader(
-                        train_dataset_fold, batch_size=train_batch_size, shuffle=True,
-                        num_workers=num_workers, pin_memory=pin_memory,
-                    )
-
-                # Create DataLoader for validation
-                val_loader = DataLoader(
-                    val_dataset_fold, batch_size=eval_batch_size, shuffle=False,
-                    num_workers=num_workers, pin_memory=pin_memory,
-                )
-
-                self.fold_loaders.append({'train_loader': train_loader, 'val_loader': val_loader})
-
-            # Debug: Print loader sizes
-            for fold, fold_data in enumerate(self.fold_loaders):
-                print(f"Fold {fold + 1}:")
-                print(f"  Train loader batches: {len(fold_data['train_loader'])}")
-                print(f"  Validation loader batches: {len(fold_data['val_loader'])}")
-
-            # Test a sample batch from test loader
+        # Test a sample batch
+        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
-                sample = next(iter(self.loader_test))
-                print(f"Sample test batch image shape: {sample[0].shape}")
-                print(f"Sample test batch labels: {sample[1]}")
+                sample = next(iter(loader))
+                print(f"Sample {name} batch image shape: {sample[0].shape}")
+                print(f"Sample {name} batch labels: {sample[1]}")
             except Exception as e:
-                print(f"Error loading sample test batch: {e}")
+                print(f"Error loading sample {name} batch: {e}")
 
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
@@ -322,9 +243,8 @@ if __name__ == "__main__":
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,
+        train_batch_size=64,  # به‌روزرسانی به 64
         eval_batch_size=64,
-        n_folds=0,  # For transfer learning
     )
 
     # Example for rvf10k
@@ -335,7 +255,6 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=64,
         eval_batch_size=64,
-        n_folds=0,
     )
 
     # Example for 140k Real and Fake Faces
@@ -347,5 +266,4 @@ if __name__ == "__main__":
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
-        n_folds=0,
     )
