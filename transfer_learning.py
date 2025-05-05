@@ -126,8 +126,6 @@ class DatasetSelector:
             pin_memory=self.pin_memory
         )
 
-def preceding section
-
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model for fake vs real face classification.')
     parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
