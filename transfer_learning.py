@@ -100,9 +100,9 @@ val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
 # تعریف مدل
-model = models.resnet50(weights='IMAGENET1K_V1')
+model = models.resnet50(weights='IMAGENET1K_V1')  # جایگزینی pretrained با weights
 num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, 1)
+model.fc = nn.Linear(num_ftrs, 1)  # خروجی باینری
 model = model.to(device)
 
 # فریز کردن لایه‌ها
@@ -197,7 +197,7 @@ with torch.no_grad():
         img_column = 'path' if dataset_mode == '140k' else 'images_id'
         img_name = row[img_column]
         label = row['label']
-        img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name) if dataset_mode == '140k' else os.path.join(data_dir, img_name)
+        img_path = os.path.join(data_dir, 'real_vs_fake', 'real_vs_fake', img_name) if dataset_mode == '140k' else os.path.join(data_dir, img_name)
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
             axes[i].set_title("Image not found")
