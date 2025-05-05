@@ -34,7 +34,6 @@ class Finetune:
         self.result_dir = args.result_dir
         self.finetune_train_batch_size = args.finetune_train_batch_size
         self.finetune_eval_batch_size = args.finetune_eval_batch_size
-        self.finetune_student_ckpt_path = args.finetune_student_ckpt_path
         self.finetune_num_epochs = args.finetune_num_epochs
         self.finetune_lr = args.finetune_lr
         self.finetune_warmup_steps = args.finetune_warmup_steps
@@ -132,16 +131,28 @@ class Finetune:
         self.test_loader = dataset.loader_test
         self.logger.info(f"Dataset has been split into {self.n_folds} folds!")
 
-    def build_model(self):
+    def build_model(self, fold_idx=None):
         self.logger.info("==> Building model..")
-        self.logger.info("Loading student model")
-        if not os.path.exists(self.finetune_student_ckpt_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
+        self.logger.info(f"Loading student model for fold {fold_idx + 1}")
+        
+        # تنظیم مسیر checkpoint برای این fold
+        ckpt_path = os.path.join(
+            self.sparsed_student_ckpt_path,
+            f"student_model_fold_{fold_idx + 1}",
+            f"{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
+        )
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
+        
+        # انتخاب مدل مناسب بر اساس dataset_mode
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
         else:  # rvf10k or 140k
             self.student = ResNet_50_sparse_rvf10k()
-        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
+        
+        # لود checkpoint
+        self.logger.info(f"Loading checkpoint: {ckpt_path}")
+        ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
         self.student = self.student.to(self.device)
@@ -173,7 +184,17 @@ class Finetune:
         )
 
     def resume_student_ckpt(self, fold_idx=None):
-        ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
+        # تنظیم مسیر checkpoint برای فاین‌تیونینگ این fold
+        ckpt_path = os.path.join(
+            self.result_dir,
+            f"student_model_fold_{fold_idx + 1}",
+            f"finetune_{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
+        )
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
+        
+        self.logger.info(f"Resuming from checkpoint: {ckpt_path}")
+        ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.load_state_dict(ckpt_student["student"])
@@ -213,11 +234,21 @@ class Finetune:
         self.logger.info("Starting K-Fold Cross Validation finetuning")
         fold_results = []
 
+        # بررسی وجود فایل‌های checkpoint برای همه foldها
+        for fold_idx in range(self.n_folds):
+            ckpt_path = os.path.join(
+                self.sparsed_student_ckpt_path,
+                f"student_model_fold_{fold_idx + 1}",
+                f"{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
+            )
+            if not os.path.exists(ckpt_path):
+                raise FileNotFoundError(f"Missing checkpoint for fold {fold_idx + 1}: {ckpt_path}")
+
         for fold_idx, (train_loader, val_loader) in enumerate(self.fold_loaders):
             self.logger.info(f"\nFinetuning Fold {fold_idx + 1}/{self.n_folds}")
             
             # مقداردهی اولیه مدل و بهینه‌ساز برای هر فولد
-            self.build_model()
+            self.build_model(fold_idx=fold_idx)
             self.define_loss()
             self.define_optim()
             if self.finetune_resume:
@@ -364,7 +395,4 @@ class Finetune:
         self.result_init()
         self.setup_seed()
         self.dataload()
-        self.build_model()
-        self.define_loss()
-        self.define_optim()
         self.finetune()
