@@ -267,8 +267,8 @@ if __name__ == "__main__":
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,
-        eval_batch_size=64,
+        train_batch_size=16,
+        eval_batch_size=16,
         num_workers=4,
     )
 
