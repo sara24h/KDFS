@@ -20,7 +20,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,  # مقدار فرضی، باید با مقدار واقعی جایگزین شود
+        "140k": 5000.0,  
     }
 }
 
@@ -171,14 +171,13 @@ class Train:
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            ddp=False,
-            n_folds=5,  # تعداد foldها
-            seed=self.seed
+            ddp=False
         )
 
-        self.fold_loaders = dataset_instance.fold_loaders
+        self.train_loader = dataset_instance.loader_train
+        self.val_loader = dataset_instance.loader_val
         self.test_loader = dataset_instance.loader_test
-        self.logger.info(f"Dataset has been split into {len(self.fold_loaders)} folds!")
+        self.logger.info("Dataset has been loaded!")
 
     def build_model(self):
         self.logger.info("==> Building model..")
@@ -231,6 +230,23 @@ class Train:
         
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
+
+        # تست دقت معلم روی مجموعه اعتبارسنجی
+        self.logger.info("Testing teacher model on validation batch...")
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            for images, targets in self.val_loader:
+                images = images.to(self.device)
+                targets = targets.to(self.device).float()
+                logits, _ = self.teacher(images)
+                logits = logits.squeeze(1)
+                preds = (torch.sigmoid(logits) > 0.5).float()
+                correct += (preds == targets).sum().item()
+                total += images.size(0)
+                break
+            accuracy = 100. * correct / total
+            self.logger.info(f"Teacher accuracy on validation batch: {accuracy:.2f}%")
 
         self.logger.info("Building student model")
         if self.dataset_mode == "hardfake":
@@ -312,8 +328,8 @@ class Train:
         )
         self.logger.info("=> Continue from epoch {}...".format(self.start_epoch + 1))
 
-    def save_student_ckpt(self, is_best, epoch, fold_idx=None):
-        folder = os.path.join(self.result_dir, f"student_model_fold_{fold_idx}")
+    def save_student_ckpt(self, is_best, epoch):
+        folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
 
@@ -323,236 +339,230 @@ class Train:
         ckpt_student["student"] = self.student.state_dict()
         ckpt_student["optim_weight"] = self.optim_weight.state_dict()
         ckpt_student["optim_mask"] = self.optim_mask.state_dict()
-        ckpt_student["scheduler_student_weight"] = self.scheduler_student_weight.state_dict()
-        ckpt_student["scheduler_student_mask"] = self.scheduler_student_mask.state_dict()
+        ckpt_student[
+            "scheduler_student_weight"
+        ] = self.scheduler_student_weight.state_dict()
+        ckpt_student[
+            "scheduler_student_mask"
+        ] = self.scheduler_student_mask.state_dict()
 
-        filename = f"{self.arch}_sparse_fold_{fold_idx}"
         if is_best:
             torch.save(
                 ckpt_student,
-                os.path.join(folder, f"{filename}_best.pt"),
+                os.path.join(folder, self.arch + "_sparse_best.pt"),
             )
-        torch.save(ckpt_student, os.path.join(folder, f"{filename}_last.pt"))
+        torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def train(self):
-        self.logger.info("Starting K-Fold Cross Validation training")
+        self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
 
-        k_folds = len(self.fold_loaders)
-        fold_results = []
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+            self.teacher = self.teacher.cuda()
+            self.student = self.student.cuda()
+            self.ori_loss = self.ori_loss.cuda()
+            self.kd_loss = self.kd_loss.cuda()
+            self.rc_loss = self.rc_loss.cuda()
+            self.mask_loss = self.mask_loss.cuda()
 
-        for fold_idx, fold_data in enumerate(self.fold_loaders):
-            self.logger.info(f"\nTraining Fold {fold_idx + 1}/{k_folds}")
+        if self.resume:
+            self.resume_student_ckpt()
 
-            # ریست مدل و بهینه‌ساز برای این fold
-            self.build_model()
-            self.define_loss()
-            self.define_optim()
+        meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
+        meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
+        meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
+        meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
+        meter_loss = meter.AverageMeter("Loss", ":.4e")
+        meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-            train_loader = fold_data['train_loader']
-            val_loader = fold_data['val_loader']
+        self.teacher.eval()
+        for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
+            self.student.train()
+            self.student.ticket = False
+            meter_oriloss.reset()
+            meter_kdloss.reset()
+            meter_rcloss.reset()
+            meter_maskloss.reset()
+            meter_loss.reset()
+            meter_top1.reset()
 
-            meter_top1_folds = meter.AverageMeter("Acc@1", ":6.2f")
-            best_prec1_fold = 0
-            self.best_prec1 = 0  # ریست برای هر fold
+            lr = (
+                self.optim_weight.state_dict()["param_groups"][0]["lr"]
+                if epoch > 1
+                else self.warmup_start_lr
+            )
 
-            # تست دقت معلم روی مجموعه اعتبارسنجی این fold
-            self.logger.info(f"Testing teacher model on validation batch for fold {fold_idx + 1}...")
-            with torch.no_grad():
-                correct = 0
-                total = 0
-                for images, targets in val_loader:
-                    images = images.to(self.device)
-                    targets = targets.to(self.device).float()
-                    logits, _ = self.teacher(images)
-                    logits = logits.squeeze(1)
-                    preds = (torch.sigmoid(logits) > 0.5).float()
-                    correct += (preds == targets).sum().item()
-                    total += images.size(0)
-                    break
-                accuracy = 100. * correct / total
-                self.logger.info(f"Teacher accuracy on validation batch (fold {fold_idx + 1}): {accuracy:.2f}%")
+            self.student.update_gumbel_temperature(epoch)
+            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
+                _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
+                for images, targets in self.train_loader:
+                    self.optim_weight.zero_grad()
+                    self.optim_mask.zero_grad()
+                    if self.device == "cuda":
+                        images = images.cuda()
+                        targets = targets.cuda().float()
 
-            for epoch in range(1, self.num_epochs + 1):
-                self.student.train()
-                self.student.ticket = False
-                meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
-                meter_kdloss = meter.AverageMeter("KDLoss", ":.4e")
-                meter_rcloss = meter.AverageMeter("RCLoss", ":.4e")
-                meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
-                meter_loss = meter.AverageMeter("Loss", ":.4e")
-                meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+                    logits_student, feature_list_student = self.student(images)
+                    logits_student = logits_student.squeeze(1)
+                    with torch.no_grad():
+                        logits_teacher, feature_list_teacher = self.teacher(images)
+                        logits_teacher = logits_teacher.squeeze(1)
 
-                lr = (
-                    self.optim_weight.state_dict()["param_groups"][0]["lr"]
-                    if epoch > 1
-                    else self.warmup_start_lr
+                    ori_loss = self.ori_loss(logits_student, targets)
+                    kd_loss = self.kd_loss(logits_teacher, logits_student)
+
+                    rc_loss = torch.tensor(0, device=images.device)
+                    for i in range(len(feature_list_student)):
+                        rc_loss = rc_loss + self.rc_loss(
+                            feature_list_student[i], feature_list_teacher[i]
+                        )
+
+                    Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
+                    Flops = self.student.get_flops()
+                    mask_loss = self.mask_loss(
+                        Flops, Flops_baseline * (10**6), self.compress_rate
+                    )
+
+                    total_loss = (
+                        ori_loss
+                        + self.coef_kdloss * kd_loss
+                        + self.coef_rcloss * rc_loss / len(feature_list_student)
+                        + self.coef_maskloss * mask_loss
+                    )
+
+                    total_loss.backward()
+                    self.optim_weight.step()
+                    self.optim_mask.step()
+
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
+                    n = images.size(0)
+                    meter_oriloss.update(ori_loss.item(), n)
+                    meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
+                    meter_rcloss.update(
+                        self.coef_rcloss * rc_loss.item() / len(feature_list_student), n
+                    )
+                    meter_maskloss.update(self.coef_maskloss * mask_loss.item(), n)
+                    meter_loss.update(total_loss.item(), n)
+                    meter_top1.update(prec1, n)
+
+                    _tqdm.set_postfix(
+                        loss="{:.4f}".format(meter_loss.avg),
+                        train_acc="{:.4f}".format(meter_top1.avg),
+                    )
+                    _tqdm.update(1)
+                    time.sleep(0.01)
+
+            Flops = self.student.get_flops()
+            self.scheduler_student_weight.step()
+            self.scheduler_student_mask.step()
+
+            self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
+            self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
+            self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
+            self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
+            self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
+            self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
+            self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
+            self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.gumbel_temperature, global_step=epoch)
+            self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
+
+            self.logger.info(
+                "[Train] "
+                "Epoch {0} : "
+                "Gumbel_temperature {gumbel_temperature:.2f} "
+                "LR {lr:.6f} "
+                "OriLoss {ori_loss:.4f} "
+                "KDLoss {kd_loss:.4f} "
+                "RCLoss {rc_loss:.4f} "
+                "MaskLoss {mask_loss:.6f} "
+                "TotalLoss {total_loss:.4f} "
+                "Train_Acc {train_acc:.2f}".format(
+                    epoch,
+                    gumbel_temperature=self.student.gumbel_temperature,
+                    lr=lr,
+                    ori_loss=meter_oriloss.avg,
+                    kd_loss=meter_kdloss.avg,
+                    rc_loss=meter_rcloss.avg,
+                    mask_loss=meter_maskloss.avg,
+                    total_loss=meter_loss.avg,
+                    train_acc=meter_top1.avg,
                 )
+            )
 
-                self.student.update_gumbel_temperature(epoch)
-                with tqdm(total=len(train_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description(f"Fold {fold_idx + 1} epoch: {epoch}/{self.num_epochs}")
-                    for images, targets in train_loader:
-                        self.optim_weight.zero_grad()
-                        self.optim_mask.zero_grad()
+            masks = []
+            for _, m in enumerate(self.student.mask_modules):
+                masks.append(round(m.mask.mean().item(), 2))
+            self.logger.info("[Train mask avg] Epoch {0} : ".format(epoch) + str(masks))
+
+            self.logger.info(
+                "[Train model Flops] Epoch {0} : ".format(epoch)
+                + str(Flops.item() / (10**6))
+                + "M"
+            )
+
+            # Validation
+            self.student.eval()
+            self.student.ticket = True
+            meter_top1.reset()
+
+            with torch.no_grad():
+                with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
+                    _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
+                    for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-
-                        logits_student, feature_list_student = self.student(images)
+                        logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
-                        with torch.no_grad():
-                            logits_teacher, feature_list_teacher = self.teacher(images)
-                            logits_teacher = logits_teacher.squeeze(1)
-
-                        ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = self.kd_loss(logits_teacher, logits_student)
-
-                        rc_loss = torch.tensor(0, device=images.device)
-                        for i in range(len(feature_list_student)):
-                            rc_loss = rc_loss + self.rc_loss(
-                                feature_list_student[i], feature_list_teacher[i]
-                            )
-
-                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
-                        Flops = self.student.get_flops()
-                        mask_loss = self.mask_loss(
-                            Flops, Flops_baseline * (10**6), self.compress_rate
-                        )
-
-                        total_loss = (
-                            ori_loss
-                            + self.coef_kdloss * kd_loss
-                            + self.coef_rcloss * rc_loss / len(feature_list_student)
-                            + self.coef_maskloss * mask_loss
-                        )
-
-                        total_loss.backward()
-                        self.optim_weight.step()
-                        self.optim_mask.step()
 
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
-                        meter_oriloss.update(ori_loss.item(), n)
-                        meter_kdloss.update(self.coef_kdloss * kd_loss.item(), n)
-                        meter_rcloss.update(
-                            self.coef_rcloss * rc_loss.item() / len(feature_list_student), n
-                        )
-                        meter_maskloss.update(self.coef_maskloss * mask_loss.item(), n)
-                        meter_loss.update(total_loss.item(), n)
                         meter_top1.update(prec1, n)
 
-                        _tqdm.set_postfix(
-                            loss="{:.4f}".format(meter_loss.avg),
-                            train_acc="{:.4f}".format(meter_top1.avg),
-                        )
+                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-                Flops = self.student.get_flops()
-                self.scheduler_student_weight.step()
-                self.scheduler_student_mask.step()
+            Flops = self.student.get_flops()
+            self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+            self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/loss/total_loss", meter_loss.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/lr/lr", lr, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/temperature/gumbel_temperature", self.student.gumbel_temperature, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/train/Flops", Flops, global_step=epoch)
-
-                self.logger.info(
-                    f"[Fold {fold_idx + 1} Train] "
-                    f"Epoch {epoch} : "
-                    f"Gumbel_temperature {self.student.gumbel_temperature:.2f} "
-                    f"LR {lr:.6f} "
-                    f"OriLoss {meter_oriloss.avg:.4f} "
-                    f"KDLoss {meter_kdloss.avg:.4f} "
-                    f"RCLoss {meter_rcloss.avg:.4f} "
-                    f"MaskLoss {meter_maskloss.avg:.6f} "
-                    f"TotalLoss {meter_loss.avg:.4f} "
-                    f"Train_Acc {meter_top1.avg:.2f}"
+            self.logger.info(
+                "[Val] "
+                "Epoch {0} : "
+                "Val_Acc {val_acc:.2f}".format(
+                    epoch,
+                    val_acc=meter_top1.avg,
                 )
+            )
 
-                masks = []
-                for _, m in enumerate(self.student.mask_modules):
-                    masks.append(round(m.mask.mean().item(), 2))
-                self.logger.info(f"[Fold {fold_idx + 1} Train mask avg] Epoch {epoch} : {masks}")
+            masks = []
+            for _, m in enumerate(self.student.mask_modules):
+                masks.append(round(m.mask.mean().item(), 2))
+            self.logger.info("[Val mask avg] Epoch {0} : ".format(epoch) + str(masks))
 
-                self.logger.info(
-                    f"[Fold {fold_idx + 1} Train model Flops] Epoch {epoch} : {Flops.item() / (10**6):.2f}M"
-                )
+            self.logger.info(
+                "[Val model Flops] Epoch {0} : ".format(epoch)
+                + str(Flops.item() / (10**6))
+                + "M"
+            )
 
-                # Validation برای این fold
-                self.student.eval()
-                self.student.ticket = True
-                meter_top1.reset()
+            # Save checkpoint based on validation accuracy
+            if self.best_prec1 < meter_top1.avg:
+                self.best_prec1 = meter_top1.avg
+                self.save_student_ckpt(True, epoch)
+            else:
+                self.save_student_ckpt(False, epoch)
 
-                with torch.no_grad():
-                    with tqdm(total=len(val_loader), ncols=100) as _tqdm:
-                        _tqdm.set_description(f"Fold {fold_idx + 1} Validation epoch: {epoch}/{self.num_epochs}")
-                        for images, targets in val_loader:
-                            if self.device == "cuda":
-                                images = images.cuda()
-                                targets = targets.cuda().float()
-                            logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze(1)
+            self.logger.info(
+                " => Best top1 accuracy on validation before finetune : " + str(self.best_prec1)
+            )
 
-                            preds = (torch.sigmoid(logits_student) > 0.5).float()
-                            correct = (preds == targets).sum().item()
-                            prec1 = 100. * correct / images.size(0)
-                            n = images.size(0)
-                            meter_top1.update(prec1, n)
-
-                            _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
-                            _tqdm.update(1)
-                            time.sleep(0.01)
-
-                Flops = self.student.get_flops()
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/val/Flops", Flops, global_step=epoch)
-
-                self.logger.info(
-                    f"[Fold {fold_idx + 1} Val] "
-                    f"Epoch {epoch} : "
-                    f"Val_Acc {meter_top1.avg:.2f}"
-                )
-
-                masks = []
-                for _, m in enumerate(self.student.mask_modules):
-                    masks.append(round(m.mask.mean().item(), 2))
-                self.logger.info(f"[Fold {fold_idx + 1} Val mask avg] Epoch {epoch} : {masks}")
-
-                self.logger.info(
-                    f"[Fold {fold_idx + 1} Val model Flops] Epoch {epoch} : {Flops.item() / (10**6):.2f}M"
-                )
-
-                # Save checkpoint based on validation accuracy
-                if best_prec1_fold < meter_top1.avg:
-                    best_prec1_fold = meter_top1.avg
-                    self.best_prec1 = meter_top1.avg
-                    self.save_student_ckpt(True, epoch, fold_idx=fold_idx)
-                else:
-                    self.save_student_ckpt(False, epoch, fold_idx=fold_idx)
-
-                self.logger.info(
-                    f"[Fold {fold_idx + 1}] Best top1 accuracy on validation: {best_prec1_fold:.2f}"
-                )
-
-            # ذخیره نتیجه این fold
-            fold_results.append({
-                'fold': fold_idx + 1,
-                'best_val_acc': best_prec1_fold
-            })
-            self.logger.info(f"Fold {fold_idx + 1} finished with best val acc: {best_prec1_fold:.2f}")
-
-        # گزارش میانگین نتایج
-        avg_val_acc = np.mean([result['best_val_acc'] for result in fold_results])
-        self.logger.info(f"\nK-Fold Cross Validation finished!")
-        self.logger.info(f"Average validation accuracy across {k_folds} folds: {avg_val_acc:.2f}")
+        self.logger.info("Train finished!")
 
     def test(self):
         self.student.eval()
@@ -597,5 +607,3 @@ class Train:
         self.define_loss()
         self.define_optim()
         self.train()
-        if self.test_loader is not None:
-            self.test()
