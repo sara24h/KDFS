@@ -34,6 +34,7 @@ class Finetune:
         self.result_dir = args.result_dir
         self.finetune_train_batch_size = args.finetune_train_batch_size
         self.finetune_eval_batch_size = args.finetune_eval_batch_size
+        self.finetune_student_ckpt_path = args.finetune_student_ckpt_path
         self.finetune_num_epochs = args.finetune_num_epochs
         self.finetune_lr = args.finetune_lr
         self.finetune_warmup_steps = args.finetune_warmup_steps
@@ -43,7 +44,6 @@ class Finetune:
         self.finetune_weight_decay = args.finetune_weight_decay
         self.finetune_resume = args.finetune_resume
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.n_folds = args.n_folds if hasattr(args, 'n_folds') else 5
 
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
@@ -62,7 +62,7 @@ class Finetune:
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # برای کاهش خطاهای CUDA
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -87,8 +87,6 @@ class Finetune:
                 eval_batch_size=self.finetune_eval_batch_size,
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
-                ddp=False,
-                n_folds=self.n_folds
             )
         elif self.dataset_mode == 'rvf10k':
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -103,8 +101,6 @@ class Finetune:
                 eval_batch_size=self.finetune_eval_batch_size,
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
-                ddp=False,
-                n_folds=self.n_folds
             )
         elif self.dataset_mode == '140k':
             realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
@@ -121,44 +117,31 @@ class Finetune:
                 eval_batch_size=self.finetune_eval_batch_size,
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
-                ddp=False,
-                n_folds=self.n_folds
             )
         else:
             raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
 
-        self.fold_loaders = dataset.fold_loaders
+        self.train_loader = dataset.loader_train
+        self.val_loader = dataset.loader_val
         self.test_loader = dataset.loader_test
-        self.logger.info(f"Dataset has been split into {self.n_folds} folds!")
+        self.logger.info("Dataset has been loaded!")
 
-    def build_model(self, fold_idx=None):
+    def build_model(self):
         self.logger.info("==> Building model..")
-        self.logger.info(f"Loading student model for fold {fold_idx + 1}")
-        
-        # تنظیم مسیر checkpoint برای این fold
-        ckpt_path = os.path.join(
-            self.sparsed_student_ckpt_path,
-            f"student_model_fold_{fold_idx + 1}",
-            f"{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
-        )
-        if not os.path.exists(ckpt_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
-        
-        # انتخاب مدل مناسب بر اساس dataset_mode
+        self.logger.info("Loading student model")
+        if not os.path.exists(self.finetune_student_ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
         else:  # rvf10k or 140k
             self.student = ResNet_50_sparse_rvf10k()
-        
-        # لود checkpoint
-        self.logger.info(f"Loading checkpoint: {ckpt_path}")
-        ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
         self.student.load_state_dict(ckpt_student["student"])
         self.best_prec1_before_finetune = ckpt_student["best_prec1"]
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss()  # برای مسئله باینری
 
     def define_optim(self):
         weight_params = map(
@@ -183,18 +166,8 @@ class Finetune:
             warmup_start_lr=self.finetune_warmup_start_lr,
         )
 
-    def resume_student_ckpt(self, fold_idx=None):
-        # تنظیم مسیر checkpoint برای فاین‌تیونینگ این fold
-        ckpt_path = os.path.join(
-            self.result_dir,
-            f"student_model_fold_{fold_idx + 1}",
-            f"finetune_{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
-        )
-        if not os.path.exists(ckpt_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
-        
-        self.logger.info(f"Resuming from checkpoint: {ckpt_path}")
-        ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    def resume_student_ckpt(self):
+        ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
         self.student.load_state_dict(ckpt_student["student"])
@@ -204,10 +177,10 @@ class Finetune:
         self.finetune_scheduler_student_weight.load_state_dict(
             ckpt_student["finetune_scheduler_student_weight"]
         )
-        self.logger.info(f"=> Continue from epoch {self.start_epoch} for fold {fold_idx + 1}...")
+        self.logger.info(f"=> Continue from epoch {self.start_epoch}...")
 
-    def save_student_ckpt(self, is_best, fold_idx):
-        folder = os.path.join(self.result_dir, f"student_model_fold_{fold_idx + 1}")
+    def save_student_ckpt(self, is_best):
+        folder = os.path.join(self.result_dir, "student_model")
         if not os.path.exists(folder):
             os.makedirs(folder)
 
@@ -219,161 +192,130 @@ class Finetune:
             "finetune_scheduler_student_weight": self.finetune_scheduler_student_weight.state_dict(),
         }
 
-        filename = f"finetune_{self.arch}_sparse_fold_{fold_idx + 1}"
         if is_best:
             torch.save(
                 ckpt_student,
-                os.path.join(folder, f"{filename}_best.pt"),
+                os.path.join(folder, f"finetune_{self.arch}_sparse_best.pt"),
             )
         torch.save(
             ckpt_student,
-            os.path.join(folder, f"{filename}_last.pt"),
+            os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"),
         )
 
     def finetune(self):
-        self.logger.info("Starting K-Fold Cross Validation finetuning")
-        fold_results = []
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+            self.student = self.student.cuda()
+            self.ori_loss = self.ori_loss.cuda()
+        if self.finetune_resume:
+            self.resume_student_ckpt()
 
-        # بررسی وجود فایل‌های checkpoint برای همه foldها
-        for fold_idx in range(self.n_folds):
-            ckpt_path = os.path.join(
-                self.sparsed_student_ckpt_path,
-                f"student_model_fold_{fold_idx + 1}",
-                f"{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
+        meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
+        meter_loss = meter.AverageMeter("Loss", ":.4e")
+        meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
+            # آموزش
+            self.student.train()
+            self.student.ticket = True
+            meter_oriloss.reset()
+            meter_loss.reset()
+            meter_top1.reset()
+            finetune_lr = (
+                self.finetune_optim_weight.state_dict()["param_groups"][0]["lr"]
+                if epoch > 1
+                else self.finetune_warmup_start_lr
             )
-            if not os.path.exists(ckpt_path):
-                raise FileNotFoundError(f"Missing checkpoint for fold {fold_idx + 1}: {ckpt_path}")
 
-        for fold_idx, (train_loader, val_loader) in enumerate(self.fold_loaders):
-            self.logger.info(f"\nFinetuning Fold {fold_idx + 1}/{self.n_folds}")
-            
-            # مقداردهی اولیه مدل و بهینه‌ساز برای هر فولد
-            self.build_model(fold_idx=fold_idx)
-            self.define_loss()
-            self.define_optim()
-            if self.finetune_resume:
-                self.resume_student_ckpt(fold_idx)
+            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
+                _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+                for images, targets in self.train_loader:
+                    self.finetune_optim_weight.zero_grad()
+                    if self.device == "cuda":
+                        images = images.cuda()
+                        targets = targets.cuda().float()
+                    logits_student, _ = self.student(images)
+                    logits_student = logits_student.squeeze(1)  # برای مسئله باینری
+                    ori_loss = self.ori_loss(logits_student, targets)
+                    total_loss = ori_loss
+                    total_loss.backward()
+                    self.finetune_optim_weight.step()
 
-            self.best_prec1_after_finetune = 0
-            meter_top1_folds = meter.AverageMeter("Acc@1", ":6.2f")
+                    preds = (torch.sigmoid(logits_student) > 0.5).float()
+                    correct = (preds == targets).sum().item()
+                    prec1 = 100. * correct / images.size(0)
+                    n = images.size(0)
+                    meter_oriloss.update(ori_loss.item(), n)
+                    meter_loss.update(total_loss.item(), n)
+                    meter_top1.update(prec1, n)
 
-            for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
-                # آموزش
-                self.student.train()
-                self.student.ticket = True
-                meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
-                meter_loss = meter.AverageMeter("Loss", ":.4e")
-                meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+                    _tqdm.set_postfix(
+                        loss=f"{meter_loss.avg:.4f}",
+                        top1=f"{meter_top1.avg:.4f}",
+                    )
+                    _tqdm.update(1)
+                    time.sleep(0.01)
 
-                finetune_lr = (
-                    self.finetune_optim_weight.state_dict()["param_groups"][0]["lr"]
-                    if epoch > 1
-                    else self.finetune_warmup_start_lr
-                )
+            self.finetune_scheduler_student_weight.step()
 
-                with tqdm(total=len(train_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description(f"Fold {fold_idx + 1} epoch: {epoch}/{self.finetune_num_epochs}")
-                    for images, targets in train_loader:
-                        self.finetune_optim_weight.zero_grad()
+            self.writer.add_scalar("finetune_train/loss/ori_loss", meter_oriloss.avg, epoch)
+            self.writer.add_scalar("finetune_train/loss/total_loss", meter_loss.avg, epoch)
+            self.writer.add_scalar("finetune_train/acc/top1", meter_top1.avg, epoch)
+            self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch)
+
+            self.logger.info(
+                f"[Finetune_train] Epoch {epoch} : "
+                f"LR {finetune_lr:.6f} "
+                f"OriLoss {meter_oriloss.avg:.4f} "
+                f"TotalLoss {meter_loss.avg:.4f} "
+                f"Prec@1 {meter_top1.avg:.2f}"
+            )
+
+            # اعتبارسنجی
+            self.student.eval()
+            self.student.ticket = True
+            meter_top1.reset()
+            with torch.no_grad():
+                with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
+                    _tqdm.set_description(f"epoch: {epoch}/{self.finetune_num_epochs}")
+                    for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
-                        ori_loss = self.ori_loss(logits_student, targets)
-                        total_loss = ori_loss
-                        total_loss.backward()
-                        self.finetune_optim_weight.step()
-
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
-                        meter_oriloss.update(ori_loss.item(), n)
-                        meter_loss.update(total_loss.item(), n)
                         meter_top1.update(prec1, n)
-
-                        _tqdm.set_postfix(
-                            loss=f"{meter_loss.avg:.4f}",
-                            top1=f"{meter_top1.avg:.4f}",
-                        )
+                        _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-                self.finetune_scheduler_student_weight.step()
+            self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch)
+            self.logger.info(
+                f"[Finetune_val] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
+            )
 
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/finetune_train/loss/ori_loss", meter_oriloss.avg, epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/finetune_train/loss/total_loss", meter_loss.avg, epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/finetune_train/acc/top1", meter_top1.avg, epoch)
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/finetune_train/lr/lr", finetune_lr, epoch)
+            masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
+            self.logger.info(f"[Mask avg] Epoch {epoch} : {masks}")
 
-                self.logger.info(
-                    f"[Finetune_train Fold {fold_idx + 1}] Epoch {epoch} : "
-                    f"LR {finetune_lr:.6f} "
-                    f"OriLoss {meter_oriloss.avg:.4f} "
-                    f"TotalLoss {meter_loss.avg:.4f} "
-                    f"Prec@1 {meter_top1.avg:.2f}"
-                )
+            self.start_epoch += 1
+            if self.best_prec1_after_finetune < meter_top1.avg:
+                self.best_prec1_after_finetune = meter_top1.avg
+                self.save_student_ckpt(True)
+            else:
+                self.save_student_ckpt(False)
 
-                # اعتبارسنجی
-                self.student.eval()
-                self.student.ticket = True
-                meter_top1.reset()
-                with torch.no_grad():
-                    with tqdm(total=len(val_loader), ncols=100) as _tqdm:
-                        _tqdm.set_description(f"Fold {fold_idx + 1} epoch: {epoch}/{self.finetune_num_epochs}")
-                        for images, targets in val_loader:
-                            if self.device == "cuda":
-                                images = images.cuda()
-                                targets = targets.cuda().float()
-                            logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze(1)
-                            preds = (torch.sigmoid(logits_student) > 0.5).float()
-                            correct = (preds == targets).sum().item()
-                            prec1 = 100. * correct / images.size(0)
-                            n = images.size(0)
-                            meter_top1.update(prec1, n)
-                            _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
-                            _tqdm.update(1)
-                            time.sleep(0.01)
+            self.logger.info(f" => Best top1 accuracy before finetune : {self.best_prec1_before_finetune}")
+            self.logger.info(f" => Best top1 accuracy after finetune : {self.best_prec1_after_finetune}")
 
-                self.writer.add_scalar(f"fold_{fold_idx + 1}/finetune_val/acc/top1", meter_top1.avg, epoch)
-                self.logger.info(
-                    f"[Finetune_val Fold {fold_idx + 1}] Epoch {epoch} : Prec@1 {meter_top1.avg:.2f}"
-                )
+        self.logger.info("Finetune finished!")
+        self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
 
-                masks = [round(m.mask.mean().item(), 2) for m in self.student.mask_modules]
-                self.logger.info(f"[Mask avg Fold {fold_idx + 1}] Epoch {epoch} : {masks}")
-
-                self.start_epoch = epoch
-                if self.best_prec1_after_finetune < meter_top1.avg:
-                    self.best_prec1_after_finetune = meter_top1.avg
-                    self.save_student_ckpt(True, fold_idx)
-                else:
-                    self.save_student_ckpt(False, fold_idx)
-
-                self.logger.info(f"[Fold {fold_idx + 1}] Best top1 accuracy before finetune: {self.best_prec1_before_finetune}")
-                self.logger.info(f"[Fold {fold_idx + 1}] Best top1 accuracy after finetune: {self.best_prec1_after_finetune}")
-
-            fold_results.append({
-                'fold': fold_idx + 1,
-                'best_val_acc': self.best_prec1_after_finetune
-            })
-            self.logger.info(f"Fold {fold_idx + 1} finished with best val acc: {self.best_prec1_after_finetune:.2f}")
-
-        # گزارش میانگین نتایج
-        avg_val_acc = np.mean([result['best_val_acc'] for result in fold_results])
-        std_val_acc = np.std([result['best_val_acc'] for result in fold_results])
-        self.logger.info(f"\nK-Fold Cross Validation finetuning finished!")
-        self.logger.info(f"Average validation accuracy across {self.n_folds} folds: {avg_val_acc:.2f} ± {std_val_acc:.2f}")
-
-        # محاسبه و لاگ کردن FLOPs و Params برای بهترین مدل
+        # محاسبه و لاگ کردن FLOPs و Params
         try:
-            best_fold = max(fold_results, key=lambda x: x['best_val_acc'])['fold']
-            ckpt_path = os.path.join(self.result_dir, f"student_model_fold_{best_fold}", f"finetune_{self.arch}_sparse_fold_{best_fold}_best.pt")
-            ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-            self.student.load_state_dict(ckpt_student["student"])
-            
             (
                 Flops_baseline,
                 Flops,
@@ -395,4 +337,7 @@ class Finetune:
         self.result_init()
         self.setup_seed()
         self.dataload()
+        self.build_model()
+        self.define_loss()
+        self.define_optim()
         self.finetune()
