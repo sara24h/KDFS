@@ -14,6 +14,7 @@ class FaceDataset(Dataset):
         self.transform = transform
         self.img_column = img_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
+        self.missing_images = 0  # برای شمارش تصاویر گمشده
 
     def __len__(self):
         return len(self.data)
@@ -21,6 +22,7 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
+            self.missing_images += 1
             print(f"Warning: Image not found: {img_name}")
             image_size = 256 if '140k' in self.root_dir else 300
             image = Image.new('RGB', (image_size, image_size), color='black')
@@ -34,7 +36,10 @@ class FaceDataset(Dataset):
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
-class Dataset_selector:
+    def get_missing_images_count(self):
+        return self.missing_images
+
+class DatasetSelector:
     def __init__(
         self,
         dataset_mode,  # 'hardfake', 'rvf10k', or '140k'
@@ -93,7 +98,7 @@ class Dataset_selector:
             full_data = pd.read_csv(hardfake_csv_file)
 
             def create_image_path(row):
-                folder = 'fake' if row['label'] == 'fake' else 'real'
+                folder = 'fake' if row['label'] in [0, 'fake', 'Fake'] else 'real'
                 img_name = row['images_id']
                 img_name = os.path.basename(img_name)
                 if not img_name.endswith('.jpg'):
@@ -102,7 +107,7 @@ class Dataset_selector:
 
             full_data['images_id'] = full_data.apply(create_image_path, axis=1)
             root_dir = hardfake_root_dir
-            test_data = None  # تست جداگانه ندارد، بعداً می‌توانید از بخشی از داده‌ها استفاده کنید
+            test_data = None  # تست جداگانه ندارد
 
         elif dataset_mode == 'rvf10k':
             if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
@@ -168,10 +173,20 @@ class Dataset_selector:
                 num_workers=num_workers, pin_memory=pin_memory,
             )
 
+            # محاسبه آمار توزیع برچسب‌ها
+            train_labels = full_data.iloc[train_idx]['label'].map(self.label_map)
+            val_labels = full_data.iloc[val_idx]['label'].map(self.label_map)
+            train_real_count = sum(train_labels == 1)
+            train_fake_count = sum(train_labels == 0)
+            val_real_count = sum(val_labels == 1)
+            val_fake_count = sum(val_labels == 0)
+
             self.fold_loaders.append({
                 'fold': fold,
                 'train_loader': train_loader,
-                'val_loader': val_loader
+                'val_loader': val_loader,
+                'train_stats': {'real': train_real_count, 'fake': train_fake_count},
+                'val_stats': {'real': val_real_count, 'fake': val_fake_count}
             })
 
         # Create test DataLoader if available (only for 140k)
@@ -190,9 +205,11 @@ class Dataset_selector:
             fold = fold_data['fold']
             train_loader = fold_data['train_loader']
             val_loader = fold_data['val_loader']
+            train_stats = fold_data['train_stats']
+            val_stats = fold_data['val_stats']
             print(f"Fold {fold + 1}:")
-            print(f"  Train batches: {len(train_loader)}")
-            print(f"  Validation batches: {len(val_loader)}")
+            print(f"  Train batches: {len(train_loader)}, Real: {train_stats['real']}, Fake: {train_stats['fake']}")
+            print(f"  Validation batches: {len(val_loader)}, Real: {val_stats['real']}, Fake: {val_stats['fake']}")
 
         if self.loader_test:
             print(f"Test batches: {len(self.loader_test)}")
@@ -203,9 +220,14 @@ class Dataset_selector:
             except Exception as e:
                 print(f"Error loading sample test batch: {e}")
 
+        # گزارش تصاویر گمشده
+        print(f"Total missing images: {full_dataset.get_missing_images_count()}")
+        if self.loader_test:
+            print(f"Test dataset missing images: {test_dataset.get_missing_images_count()}")
+
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
-    dataset_hardfake = Dataset_selector(
+    dataset_hardfake = DatasetSelector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
@@ -215,7 +237,7 @@ if __name__ == "__main__":
     )
 
     # Example for rvf10k
-    dataset_rvf10k = Dataset_selector(
+    dataset_rvf10k = DatasetSelector(
         dataset_mode='rvf10k',
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
         rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
@@ -226,7 +248,7 @@ if __name__ == "__main__":
     )
 
     # Example for 140k Real and Fake Faces
-    dataset_140k = Dataset_selector(
+    dataset_140k = DatasetSelector(
         dataset_mode='140k',
         realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
         realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
