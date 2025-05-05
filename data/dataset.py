@@ -157,7 +157,7 @@ class Dataset_selector(Dataset):
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
         print(f"Total train+val dataset size: {len(train_val_data)}")
-        print(f"Train+val label distribution:\n{train_val_data['label'].value<|control349|>}")
+        print(f"Train+val label distribution:\n{train_val_data['label'].value_counts()}")
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
