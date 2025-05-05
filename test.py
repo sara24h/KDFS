@@ -14,13 +14,11 @@ class Test:
         self.dataset_dir = args.dataset_dir
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
-        self.arch = args.arch
+        self.arch = args.arch  # باید 'ResNet_50' باشد
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode
-        self.n_folds = args.n_folds if hasattr(args, 'n_folds') else 5
-        self.result_dir = args.result_dir
+        self.dataset_mode = args.dataset_mode  # 'hardfake' یا 'rvf10k'
 
     def dataload(self):
         print("==> Loading test dataset..")
@@ -48,51 +46,46 @@ class Test:
                     pin_memory=self.pin_memory,
                     ddp=False
                 )
+            
             self.test_loader = dataset.loader_test
             print(f"{self.dataset_mode} test dataset loaded! Total batches: {len(self.test_loader)}")
         except Exception as e:
             print(f"Error loading dataset: {str(e)}")
             raise
 
-    def build_model(self, fold_idx=None):
-        print(f"==> Building student model for fold {fold_idx + 1}..")
+    def build_model(self):
+        print("==> Building student model..")
         try:
+            print("Loading sparse student model")
             if self.dataset_mode == 'hardfake':
                 self.student = ResNet_50_sparse_hardfakevsreal()
             else:  # rvf10k
                 self.student = ResNet_50_sparse_rvf10k()
             
-            ckpt_path = os.path.join(
-                self.result_dir,
-                f"student_model_fold_{fold_idx + 1}",
-                f"finetune_{self.arch}_sparse_fold_{fold_idx + 1}_best.pt"
-            )
-            print(f"Loading checkpoint: {ckpt_path}")
-            ckpt_student = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+            ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
             state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
             self.student.load_state_dict(state_dict, strict=True)
             self.student.to(self.device)
-            print(f"Model for fold {fold_idx + 1} loaded on {self.device}")
-            return ckpt_student.get("best_prec1_after_finetune", 0)
+            print(f"Model loaded on {self.device}")
         except Exception as e:
-            print(f"Error building model for fold {fold_idx + 1}: {str(e)}")
+            print(f"Error building model: {str(e)}")
             raise
 
-    def test(self, fold_idx):
+    def test(self):
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True
+        self.student.ticket = True  # فعال کردن حالت ticket برای مدل sparse
         try:
             with torch.no_grad():
-                with tqdm(total=len(self.test_loader), ncols=100, desc=f"Test Fold {fold_idx + 1}") as _tqdm:
+                with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
                     for images, targets in self.test_loader:
                         images = images.to(self.device, non_blocking=True)
-                        targets = targets.to(self.device, non_blocking=True).float()
+                        targets = targets.to(self.device, non_blocking=True).float()  # تبدیل به float برای طبقه‌بندی باینری
                         
                         logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze()
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        logits_student = logits_student.squeeze()  # تبدیل به (batch_size,) برای طبقه‌بندی باینری
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()  # پیش‌بینی با sigmoid و آستانه 0.5
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
@@ -102,61 +95,34 @@ class Test:
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-            print(f"[Test Fold {fold_idx + 1}] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
-            return meter_top1.avg
+            print(f"[Test] Dataset: {self.dataset_mode}, Prec@1: {meter_top1.avg:.2f}%")
+
+            # محاسبه FLOPs و پارامترها
+            (
+                Flops_baseline,
+                Flops,
+                Flops_reduction,
+                Params_baseline,
+                Params,
+                Params_reduction,
+            ) = get_flops_and_params(args=self.args)
+            print(
+                f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
+                f"Params reduction: {Params_reduction:.2f}%"
+            )
+            print(
+                f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
+                f"Flops reduction: {Flops_reduction:.2f}%"
+            )
         except Exception as e:
-            print(f"Error during testing fold {fold_idx + 1}: {str(e)}")
+            print(f"Error during testing: {str(e)}")
             raise
 
     def main(self):
         try:
             self.dataload()
-            fold_results = []
-            best_fold = None
-            best_val_acc = 0
-
-            # تست برای هر فولد
-            for fold_idx in range(self.n_folds):
-                print(f"\nTesting Fold {fold_idx + 1}/{self.n_folds}")
-                val_acc = self.build_model(fold_idx)
-                test_acc = self.test(fold_idx)
-                fold_results.append({
-                    'fold': fold_idx + 1,
-                    'val_acc': val_acc,
-                    'test_acc': test_acc
-                })
-                
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    best_fold = fold_idx + 1
-
-            # گزارش بهترین فولد و تست آن
-            print(f"\nBest Fold: Fold {best_fold} with Validation Accuracy: {best_val_acc:.2f}%")
-            best_fold_result = next(result for result in fold_results if result['fold'] == best_fold)
-            print(f"Test Accuracy for Best Fold ({best_fold}): {best_fold_result['test_acc']:.2f}%")
-
-            # گزارش میانگین و انحراف معیار برای همه فولدها
-            test_accs = [result['test_acc'] for result in fold_results]
-            avg_test_acc = np.mean(test_accs)
-            std_test_acc = np.std(test_accs)
-            print(f"\nK-Fold Test Results:")
-            print(f"Average test accuracy across {self.n_folds} folds: {avg_test_acc:.2f} ± {std_test_acc:.2f}%")
-
-            # محاسبه FLOPs و پارامترها برای بهترین مدل
-            print(f"\nCalculating FLOPs and Params for best model (Fold {best_fold})")
-            self.build_model(best_fold - 1)
-            try:
-                Flops_baseline, Flops, Flops_reduction, Params_baseline, Params, Params_reduction = get_flops_and_params(args=self.args)
-                print(
-                    f"Params_baseline: {Params_baseline:.2f}M, Params: {Params:.2f}M, "
-                    f"Params reduction: {Params_reduction:.2f}%"
-                )
-                print(
-                    f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
-                    f"Flops reduction: {Flops_reduction:.2f}%"
-                )
-            except Exception as e:
-                print(f"Error calculating FLOPs and Params: {str(e)}")
+            self.build_model()
+            self.test()
         except Exception as e:
             print(f"Error in test pipeline: {str(e)}")
             raise
