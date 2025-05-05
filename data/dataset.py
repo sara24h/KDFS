@@ -6,31 +6,37 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
+
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None):
+    def __init__(self, data_frame, root_dir, transform=None, path_column='path'):
+        """
+        Initialize the FaceDataset.
+        
+        Args:
+            data_frame (pd.DataFrame): DataFrame containing image paths and labels.
+            root_dir (str): Root directory for image files.
+            transform (callable, optional): Transformations to apply to images.
+            path_column (str): Column name for image paths ('images_id' or 'path').
+        """
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
+        self.path_column = path_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.data['path'].iloc[idx])
+        img_name = os.path.join(self.root_dir, self.data[self.path_column].iloc[idx])
         if not os.path.exists(img_name):
-            print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if '140k' in self.root_dir else 300
-            image = Image.new('RGB', (image_size, image_size), color='black')
-            label = self.label_map[self.data['label'].iloc[idx]]
-            if self.transform:
-                image = self.transform(image)
-            return image, torch.tensor(label, dtype=torch.float)
+            raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
+
 
 class Dataset_selector(Dataset):
     def __init__(
@@ -47,10 +53,17 @@ class Dataset_selector(Dataset):
         realfake140k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
-        num_workers=8,
+        num_workers=4,  # Reduced to avoid potential issues
         pin_memory=True,
         ddp=False,
     ):
+        """
+        Initialize the Dataset_selector for loading hardfake, rvf10k, or 140k datasets.
+        
+        Args:
+            dataset_mode (str): Dataset to use ('hardfake', 'rvf10k', '140k').
+            ... (other parameters for file paths and DataLoader settings)
+        """
         if dataset_mode not in ['hardfake', 'rvf10k', '140k']:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
@@ -145,21 +158,41 @@ class Dataset_selector(Dataset):
             train_data = pd.read_csv(realfake140k_train_csv)
             val_data = pd.read_csv(realfake140k_valid_csv)
             test_data = pd.read_csv(realfake140k_test_csv)
-            # تنظیم مسیر پایه به دایرکتوری صحیح با خط تیره
+            # Set root directory with correct structure
             root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
 
-            # اطمینان از وجود ستون path
+            # Ensure 'path' column exists
             if 'path' not in train_data.columns:
                 raise ValueError("CSV files for 140k dataset must contain a 'path' column")
 
-            # مرتب‌سازی تصادفی داده‌ها برای اطمینان از توزیع متعادل
+            # Shuffle data for balanced distribution
             train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
+        # Filter out missing images
+        def filter_missing_images(data, root_dir, img_column):
+            valid_rows = []
+            for idx, row in data.iterrows():
+                img_path = os.path.join(root_dir, row[img_column])
+                if os.path.exists(img_path):
+                    valid_rows.append(row)
+                else:
+                    print(f"Skipping missing image: {img_path}")
+            return pd.DataFrame(valid_rows)
+
+        img_column = 'path' if dataset_mode == '140k' else 'images_id'
+        train_data = filter_missing_images(train_data, root_dir, img_column)
+        val_data = filter_missing_images(val_data, root_dir, img_column)
+        test_data = filter_missing_images(test_data, root_dir, img_column)
+
+        # Reset indices after filtering
+        train_data = train_data.reset_index(drop=True)
+        val_data = val_data.reset_index(drop=True)
+        test_data = test_data.reset_index(drop=True)
+
         # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
-        img_column = 'path' if dataset_mode == '140k' else 'images_id'
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
         print(f"Train label distribution:\n{train_data['label'].value_counts()}")
@@ -170,21 +203,11 @@ class Dataset_selector(Dataset):
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
-        # Check for missing images
-        for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
-            missing_images = []
-            for img_path in data[img_column]:
-                full_path = os.path.join(root_dir, img_path)
-                if not os.path.exists(full_path):
-                    missing_images.append(full_path)
-            if missing_images:
-                print(f"Missing {split} images: {len(missing_images)}")
-                print(f"Sample missing {split} images:", missing_images[:5])
-
         # Create datasets
-        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train)
-        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test)
-        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test)
+        path_column = 'path' if dataset_mode == '140k' else 'images_id'
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, path_column=path_column)
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, path_column=path_column)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, path_column=path_column)
 
         # Create data loaders
         if ddp:
@@ -210,7 +233,7 @@ class Dataset_selector(Dataset):
         self.loader_val = DataLoader(
             val_dataset,
             batch_size=eval_batch_size,
-            shuffle=True,  # موقتاً برای تست فعال شده
+            shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
@@ -218,7 +241,7 @@ class Dataset_selector(Dataset):
         self.loader_test = DataLoader(
             test_dataset,
             batch_size=eval_batch_size,
-            shuffle=True,  # موقتاً برای تست فعال شده
+            shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
@@ -237,14 +260,16 @@ class Dataset_selector(Dataset):
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
+
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
-        train_batch_size=64,  # به‌روزرسانی به 64
+        train_batch_size=64,
         eval_batch_size=64,
+        num_workers=4,
     )
 
     # Example for rvf10k
@@ -255,6 +280,7 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=64,
         eval_batch_size=64,
+        num_workers=4,
     )
 
     # Example for 140k Real and Fake Faces
@@ -266,4 +292,5 @@ if __name__ == "__main__":
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
+        num_workers=4,
     )
