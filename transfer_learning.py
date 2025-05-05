@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
 from torchvision import models
 from PIL import Image
@@ -11,25 +11,84 @@ import argparse
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from IPython.display import Image as IPImage, display
+try:
+    from IPython.display import Image as IPImage, display
+except ImportError:
+    IPImage = None
 from ptflops import get_model_complexity_info
 
-from data.dataset import FaceDataset, Dataset_selector
+# کلاس دیتاست سفارشی
+class FaceDataset(Dataset):
+    def __init__(self, csv_file, root_dir, transform=None):
+        self.data = pd.read_csv(csv_file)
+        self.root_dir = root_dir
+        self.transform = transform
 
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, self.data.iloc[idx]['images_id'])
+        image = Image.open(img_name).convert('RGB')
+        label = self.data.iloc[idx]['label']
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+# انتخاب‌گر دیتاست
+class Dataset_selector:
+    def __init__(self, dataset_mode, hardfake_csv_file=None, hardfake_root_dir=None,
+                 rvf10k_train_csv=None, rvf10k_valid_csv=None, rvf10k_root_dir=None,
+                 realfake140k_train_csv=None, realfake140k_valid_csv=None, realfake140k_test_csv=None,
+                 realfake140k_root_dir=None, train_batch_size=32, eval_batch_size=32,
+                 num_workers=4, pin_memory=True, ddp=False):
+        self.dataset_mode = dataset_mode
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+        # تعریف تبدیل‌ها
+        self.transform_train = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        self.transform_eval = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+        if dataset_mode == 'hardfake':
+            self.loader_train = DataLoader(
+                FaceDataset(hardfake_csv_file, hardfake_root_dir, self.transform_train),
+                batch_size=train_batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory
+            )
+            self.loader_val = DataLoader(
+                FaceDataset(hardfake_csv_file, hardfake_root_dir, self.transform_eval),
+                batch_size=eval_batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory
+            )
+            self.loader_test = self.loader_val  # برای hardfake، تست و اعتبارسنجی یکسان هستند
+        else:
+            raise ValueError("Only 'hardfake' dataset_mode is implemented in this code.")
+
+# تابع برای پار싱 آرگومان‌ها
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train ResNet50 and/or MobileNetV2 models for fake vs real face classification.')
-    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake', 'rvf10k', '140k'],
-                        help='Dataset to use: hardfake, rvf10k, or 140k')
+    parser = argparse.ArgumentParser(description='Train a ResNet50 model for fake vs real face classification.')
+    parser.add_argument('--model', type=str, default='resnet50', choices=['resnet50'],
+                        help='Model to use (default: resnet50)')
+    parser.add_argument('--dataset_mode', type=str, required=True, choices=['hardfake'],
+                        help='Dataset to use: hardfake')
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the dataset directory containing images and CSV file(s)')
-    parser.add_argument('--teacher_dir', type=str, default='teacher_dir',
-                        help='Directory to save the trained models and outputs')
-    parser.add_argument('--model', type=str, default='both', choices=['resnet50', 'mobilenetv2', 'both'],
-                        help='Model to train: resnet50, mobilenetv2, or both (default: both)')
-    parser.add_argument('--img_height', type=int, default=300,
-                        help='Height of input images (default: 300 for hardfake, 256 for rvf10k and 140k)')
-    parser.add_argument('--img_width', type=int, default=300,
-                        help='Width of input images (default: 300 for hardfake, 256 for rvf10k and 140k)')
+                        help='Path to the dataset directory containing images and CSV file')
+    parser.add_argument('--teacher_dir', type=str, default='/kaggle/working/teacher_dir',
+                        help='Directory to save the trained model and outputs')
+    parser.add_argument('--img_height', type=int, default=256,
+                        help='Height of input images')
+    parser.add_argument('--img_width', type=int, default=256,
+                        help='Width of input images')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=15,
@@ -38,126 +97,66 @@ def parse_args():
                         help='Learning rate for the optimizer')
     return parser.parse_args()
 
-args = parse_args()
+def main():
+    args = parse_args()
 
-# تنظیم پارامترها
-dataset_mode = args.dataset_mode
-data_dir = args.data_dir
-teacher_dir = args.teacher_dir
-model_choice = args.model
-img_height = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_height
-img_width = 256 if dataset_mode in ['rvf10k', '140k'] else args.img_width
-batch_size = args.batch_size
-epochs = args.epochs
-lr = args.lr
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # تنظیم پارامترها
+    dataset_mode = args.dataset_mode
+    data_dir = args.data_dir
+    teacher_dir = args.teacher_dir
+    img_height = args.img_height
+    img_width = args.img_width
+    batch_size = args.batch_size
+    epochs = args.epochs
+    lr = args.lr
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# بررسی وجود دایرکتوری‌ها
-if not os.path.exists(data_dir):
-    raise FileNotFoundError(f"Directory {data_dir} not found!")
-if not os.path.exists(teacher_dir):
-    os.makedirs(teacher_dir)
+    # بررسی وجود دایرکتوری‌ها
+    if not os.path.exists(data_dir):
+        raise FileNotFoundError(f"Directory {data_dir} not found!")
+    if not os.path.exists(teacher_dir):
+        os.makedirs(teacher_dir)
 
-# بارگذاری داده‌ها
-if dataset_mode == 'hardfake':
-    dataset = Dataset_selector(
-        dataset_mode='hardfake',
-        hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
-        hardfake_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == 'rvf10k':
-    dataset = Dataset_selector(
-        dataset_mode='rvf10k',
-        rvf10k_train_csv=os.path.join(data_dir, 'train.csv'),
-        rvf10k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        rvf10k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-elif dataset_mode == '140k':
-    dataset = Dataset_selector(
-        dataset_mode='140k',
-        realfake140k_train_csv=os.path.join(data_dir, 'train.csv'),
-        realfake140k_valid_csv=os.path.join(data_dir, 'valid.csv'),
-        realfake140k_test_csv=os.path.join(data_dir, 'test.csv'),
-        realfake140k_root_dir=data_dir,
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True,
-        ddp=False
-    )
-else:
-    raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', or '140k'.")
+    # بارگذاری داده‌ها
+    if dataset_mode == 'hardfake':
+        dataset = Dataset_selector(
+            dataset_mode='hardfake',
+            hardfake_csv_file=os.path.join(data_dir, 'data.csv'),
+            hardfake_root_dir=data_dir,
+            train_batch_size=batch_size,
+            eval_batch_size=batch_size,
+            num_workers=4,
+            pin_memory=True
+        )
+    else:
+        raise ValueError("Invalid dataset_mode. Choose 'hardfake'.")
 
-train_loader = dataset.loader_train
-val_loader = dataset.loader_val
-test_loader = dataset.loader_test
+    train_loader = dataset.loader_train
+    val_loader = dataset.loader_val
+    test_loader = dataset.loader_test
 
-# تعریف مدل‌ها
-models_dict = {}
-if model_choice in ['resnet50', 'both']:
-    # ResNet50
-    resnet50 = models.resnet50(weights='IMAGENET1K_V1')
-    num_ftrs_resnet = resnet50.fc.in_features
-    resnet50.fc = nn.Linear(num_ftrs_resnet, 1)
-    resnet50 = resnet50.to(device)
+    # تعریف مدل
+    model = models.resnet50(weights='IMAGENET1K_V1')
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 1)
+    model = model.to(device)
+
     # فریز کردن لایه‌ها
-    for param in resnet50.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-    for param in resnet50.layer4.parameters():
+    for param in model.layer4.parameters():
         param.requires_grad = True
-    for param in resnet50.fc.parameters():
+    for param in model.fc.parameters():
         param.requires_grad = True
-    models_dict['ResNet50'] = resnet50
 
-if model_choice in ['mobilenetv2', 'both']:
-    # MobileNetV2
-    mobilenet_v2 = models.mobilenet_v2(weights='IMAGENET1K_V1')
-    num_ftrs_mobile = mobilenet_v2.classifier[1].in_features
-    mobilenet_v2.classifier = nn.Sequential(
-        nn.Dropout(p=0.2),
-        nn.Linear(num_ftrs_mobile, 1)
-    )
-    mobilenet_v2 = mobilenet_v2.to(device)
-    # فریز کردن لایه‌ها
-    for param in mobilenet_v2.parameters():
-        param.requires_grad = False
-    for param in mobilenet_v2.features[18].parameters():
-        param.requires_grad = True
-    for param in mobilenet_v2.classifier.parameters():
-        param.requires_grad = True
-    models_dict['MobileNetV2'] = mobilenet_v2
-
-# تعریف معیار و بهینه‌ساز
-criterion = nn.BCEWithLogitsLoss()
-
-# بهینه‌سازها
-optimizers_dict = {}
-if 'ResNet50' in models_dict:
-    optimizer_resnet = optim.Adam([
-        {'params': models_dict['ResNet50'].layer4.parameters(), 'lr': 1e-5},
-        {'params': models_dict['ResNet50'].fc.parameters(), 'lr': lr}
+    # تعریف معیار و بهینه‌ساز
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam([
+        {'params': model.layer4.parameters(), 'lr': 1e-5},
+        {'params': model.fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
-    optimizers_dict['ResNet50'] = optimizer_resnet
 
-if 'MobileNetV2' in models_dict:
-    optimizer_mobile = optim.Adam([
-        {'params': models_dict['MobileNetV2'].features[18].parameters(), 'lr': 1e-5},
-        {'params': models_dict['MobileNetV2'].classifier.parameters(), 'lr': lr}
-    ], weight_decay=1e-4)
-    optimizers_dict['MobileNetV2'] = optimizer_mobile
-
-# تابع آموزش
-def train_model(model, optimizer, model_name):
+    # حلقه آموزش
     for epoch in range(epochs):
         model.train()
         running_loss = 0.0
@@ -172,14 +171,13 @@ def train_model(model, optimizer, model_name):
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct_train += (preds == labels).sum().item()
             total_train += labels.size(0)
 
         train_loss = running_loss / len(train_loader)
         train_accuracy = 100 * correct_train / total_train
-        print(f'{model_name} Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
+        print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
         # اعتبارسنجی
         model.eval()
@@ -199,12 +197,9 @@ def train_model(model, optimizer, model_name):
 
         val_loss = val_loss / len(val_loader)
         val_accuracy = 100 * correct_val / total_val
-        print(f'{model_name} Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
+        print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
-    return model
-
-# تابع تست
-def test_model(model, model_name):
+    # تست
     model.eval()
     test_loss = 0.0
     correct = 0
@@ -219,68 +214,76 @@ def test_model(model, model_name):
             preds = (torch.sigmoid(outputs) > 0.5).float()
             correct += (preds == labels).sum().item()
             total += labels.size(0)
-    test_loss_avg = test_loss / len(test_loader)
-    test_accuracy = 100 * correct / total
-    print(f'{model_name} Test Loss: {test_loss_avg:.4f}, Test Accuracy: {test_accuracy:.2f}%')
-    return test_loss_avg, test_accuracy
+    print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-def visualize_predictions(model, model_name):
+    # نمایش 20 تصویر نمونه
     val_data = dataset.loader_test.dataset.data
     transform_test = dataset.loader_test.dataset.transform
-    random_indices = random.sample(range(len(val_data)), min(20, len(val_data)))  # انتخاب 20 نمونه تصادفی
-    fig, axes = plt.subplots(4, 5, figsize=(20, 16))  # شبکه 4x5 برای 20 تصویر
+
+    # انتخاب تصادفی 20 شاخص معتبر
+    valid_indices = []
+    while len(valid_indices) < 20 and len(valid_indices) < len(val_data):
+        idx = random.randint(0, len(val_data)-1)
+        row = val_data.iloc[idx]
+        img_name = row['images_id']
+        img_path = os.path.join(data_dir, img_name)
+        if os.path.exists(img_path) and idx not in valid_indices:
+            valid_indices.append(idx)
+
+    if len(valid_indices) < 20:
+        print(f"Warning: Only {len(valid_indices)} valid images found.")
+
+    fig, axes = plt.subplots(4, 5, figsize=(20, 16))
     axes = axes.ravel()
 
     with torch.no_grad():
-        for i, idx in enumerate(random_indices):
+        for i, idx in enumerate(valid_indices):
             row = val_data.iloc[idx]
-            img_column = 'path' if dataset_mode == '140k' else 'images_id'
-            img_name = row[img_column]
+            img_name = row['images_id']
             label = row['label']
-            img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name) if dataset_mode == '140k' else os.path.join(data_dir, img_name)
-            if not os.path.exists(img_path):
-                print(f"Warning: Image not found: {img_path}")
+            img_path = os.path.join(data_dir, img_name)
+            try:
+                image = Image.open(img_path).convert('RGB')
+            except Exception as e:
+                print(f"Error loading image {img_path}: {e}")
                 axes[i].set_title("Image not found")
                 axes[i].axis('off')
                 continue
-            image = Image.open(img_path).convert('RGB')
             image_transformed = transform_test(image).unsqueeze(0).to(device)
             output = model(image_transformed).squeeze(1)
             prob = torch.sigmoid(output).item()
             predicted_label = 'real' if prob > 0.5 else 'fake'
             true_label = 'real' if label == 1 else 'fake'
             axes[i].imshow(image)
-            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
+            axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}\nProb: {prob:.2f}', fontsize=8)
             axes[i].axis('off')
-            print(f"{model_name} Image: {img_path}, True Label: {true_label}, Predicted: {predicted_label}")
+            print(f"Image {i+1}: {img_path}, True Label: {true_label}, Predicted: {predicted_label}, Probability: {prob:.2f}")
+
+    # خاموش کردن محورهای اضافی
+    for i in range(len(valid_indices), 20):
+        axes[i].axis('off')
 
     plt.tight_layout()
-    file_path = os.path.join(teacher_dir, f'test_samples_{model_name.lower()}_20.png')
+    file_path = os.path.join(teacher_dir, 'test_samples_20.png')
     plt.savefig(file_path)
-    display(IPImage(filename=file_path))
+    print(f"Saved 20 sample images to {file_path}")
 
-# آموزش مدل‌ها
-for model_name, model in models_dict.items():
-    print(f"\nTraining {model_name}...")
-    models_dict[model_name] = train_model(model, optimizers_dict[model_name], model_name)
+    # نمایش تصاویر در محیط‌های مختلف
+    try:
+        if IPImage:
+            display(IPImage(filename=file_path))  # برای Jupyter/Kaggle
+        else:
+            plt.show()  # برای محیط‌های غیر-Jupyter
+    except Exception as e:
+        print(f"Error displaying image: {e}. Please check the saved file at {file_path}")
 
-# تست مدل‌ها
-for model_name, model in models_dict.items():
-    print(f"\nTesting {model_name}...")
-    test_model(model, model_name)
+    # ذخیره مدل
+    torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model.pth'))
 
-# نمایش تصاویر نمونه
-for model_name, model in models_dict.items():
-    print(f"\nVisualizing {model_name} predictions...")
-    visualize_predictions(model, model_name)
-
-# ذخیره مدل‌ها
-for model_name, model in models_dict.items():
-    torch.save(model.state_dict(), os.path.join(teacher_dir, f'teacher_model_{model_name.lower()}.pth'))
-
-# محاسبه FLOPs و پارامترها
-for model_name, model in models_dict.items():
-    print(f"\n{model_name} Complexity:")
+    # محاسبه FLOPs و پارامترها
     flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
-    print(f'{model_name} FLOPs: {flops}')
-    print(f'{model_name} Parameters: {params}')
+    print('FLOPs:', flops)
+    print('Parameters:', params)
+
+if __name__ == '__main__':
+    main()
