@@ -172,7 +172,7 @@ class Train:
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             ddp=False,
-            k_folds=5,  # تعداد foldها
+            n_folds=5,  # تعداد foldها
             seed=self.seed
         )
 
