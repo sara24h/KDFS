@@ -2,7 +2,7 @@
 # Default values
 arch=ResNet_50
 result_dir=/kaggle/working/results/run_resnet50_imagenet_prune1
-teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model.pth
+teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth
 device=cuda
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
