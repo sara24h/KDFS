@@ -209,7 +209,7 @@ class Dataset_selector(Dataset):
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, path_column=path_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, path_column=path_column)
 
-        # Create data loaders
+        
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset, shuffle=True
@@ -237,7 +237,7 @@ class Dataset_selector(Dataset):
             shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
-            drop_last=True
+            
         )
 
         self.loader_test = DataLoader(
@@ -246,7 +246,7 @@ class Dataset_selector(Dataset):
             shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
-            drop_last=True
+            
         )
 
         # Debug: Print loader sizes
