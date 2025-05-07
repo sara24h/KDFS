@@ -228,6 +228,7 @@ class Dataset_selector(Dataset):
                 shuffle=True,
                 num_workers=num_workers,
                 pin_memory=pin_memory,
+                drop_last=True
             )
 
         self.loader_val = DataLoader(
@@ -236,6 +237,7 @@ class Dataset_selector(Dataset):
             shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
+            drop_last=True
         )
 
         self.loader_test = DataLoader(
@@ -244,6 +246,7 @@ class Dataset_selector(Dataset):
             shuffle=False,  # Changed to False for evaluation
             num_workers=num_workers,
             pin_memory=pin_memory,
+            drop_last=True
         )
 
         # Debug: Print loader sizes
