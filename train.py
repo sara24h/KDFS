@@ -303,13 +303,13 @@ class Train:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
-        self.scheduler_student_mask = scheduler.CosineAnnealingLR [Ideal Response] scheduler.CosineAnnealingLRWarmup(
+        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
             self.optim_mask,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
+            warmup_start_lr=self.warmup_start_lr, 
         )
 
     def resume_student_ckpt(self):
