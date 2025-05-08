@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torchvision import models
+from torch.cuda.amp import autocast, GradScaler  # اضافه کردن برای Mixed Precision
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
@@ -302,7 +303,7 @@ class Train:
             warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
-        self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
+        self.scheduler_student_mask = scheduler.CosineAnnealingLR [Ideal Response] scheduler.CosineAnnealingLRWarmup(
             self.optim_mask,
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
@@ -365,6 +366,9 @@ class Train:
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
 
+        # اضافه کردن GradScaler برای mixed precision
+        scaler = GradScaler()
+
         if self.resume:
             self.resume_student_ckpt()
 
@@ -382,7 +386,7 @@ class Train:
             meter_oriloss.reset()
             meter_kdloss.reset()
             meter_rcloss.reset()
-            meter_maskloss.reset()
+            meter_mask  meter_maskloss.reset()
             meter_loss.reset()
             meter_top1.reset()
 
@@ -402,37 +406,41 @@ class Train:
                         images = images.cuda()
                         targets = targets.cuda().float()
 
-                    logits_student, feature_list_student = self.student(images)
-                    logits_student = logits_student.squeeze(1)
-                    with torch.no_grad():
-                        logits_teacher, feature_list_teacher = self.teacher(images)
-                        logits_teacher = logits_teacher.squeeze(1)
+                    # استفاده از autocast برای forward pass و محاسبه loss
+                    with autocast():
+                        logits_student, feature_list_student = self.student(images)
+                        logits_student = logits_student.squeeze(1)
+                        with torch.no_grad():  # معلم نیازی به autocast نداره
+                            logits_teacher, feature_list_teacher = self.teacher(images)
+                            logits_teacher = logits_teacher.squeeze(1)
 
-                    ori_loss = self.ori_loss(logits_student, targets)
-                    kd_loss = self.kd_loss(logits_teacher, logits_student)
+                        ori_loss = self.ori_loss(logits_student, targets)
+                        kd_loss = self.kd_loss(logits_teacher, logits_student)
 
-                    rc_loss = torch.tensor(0, device=images.device)
-                    for i in range(len(feature_list_student)):
-                        rc_loss = rc_loss + self.rc_loss(
-                            feature_list_student[i], feature_list_teacher[i]
+                        rc_loss = torch.tensor(0, device=images.device)
+                        for i in range(len(feature_list_student)):
+                            rc_loss = rc_loss + self.rc_loss(
+                                feature_list_student[i], feature_list_teacher[i]
+                            )
+
+                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
+                        Flops = self.student.get_flops()
+                        mask_loss = self.mask_loss(
+                            Flops, Flops_baseline * (10**6), self.compress_rate
                         )
 
-                    Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
-                    Flops = self.student.get_flops()
-                    mask_loss = self.mask_loss(
-                        Flops, Flops_baseline * (10**6), self.compress_rate
-                    )
+                        total_loss = (
+                            ori_loss
+                            + self.coef_kdloss * kd_loss
+                            + self.coef_rcloss * rc_loss / len(feature_list_student)
+                            + self.coef_maskloss * mask_loss
+                        )
 
-                    total_loss = (
-                        ori_loss
-                        + self.coef_kdloss * kd_loss
-                        + self.coef_rcloss * rc_loss / len(feature_list_student)
-                        + self.coef_maskloss * mask_loss
-                    )
-
-                    total_loss.backward()
-                    self.optim_weight.step()
-                    self.optim_mask.step()
+                    # Backward با استفاده از scaler
+                    scaler.scale(total_loss).backward()
+                    scaler.step(self.optim_weight)  # به‌روزرسانی optim_weight
+                    scaler.step(self.optim_mask)   # به‌روزرسانی optim_mask
+                    scaler.update()  # به‌روزرسانی scaler
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
