@@ -366,7 +366,6 @@ class Train:
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
 
-
         scaler = GradScaler()
 
         if self.resume:
@@ -386,7 +385,7 @@ class Train:
             meter_oriloss.reset()
             meter_kdloss.reset()
             meter_rcloss.reset()
-            meter_maskloss.reset()  # اصلاح‌شده
+            meter_maskloss.reset()
             meter_loss.reset()
             meter_top1.reset()
 
@@ -406,11 +405,10 @@ class Train:
                         images = images.cuda()
                         targets = targets.cuda().float()
 
-       
                     with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
-                        with torch.no_grad():  # معلم نیازی به autocast نداره
+                        with torch.no_grad():
                             logits_teacher, feature_list_teacher = self.teacher(images)
                             logits_teacher = logits_teacher.squeeze(1)
 
@@ -421,7 +419,7 @@ class Train:
                         for i in range(len(feature_list_student)):
                             rc_loss = rc_loss + self.rc_loss(
                                 feature_list_student[i], feature_list_teacher[i]
-                            )
+                            ) 
 
                         Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
                         Flops = self.student.get_flops()
@@ -436,11 +434,10 @@ class Train:
                             + self.coef_maskloss * mask_loss
                         )
 
-            
                     scaler.scale(total_loss).backward()
-                    scaler.step(self.optim_weight)  # به‌روزرسانی optim_weight
-                    scaler.step(self.optim_mask)   # به‌روزرسانی optim_mask
-                    scaler.update()  # به‌روزرسانی scaler
+                    scaler.step(self.optim_weight)
+                    scaler.step(self.optim_mask)
+                    scaler.update()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
@@ -455,28 +452,17 @@ class Train:
                     meter_loss.update(total_loss.item(), n)
                     meter_top1.update(prec1, n)
 
-                    _tqdm.set_postfix(
-                        loss="{:.4f}".format(meter_loss.avg),
-                        train_acc="{:.4f}".format(meter_top1.avg),
-                     )
+                    if _tqdm.n % 100 == 0:  # فقط هر ۱۰۰ قدم لاگ کن
+                        _tqdm.set_postfix(
+                            loss="{:.4f}".format(meter_loss.avg),
+                            train_acc="{:.4f}".format(meter_top1.avg),
+                        )
                     _tqdm.update(1)
                     time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
             self.scheduler_student_mask.step()
-
-
-
-            self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
-            self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
-            self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
-            self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
-            self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
-            self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
-            self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.gumbel_temperature, global_step=epoch)
-            self.writer.add_scalar("train/Flops", Flops, global_step=epoch)
 
             self.logger.info(
                 "[Train] "
@@ -510,12 +496,14 @@ class Train:
                 "[Train model Flops] Epoch {0} : ".format(epoch)
                 + str(Flops.item() / (10**6))
                 + "M"
-            )
+             )
 
-            # Validation
+        # Validation
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
+            val_loss_total = 0.0
+            total_samples = 0
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -526,6 +514,9 @@ class Train:
                             targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
+                        val_loss = self.ori_loss(logits_student, targets)
+                        val_loss_total += val_loss.item() * images.size(0)
+                        total_samples += images.size(0)
 
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
@@ -533,22 +524,27 @@ class Train:
                         n = images.size(0)
                         meter_top1.update(prec1, n)
 
-                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
+                        if _tqdm.n % 100 == 0:  # فقط هر ۱۰۰ قدم لاگ کن
+                            _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
                         time.sleep(0.01)
 
-            Flops = self.student.get_flops()
-            self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
-
-            self.logger.info(
-                "[Val] "
-                "Epoch {0} : "
-                "Val_Acc {val_acc:.2f}".format(
-                    epoch,
-                    val_acc=meter_top1.avg,
+                val_loss_avg = val_loss_total / total_samples
+                self.logger.info(
+                    "[Val] "
+                    "Epoch {0} : "
+                    "Val_Acc {val_acc:.2f} "
+                    "Val_Loss {val_loss:.4f}".format(
+                        epoch,
+                        val_acc=meter_top1.avg,
+                        val_loss=val_loss_avg,
+                    )
                 )
-            )
+
+            Flops = self.student.get_flops()
+        # غیرفعال کردن لاگ‌های TensorBoard برای سرعت
+        # self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+        # self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
@@ -561,7 +557,7 @@ class Train:
                 + "M"
             )
 
-            # Save checkpoint based on validation accuracy
+        # Save checkpoint based on validation accuracy
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
