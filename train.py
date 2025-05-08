@@ -366,7 +366,7 @@ class Train:
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
 
-        # اضافه کردن GradScaler برای mixed precision
+
         scaler = GradScaler()
 
         if self.resume:
@@ -386,7 +386,7 @@ class Train:
             meter_oriloss.reset()
             meter_kdloss.reset()
             meter_rcloss.reset()
-            meter_mask  meter_maskloss.reset()
+            meter_maskloss.reset()  # اصلاح‌شده
             meter_loss.reset()
             meter_top1.reset()
 
@@ -406,7 +406,7 @@ class Train:
                         images = images.cuda()
                         targets = targets.cuda().float()
 
-                    # استفاده از autocast برای forward pass و محاسبه loss
+       
                     with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
@@ -436,7 +436,7 @@ class Train:
                             + self.coef_maskloss * mask_loss
                         )
 
-                    # Backward با استفاده از scaler
+            
                     scaler.scale(total_loss).backward()
                     scaler.step(self.optim_weight)  # به‌روزرسانی optim_weight
                     scaler.step(self.optim_mask)   # به‌روزرسانی optim_mask
@@ -458,13 +458,15 @@ class Train:
                     _tqdm.set_postfix(
                         loss="{:.4f}".format(meter_loss.avg),
                         train_acc="{:.4f}".format(meter_top1.avg),
-                    )
+                     )
                     _tqdm.update(1)
                     time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
             self.scheduler_student_mask.step()
+
+
 
             self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
             self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
