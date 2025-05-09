@@ -46,7 +46,7 @@ class FaceDataset(Dataset):
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
-# کلاس Dataset_selector با تغییرات جزئی
+# کلاس Dataset_selector بدون تغییر در بخش‌های اصلی
 class Dataset_selector(Dataset):
     def __init__(
         self,
@@ -183,13 +183,6 @@ class Dataset_selector(Dataset):
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, path_column=path_column, cache_size=10000)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, path_column=path_column, cache_size=10000)
 
-        # ذخیره دیتاست‌ها برای محاسبه میانگین و انحراف معیار کل دیتاست
-        self.train_data = train_data
-        self.val_data = val_data
-        self.test_data = test_data
-        self.root_dir = root_dir
-        self.path_column = path_column
-
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset, shuffle=True
@@ -297,27 +290,17 @@ if __name__ == "__main__":
     # لیست دیتاست‌ها
     dataset_selectors = [dataset_hardfake, dataset_rvf10k, dataset_140k]
 
-    # محاسبه و چاپ میانگین و انحراف معیار برای کل دیتاست
+    # محاسبه و چاپ میانگین و انحراف معیار برای داده‌های train هر دیتاست
     for dataset_selector in dataset_selectors:
-        # ترکیب داده‌های train، val، و test
-        combined_data = pd.concat([
-            dataset_selector.train_data,
-            dataset_selector.val_data,
-            dataset_selector.test_data
-        ], ignore_index=True)
+        # استفاده از دیتاست train
+        train_dataset = dataset_selector.loader_train.dataset
+        original_transform = train_dataset.transform  # ذخیره تبدیل اصلی
+        stats_transform = get_stats_transform(dataset_selector.dataset_mode)  # تنظیم تبدیل آماری
+        train_dataset.transform = stats_transform
 
-        # ایجاد دیتاست ترکیبی
-        stats_dataset = FaceDataset(
-            data_frame=combined_data,
-            root_dir=dataset_selector.root_dir,
-            transform=get_stats_transform(dataset_selector.dataset_mode),
-            path_column=dataset_selector.path_column,
-            cache_size=10000
-        )
-
-        # ایجاد DataLoader برای دیتاست ترکیبی
+        # ایجاد DataLoader برای داده‌های train
         stats_loader = DataLoader(
-            stats_dataset,
+            train_dataset,
             batch_size=128,  # اندازه دسته بزرگ برای سرعت بیشتر
             shuffle=False,
             num_workers=8,
@@ -327,7 +310,8 @@ if __name__ == "__main__":
 
         # محاسبه میانگین و انحراف معیار
         mean, std = compute_mean_std(stats_loader)
+        train_dataset.transform = original_transform  # بازگرداندن تبدیل اصلی
 
         # چاپ نتایج
-        print(f"{dataset_selector.dataset_mode} mean: {mean.tolist()}")
-        print(f"{dataset_selector.dataset_mode} std: {std.tolist()}")
+        print(f"{dataset_selector.dataset_mode} train mean: {mean.tolist()}")
+        print(f"{dataset_selector.dataset_mode} train std: {std.tolist()}")
