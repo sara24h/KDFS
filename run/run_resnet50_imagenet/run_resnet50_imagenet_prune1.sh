@@ -77,6 +77,7 @@ python /kaggle/working/KDFS/main.py \
     --arch "$arch" \
     --device "$device" \
     --result_dir "$result_dir" \
+    --teacher_ckpt_path "$teacher_ckpt_path" \  # Add this line to ensure consistency
     --finetune_student_ckpt_path "$result_dir/student_model/${arch}_sparse_best.pt" \
     --num_workers "$num_workers" \
     $( [ "$pin_memory" = "true" ] && echo "--pin_memory" ) \
