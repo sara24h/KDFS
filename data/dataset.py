@@ -6,7 +6,6 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
-
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
         self.data = data_frame
@@ -21,13 +20,18 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
-            raise FileNotFoundError(f"Image not found: {img_name}")
+            print(f"Warning: Image not found: {img_name}")
+            image_size = 256 if '140k' in self.root_dir else 300
+            image = Image.new('RGB', (image_size, image_size), color='black')
+            label = self.label_map[self.data['label'].iloc[idx]]
+            if self.transform:
+                image = self.transform(image)
+            return image, torch.tensor(label, dtype=torch.float)
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
-
 
 class Dataset_selector(Dataset):
     def __init__(
@@ -56,26 +60,6 @@ class Dataset_selector(Dataset):
         # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
 
-        # Define mean and std for each dataset
-        mean_std_dict = {
-            'hardfake': {
-                'mean': [0.5124, 0.4165, 0.3684],
-                'std': [0.2363, 0.2087, 0.2029]
-            },
-            'rvf10k': {
-                'mean': [0.5212, 0.4260, 0.3811],
-                'std': [0.2486, 0.2238, 0.2211]
-            },
-            '140k': {
-                'mean': [0.5207, 0.4258, 0.3806],
-                'std': [0.2490, 0.2239, 0.2212]
-            }
-        }
-
-        # Select mean and std based on dataset_mode
-        dataset_mean = mean_std_dict[dataset_mode]['mean']
-        dataset_std = mean_std_dict[dataset_mode]['std']
-
         # Define transforms
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
@@ -85,13 +69,13 @@ class Dataset_selector(Dataset):
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
             transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=dataset_mean, std=dataset_std),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
         transform_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=dataset_mean, std=dataset_std),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
         # Set img_column based on dataset_mode
@@ -227,7 +211,6 @@ class Dataset_selector(Dataset):
                 print(f"Sample {name} batch labels: {sample[1]}")
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
-
 
 if __name__ == "__main__":
     # Example for hardfakevsrealfaces
