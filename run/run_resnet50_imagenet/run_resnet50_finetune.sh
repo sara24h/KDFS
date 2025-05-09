@@ -22,10 +22,10 @@ finetune_warmup_start_lr_default=4e-8
 finetune_lr_decay_T_max_default=20
 finetune_lr_decay_eta_min_default=4e-8
 finetune_weight_decay_default=2e-5
-finetune_train_batch_size_default=8
-finetune_eval_batch_size_default=8
+finetune_train_batch_size_default=4
+finetune_eval_batch_size_default=4
 pin_memory_default="true"
-test_batch_size_default=32
+test_batch_size_default=16
 master_port_default="6681"
 
 # Parse command-line arguments
@@ -231,8 +231,22 @@ echo "Test batch size: $test_batch_size"
 echo "Pin memory: $pin_memory"
 echo "Master port: $master_port"
 
-# Run finetuning with torchrun
-CUDA_VISIBLE_DEVICES="$device" torchrun --nproc_per_node=4 --master_port "$master_port" /kaggle/working/KDFS/main.py \
+# Detect number of available GPUs
+NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l 2>/dev/null || echo 0)
+if [ "$NUM_GPUS" -eq 0 ]; then
+    echo "No GPUs detected. Falling back to CPU."
+    DEVICE="cpu"
+    NPROC_PER_NODE=1
+    RUN_COMMAND="python"
+else
+    echo "Detected $NUM_GPUS GPUs."
+    DEVICE="cuda"
+    NPROC_PER_NODE=$NUM_GPUS
+    RUN_COMMAND="torchrun --nproc_per_node=$NPROC_PER_NODE --master_port=$master_port"
+fi
+
+# Run finetuning
+$RUN_COMMAND /kaggle/working/KDFS/main.py \
     --phase finetune \
     --dataset_mode "$dataset_mode" \
     --dataset_dir "$dataset_dir" \
@@ -241,7 +255,7 @@ CUDA_VISIBLE_DEVICES="$device" torchrun --nproc_per_node=4 --master_port "$maste
     --realfake140k_valid_csv "$realfake140k_valid_csv" \
     --realfake140k_test_csv "$realfake140k_test_csv" \
     --arch "$arch" \
-    --device "$device" \
+    --device "$DEVICE" \
     --result_dir "$result_dir" \
     --teacher_ckpt_path "$teacher_ckpt_path" \
     --finetune_student_ckpt_path "$finetune_student_ckpt_path" \
