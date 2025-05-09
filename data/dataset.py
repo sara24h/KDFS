@@ -7,6 +7,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import cv2
 
+# کلاس FaceDataset بدون تغییر
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, path_column='path', cache_size=10000):
         self.data = data_frame
@@ -45,6 +46,7 @@ class FaceDataset(Dataset):
             image = self.transform(image)
         return image, torch.tensor(label, dtype=torch.float)
 
+# کلاس Dataset_selector با تغییرات جزئی
 class Dataset_selector(Dataset):
     def __init__(
         self,
@@ -60,7 +62,7 @@ class Dataset_selector(Dataset):
         realfake140k_root_dir=None,
         train_batch_size=32,
         eval_batch_size=32,
-        num_workers=8,  # افزایش به 8
+        num_workers=8,
         pin_memory=True,
         ddp=False,
     ):
@@ -70,7 +72,6 @@ class Dataset_selector(Dataset):
         self.dataset_mode = dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
 
-        # حفظ transform_train بدون تغییر
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -173,20 +174,21 @@ class Dataset_selector(Dataset):
         test_data = test_data.reset_index(drop=True)
 
         print(f"{dataset_mode} dataset statistics:")
-        print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
-        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
-        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
         print(f"Total validation dataset size: {len(val_data)}")
-        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
-        print(f"Sample test image paths:\n{test_data[img_column].head()}")
         print(f"Total test dataset size: {len(test_data)}")
-        print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
         path_column = 'path' if dataset_mode == '140k' else 'images_id'
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, path_column=path_column, cache_size=10000)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, path_column=path_column, cache_size=10000)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, path_column=path_column, cache_size=10000)
+
+        # ذخیره دیتاست‌ها برای محاسبه میانگین و انحراف معیار کل دیتاست
+        self.train_data = train_data
+        self.val_data = val_data
+        self.test_data = test_data
+        self.root_dir = root_dir
+        self.path_column = path_column
 
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -229,19 +231,39 @@ class Dataset_selector(Dataset):
             prefetch_factor=2,
         )
 
-        print(f"Train loader batches: {len(self.loader_train)}")
-        print(f"Validation loader batches: {len(self.loader_val)}")
-        print(f"Test loader batches: {len(self.loader_test)}")
+# تابع برای تعریف تبدیل آماری
+def get_stats_transform(dataset_mode):
+    if dataset_mode == 'hardfake':
+        image_size = (300, 300)
+    else:  # 'rvf10k' یا '140k'
+        image_size = (256, 256)
+    return transforms.Compose([
+        transforms.Resize(image_size),
+        transforms.ToTensor(),
+    ])
 
-        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
-            try:
-                sample = next(iter(loader))
-                print(f"Sample {name} batch image shape: {sample[0].shape}")
-                print(f"Sample {name} batch labels: {sample[1]}")
-            except Exception as e:
-                print(f"Error loading sample {name} batch: {e}")
+# تابع برای محاسبه میانگین و انحراف معیار
+def compute_mean_std(loader):
+    first_batch = next(iter(loader))
+    images, _ = first_batch
+    channels = images.shape[1]  # تعداد کانال‌ها (معمولاً 3 برای RGB)
+    sum_per_channel = torch.zeros(channels)
+    sum_sq_per_channel = torch.zeros(channels)
+    total_pixels = 0
+
+    for images, _ in loader:
+        batch_size = images.size(0)
+        images = images.view(batch_size, channels, -1)  # (batch_size, channels, height*width)
+        sum_per_channel += images.sum(dim=[0, 2])  # جمع روی batch و پیکسل‌ها
+        sum_sq_per_channel += (images ** 2).sum(dim=[0, 2])
+        total_pixels += batch_size * images.size(2)  # batch_size * (height * width)
+
+    mean_per_channel = sum_per_channel / total_pixels
+    std_per_channel = torch.sqrt((sum_sq_per_channel / total_pixels) - (mean_per_channel ** 2))
+    return mean_per_channel, std_per_channel
 
 if __name__ == "__main__":
+    # تعریف دیتاست‌ها
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
@@ -271,3 +293,41 @@ if __name__ == "__main__":
         eval_batch_size=128,
         num_workers=8,
     )
+
+    # لیست دیتاست‌ها
+    dataset_selectors = [dataset_hardfake, dataset_rvf10k, dataset_140k]
+
+    # محاسبه و چاپ میانگین و انحراف معیار برای کل دیتاست
+    for dataset_selector in dataset_selectors:
+        # ترکیب داده‌های train، val، و test
+        combined_data = pd.concat([
+            dataset_selector.train_data,
+            dataset_selector.val_data,
+            dataset_selector.test_data
+        ], ignore_index=True)
+
+        # ایجاد دیتاست ترکیبی
+        stats_dataset = FaceDataset(
+            data_frame=combined_data,
+            root_dir=dataset_selector.root_dir,
+            transform=get_stats_transform(dataset_selector.dataset_mode),
+            path_column=dataset_selector.path_column,
+            cache_size=10000
+        )
+
+        # ایجاد DataLoader برای دیتاست ترکیبی
+        stats_loader = DataLoader(
+            stats_dataset,
+            batch_size=128,  # اندازه دسته بزرگ برای سرعت بیشتر
+            shuffle=False,
+            num_workers=8,
+            pin_memory=True,
+            prefetch_factor=2,
+        )
+
+        # محاسبه میانگین و انحراف معیار
+        mean, std = compute_mean_std(stats_loader)
+
+        # چاپ نتایج
+        print(f"{dataset_selector.dataset_mode} mean: {mean.tolist()}")
+        print(f"{dataset_selector.dataset_mode} std: {std.tolist()}")
