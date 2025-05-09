@@ -89,28 +89,28 @@ python /kaggle/working/KDFS/main.py \
     "$@"
 
 # Debug: Print arguments passed to finetuning
-echo "Finetuning arguments: $@"
+#echo "Finetuning arguments: $@"
 
 # Run finetuning
-python /kaggle/working/KDFS/main.py \
-    --phase finetune \
-    --dataset_mode 140k \
-    --arch $arch \
-    --device $device \
-    --result_dir $result_dir \
-    --teacher_ckpt_path "$teacher_ckpt_path" \
-    --finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_best.pt" \
-    --num_workers 4 \
-    --pin_memory \
-    --seed 3407 \
-    --finetune_num_epochs 3 \
-    --finetune_lr 4e-6 \
-    --finetune_warmup_steps 5 \
-    --finetune_warmup_start_lr 4e-8 \
-    --finetune_lr_decay_T_max 20 \
-    --finetune_lr_decay_eta_min 4e-8 \
-    --finetune_weight_decay 2e-5 \
-    --finetune_train_batch_size 8 \
-    --finetune_eval_batch_size 8 \
-    --sparsed_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_best.pt" \
-    "$@"
+#python /kaggle/working/KDFS/main.py \
+ #   --phase finetune \
+  #  --dataset_mode 140k \
+   # --arch $arch \
+    #--device $device \
+    #--result_dir $result_dir \
+    #--teacher_ckpt_path "$teacher_ckpt_path" \
+    #--finetune_student_ckpt_path $result_dir"/student_model/"$arch"_sparse_best.pt" \
+    #--num_workers 4 \
+    #--pin_memory \
+    #--seed 3407 \
+    #--finetune_num_epochs 3 \
+    #--finetune_lr 4e-6 \
+    #--finetune_warmup_steps 5 \
+    #--finetune_warmup_start_lr 4e-8 \
+    #--finetune_lr_decay_T_max 20 \
+    #--finetune_lr_decay_eta_min 4e-8 \
+    #--finetune_weight_decay 2e-5 \
+    #--finetune_train_batch_size 8 \
+    #--finetune_eval_batch_size 8 \
+    #--sparsed_student_ckpt_path $result_dir"/student_model/finetune_"$arch"_sparse_best.pt" \
+    #"$@"
