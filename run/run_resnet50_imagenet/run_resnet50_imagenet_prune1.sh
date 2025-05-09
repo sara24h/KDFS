@@ -1,29 +1,46 @@
+#!/bin/bash
 
 # Default values
 arch=ResNet_50
 result_dir=/kaggle/working/results/run_resnet50_imagenet_prune1
-teacher_ckpt_path=/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth
 device=cuda
+teacher_ckpt_path_default=/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth
+
+# Parse command-line arguments for teacher_ckpt_path
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --teacher_ckpt_path)
+            teacher_ckpt_path="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Use default teacher_ckpt_path if not provided
+teacher_ckpt_path=${teacher_ckpt_path:-$teacher_ckpt_path_default}
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-
+# Check if teacher checkpoint exists
 if [ ! -f "$teacher_ckpt_path" ]; then
     echo "Error: Teacher checkpoint not found at $teacher_ckpt_path"
     exit 1
 fi
 
-
 mkdir -p $result_dir
 
+# Run training
 python /kaggle/working/KDFS/main.py \
     --phase train \
     --arch $arch \
     --device $device \
     --result_dir $result_dir \
-    --teacher_ckpt_path $teacher_ckpt_path \
+    --teacher_ckpt_path "$teacher_ckpt_path" \
     --num_workers 4 \
     --pin_memory \
     --seed 3407 \
