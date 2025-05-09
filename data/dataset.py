@@ -21,13 +21,7 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
-            print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if '140k' in self.root_dir else 300
-            image = Image.new('RGB', (image_size, image_size), color='black')
-            label = self.label_map[self.data['label'].iloc[idx]]
-            if self.transform:
-                image = self.transform(image)
-            return image, torch.tensor(label, dtype=torch.float)
+            raise FileNotFoundError(f"Image not found: {img_name}")
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
