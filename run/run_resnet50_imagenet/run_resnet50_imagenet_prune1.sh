@@ -5,6 +5,7 @@ arch=ResNet_50
 result_dir=/kaggle/working/results/run_resnet50_imagenet_prune1
 device=cuda
 teacher_ckpt_path_default=/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth
+resume_default=""
 
 # Parse command-line arguments
 while [ $# -gt 0 ]; do
@@ -13,14 +14,19 @@ while [ $# -gt 0 ]; do
             teacher_ckpt_path="$2"
             shift 2
             ;;
+        --resume)
+            resume="$2"
+            shift 2
+            ;;
         *)
             shift
             ;;
     esac
 done
 
-# Use default teacher_ckpt_path if not provided
+# Use default values if not provided
 teacher_ckpt_path=${teacher_ckpt_path:-$teacher_ckpt_path_default}
+resume=${resume:-$resume_default}
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
@@ -33,7 +39,16 @@ if [ ! -f "$teacher_ckpt_path" ]; then
     exit 1
 fi
 
+# Check if resume checkpoint exists (if provided)
+if [ -n "$resume" ] && [ ! -f "$resume" ]; then
+    echo "Error: Resume checkpoint not found at $resume"
+    exit 1
+fi
+
 mkdir -p $result_dir
+
+# Clear GPU memory
+python -c "import torch; torch.cuda.empty_cache()"
 
 # Run training
 python /kaggle/working/KDFS/main.py \
@@ -47,8 +62,8 @@ python /kaggle/working/KDFS/main.py \
     --device $device \
     --result_dir $result_dir \
     --teacher_ckpt_path "$teacher_ckpt_path" \
-    --resume /kaggle/input/kdfs-17-ordibehesht/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt \
-    --num_workers 4 \
+    --resume "$resume" \
+    --num_workers 2 \
     --pin_memory \
     --seed 3407 \
     --num_epochs 10 \
