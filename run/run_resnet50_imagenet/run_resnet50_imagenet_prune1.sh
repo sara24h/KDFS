@@ -39,6 +39,10 @@ mkdir -p $result_dir
 python /kaggle/working/KDFS/main.py \
     --phase train \
     --dataset_mode 140k \
+    --dataset_dir /kaggle/input/140k-real-and-fake-faces \
+    --realfake140k_train_csv /kaggle/input/140k-real-and-fake-faces/train.csv \
+    --realfake140k_valid_csv /kaggle/input/140k-real-and-fake-faces/valid.csv \
+    --realfake140k_test_csv /kaggle/input/140k-real-and-fake-faces/test.csv \
     --arch $arch \
     --device $device \
     --result_dir $result_dir \
