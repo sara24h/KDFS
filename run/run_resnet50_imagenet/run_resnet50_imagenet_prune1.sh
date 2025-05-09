@@ -50,6 +50,9 @@ mkdir -p $result_dir
 # Clear GPU memory
 python -c "import torch; torch.cuda.empty_cache()"
 
+# Debug: Print arguments passed to training
+echo "Training arguments: $@"
+
 # Run training
 python /kaggle/working/KDFS/main.py \
     --phase train \
@@ -66,7 +69,7 @@ python /kaggle/working/KDFS/main.py \
     --num_workers 2 \
     --pin_memory \
     --seed 3407 \
-    --num_epochs 10 \
+    --num_epochs 20 \
     --lr 0.006 \
     --warmup_steps 10 \
     --warmup_start_lr 4e-5 \
@@ -85,6 +88,9 @@ python /kaggle/working/KDFS/main.py \
     --compress_rate 0.68 \
     "$@"
 
+# Debug: Print arguments passed to finetuning
+echo "Finetuning arguments: $@"
+
 # Run finetuning
 python /kaggle/working/KDFS/main.py \
     --phase finetune \
@@ -97,7 +103,7 @@ python /kaggle/working/KDFS/main.py \
     --num_workers 4 \
     --pin_memory \
     --seed 3407 \
-    --finetune_num_epochs 6 \
+    --finetune_num_epochs 3 \
     --finetune_lr 4e-6 \
     --finetune_warmup_steps 5 \
     --finetune_warmup_start_lr 4e-8 \
