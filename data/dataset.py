@@ -80,13 +80,13 @@ class Dataset_selector(Dataset):
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
             transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=(0.512, 0.416, 0.368), std=(0.270, 0.240, 0.237)),
         ])
 
         transform_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=(0.512, 0.416, 0.368), std=(0.270, 0.240, 0.237)),
         ])
 
         if dataset_mode == 'hardfake':
