@@ -1,33 +1,32 @@
 #!/bin/bash
 
-# Default values
+# Default values for finetune
 arch_default="ResNet_50"
-result_dir_default="result/run_resnet50_imagenet_prune1"
-dataset_dir_default="dataset_imagenet"
-dataset_type_default="imagenet"
+dataset_mode_default="hardfake"
+dataset_dir_default="/kaggle/input/hardfakevsrealfaces"
+hardfake_csv_file_default="/kaggle/input/hardfakevsrealfaces/data.csv"
+realfake140k_train_csv_default="/kaggle/input/140k-real-and-fake-faces/train.csv"
+realfake140k_valid_csv_default="/kaggle/input/140k-real-and-fake-faces/valid.csv"
+realfake140k_test_csv_default="/kaggle/input/140k-real-and-fake-faces/test.csv"
+result_dir_default="/kaggle/working/results/run_resnet50_imagenet_prune1"
+device_default="cuda"
 teacher_ckpt_path_default="/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth"
-device_default="0,1,2,3"
-master_port_default="6681"
-num_workers_default=8
-pin_memory_default="true"
+finetune_student_ckpt_path_default="${result_dir_default}/student_model/${arch_default}_sparse_best.pt"
+sparsed_student_ckpt_path_default="${result_dir_default}/student_model/finetune_${arch_default}_sparse_best.pt"
+num_workers_default=2
 seed_default=3407
-num_epochs_default=250
-lr_default=4e-3
-warmup_steps_default=10
-warmup_start_lr_default=4e-5
-lr_decay_T_max_default=250
-lr_decay_eta_min_default=4e-5
-weight_decay_default=2e-5
-train_batch_size_default=256
-eval_batch_size_default=256
-target_temperature_default=3
-gumbel_start_temperature_default=1
-gumbel_end_temperature_default=0.1
-coef_kdloss_default=0.05
-coef_rcloss_default=1000
-coef_maskloss_default=10000
-compress_rate_default=0.68
-ddp_default="true"
+finetune_num_epochs_default=1
+finetune_lr_default=4e-6
+finetune_warmup_steps_default=5
+finetune_warmup_start_lr_default=4e-8
+finetune_lr_decay_T_max_default=20
+finetune_lr_decay_eta_min_default=4e-8
+finetune_weight_decay_default=2e-5
+finetune_train_batch_size_default=8
+finetune_eval_batch_size_default=8
+pin_memory_default="true"
+test_batch_size_default=32
+master_port_default="6681"
 
 # Parse command-line arguments
 while [ $# -gt 0 ]; do
@@ -36,108 +35,104 @@ while [ $# -gt 0 ]; do
             arch="$2"
             shift 2
             ;;
-        --result_dir)
-            result_dir="$2"
+        --dataset_mode)
+            dataset_mode="$2"
             shift 2
             ;;
         --dataset_dir)
             dataset_dir="$2"
             shift 2
             ;;
-        --dataset_type)
-            dataset_type="$2"
+        --hardfake_csv_file)
+            hardfake_csv_file="$2"
             shift 2
             ;;
-        --teacher_ckpt_path)
-            teacher_ckpt_path="$2"
+        --realfake140k_train_csv)
+            realfake140k_train_csv="$2"
+            shift 2
+            ;;
+        --realfake140k_valid_csv)
+            realfake140k_valid_csv="$2"
+            shift 2
+            ;;
+        --realfake140k_test_csv)
+            realfake140k_test_csv="$2"
+            shift 2
+            ;;
+        --result_dir)
+            result_dir="$2"
             shift 2
             ;;
         --device)
             device="$2"
             shift 2
             ;;
-        --master_port)
-            master_port="$2"
+        --teacher_ckpt_path)
+            teacher_ckpt_path="$2"
+            shift 2
+            ;;
+        --finetune_student_ckpt_path)
+            finetune_student_ckpt_path="$2"
+            shift 2
+            ;;
+        --sparsed_student_ckpt_path)
+            sparsed_student_ckpt_path="$2"
             shift 2
             ;;
         --num_workers)
             num_workers="$2"
             shift 2
             ;;
-        --pin_memory)
-            pin_memory="$2"
-            shift 2
-            ;;
         --seed)
             seed="$2"
             shift 2
             ;;
-        --num_epochs)
-            num_epochs="$2"
+        --finetune_num_epochs)
+            finetune_num_epochs="$2"
             shift 2
             ;;
-        --lr)
-            lr="$2"
+        --finetune_lr)
+            finetune_lr="$2"
             shift 2
             ;;
-        --warmup_steps)
-            warmup_steps="$2"
+        --finetune_warmup_steps)
+            finetune_warmup_steps="$2"
             shift 2
             ;;
-        --warmup_start_lr)
-            warmup_start_lr="$2"
+        --finetune_warmup_start_lr)
+            finetune_warmup_start_lr="$2"
             shift 2
             ;;
-        --lr_decay_T_max)
-            lr_decay_T_max="$2"
+        --finetune_lr_decay_T_max)
+            finetune_lr_decay_T_max="$2"
             shift 2
             ;;
-        --lr_decay_eta_min)
-            lr_decay_eta_min="$2"
+        --finetune_lr_decay_eta_min)
+            finetune_lr_decay_eta_min="$2"
             shift 2
             ;;
-        --weight_decay)
-            weight_decay="$2"
+        --finetune_weight_decay)
+            finetune_weight_decay="$2"
             shift 2
             ;;
-        --train_batch_size)
-            train_batch_size="$2"
+        --finetune_train_batch_size)
+            finetune_train_batch_size="$2"
             shift 2
             ;;
-        --eval_batch_size)
-            eval_batch_size="$2"
+        --finetune_eval_batch_size)
+            finetune_eval_batch_size="$2"
             shift 2
             ;;
-        --target_temperature)
-            target_temperature="$2"
+        --pin_memory)
+            pin_memory="$2"
             shift 2
             ;;
-        --gumbel_start_temperature)
-            gumbel_start_temperature="$2"
+        --test_batch_size)
+            test_batch_size="$2"
             shift 2
             ;;
-        --gumbel_end_temperature)
-            gumbel_end_temperature="$2"
-            shift 2
-            ;;
-        --coef_kdloss)
-            coef_kdloss="$2"
-            shift 2
-            ;;
-        --coef_rcloss)
-            coef_rcloss="$2"
-            shift 2
-            ;;
-        --coef_maskloss)
-            coef_maskloss="$2"
-            shift 2
-            ;;
-        --compress_rate)
-            compress_rate="$2"
-            shift 2
-            ;;
-        --ddp)
-            ddp="$2"
+        --master_port)
+            master_port="$2"
             shift 2
             ;;
         *)
@@ -148,32 +143,31 @@ done
 
 # Use default values if not provided
 arch=${arch:-$arch_default}
-result_dir=${result_dir:-$result_dir_default}
+dataset_mode=${dataset_mode:-$dataset_mode_default}
 dataset_dir=${dataset_dir:-$dataset_dir_default}
-dataset_type=${dataset_type:-$dataset_type_default}
-teacher_ckpt_path=${teacher_ckpt_path:-$teacher_ckpt_path_default}
+hardfake_csv_file=${hardfake_csv_file:-$hardfake_csv_file_default}
+realfake140k_train_csv=${realfake140k_train_csv:-$realfake140k_train_csv_default}
+realfake140k_valid_csv=${realfake140k_valid_csv:-$realfake140k_valid_csv_default}
+realfake140k_test_csv=${realfake140k_test_csv:-$realfake140k_test_csv_default}
+result_dir=${result_dir:-$result_dir_default}
 device=${device:-$device_default}
-master_port=${master_port:-$master_port_default}
+teacher_ckpt_path=${teacher_ckpt_path:-$teacher_ckpt_path_default}
+finetune_student_ckpt_path=${finetune_student_ckpt_path:-$finetune_student_ckpt_path_default}
+sparsed_student_ckpt_path=${sparsed_student_ckpt_path:-$sparsed_student_ckpt_path_default}
 num_workers=${num_workers:-$num_workers_default}
-pin_memory=${pin_memory:-$pin_memory_default}
 seed=${seed:-$seed_default}
-num_epochs=${num_epochs:-$num_epochs_default}
-lr=${lr:-$lr_default}
-warmup_steps=${warmup_steps:-$warmup_steps_default}
-warmup_start_lr=${warmup_start_lr:-$warmup_start_lr_default}
-lr_decay_T_max=${lr_decay_T_max:-$lr_decay_T_max_default}
-lr_decay_eta_min=${lr_decay_eta_min:-$lr_decay_eta_min_default}
-weight_decay=${weight_decay:-$weight_decay_default}
-train_batch_size=${train_batch_size:-$train_batch_size_default}
-eval_batch_size=${eval_batch_size:-$eval_batch_size_default}
-target_temperature=${target_temperature:-$target_temperature_default}
-gumbel_start_temperature=${gumbel_start_temperature:-$gumbel_start_temperature_default}
-gumbel_end_temperature=${gumbel_end_temperature:-$gumbel_end_temperature_default}
-coef_kdloss=${coef_kdloss:-$coef_kdloss_default}
-coef_rcloss=${coef_rcloss:-$coef_rcloss_default}
-coef_maskloss=${coef_maskloss:-$coef_maskloss_default}
-compress_rate=${compress_rate:-$compress_rate_default}
-ddp=${ddp:-$ddp_default}
+finetune_num_epochs=${finetune_num_epochs:-$finetune_num_epochs_default}
+finetune_lr=${finetune_lr:-$finetune_lr_default}
+finetune_warmup_steps=${finetune_warmup_steps:-$finetune_warmup_steps_default}
+finetune_warmup_start_lr=${finetune_warmup_start_lr:-$finetune_warmup_start_lr_default}
+finetune_lr_decay_T_max=${finetune_lr_decay_T_max:-$finetune_lr_decay_T_max_default}
+finetune_lr_decay_eta_min=${finetune_lr_decay_eta_min:-$finetune_lr_decay_eta_min_default}
+finetune_weight_decay=${finetune_weight_decay:-$finetune_weight_decay_default}
+finetune_train_batch_size=${finetune_train_batch_size:-$finetune_train_batch_size_default}
+finetune_eval_batch_size=${finetune_eval_batch_size:-$finetune_eval_batch_size_default}
+pin_memory=${pin_memory:-$pin_memory_default}
+test_batch_size=${test_batch_size:-$test_batch_size_default}
+master_port=${master_port:-$master_port_default}
 
 # Environment variables for CUDA
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -187,9 +181,18 @@ if [ ! -f "$teacher_ckpt_path" ]; then
     exit 1
 fi
 
-# Check if dataset directory exists
-if [ ! -d "$dataset_dir" ]; then
-    echo "Error: Dataset directory not found at $dataset_dir"
+# Check if finetune student checkpoint exists
+if [ ! -f "$finetune_student_ckpt_path" ]; then
+    echo "Error: Finetune student checkpoint not found at $finetune_student_ckpt_path"
+    exit 1
+fi
+
+# Check if dataset files exist
+if [ "$dataset_mode" = "hardfake" ] && [ ! -f "$hardfake_csv_file" ]; then
+    echo "Error: Hardfake CSV file not found at $hardfake_csv_file"
+    exit 1
+elif [ "$dataset_mode" = "140k" ] && { [ ! -f "$realfake140k_train_csv" ] || [ ! -f "$realfake140k_valid_csv" ] || [ ! -f "$realfake140k_test_csv" ]; }; then
+    echo "Error: One or more 140k dataset CSV files not found"
     exit 1
 fi
 
@@ -199,33 +202,61 @@ mkdir -p "$result_dir"
 # Clear GPU memory
 python -c "import torch; torch.cuda.empty_cache()"
 
-# Run training with torchrun
-CUDA_VISIBLE_DEVICES="$device" torchrun --nproc_per_node=4 --master_port "$master_port" main.py \
-    --phase train \
+# Debug: Print finetuning arguments
+echo "Finetuning arguments: $@"
+echo "Architecture: $arch"
+echo "Dataset mode: $dataset_mode"
+echo "Dataset directory: $dataset_dir"
+echo "Hardfake CSV: $hardfake_csv_file"
+echo "Train CSV (140k): $realfake140k_train_csv"
+echo "Valid CSV (140k): $realfake140k_valid_csv"
+echo "Test CSV (140k): $realfake140k_test_csv"
+echo "Result directory: $result_dir"
+echo "Device: $device"
+echo "Teacher checkpoint: $teacher_ckpt_path"
+echo "Finetune student checkpoint: $finetune_student_ckpt_path"
+echo "Sparsed student checkpoint: $sparsed_student_ckpt_path"
+echo "Number of workers: $num_workers"
+echo "Seed: $seed"
+echo "Finetune number of epochs: $finetune_num_epochs"
+echo "Finetune learning rate: $finetune_lr"
+echo "Finetune warmup steps: $finetune_warmup_steps"
+echo "Finetune warmup start LR: $finetune_warmup_start_lr"
+echo "Finetune LR decay T max: $finetune_lr_decay_T_max"
+echo "Finetune LR decay eta min: $finetune_lr_decay_eta_min"
+echo "Finetune weight decay: $finetune_weight_decay"
+echo "Finetune train batch size: $finetune_train_batch_size"
+echo "Finetune eval batch size: $finetune_eval_batch_size"
+echo "Test batch size: $test_batch_size"
+echo "Pin memory: $pin_memory"
+echo "Master port: $master_port"
+
+# Run finetuning with torchrun
+CUDA_VISIBLE_DEVICES="$device" torchrun --nproc_per_node=4 --master_port "$master_port" /kaggle/working/KDFS/main.py \
+    --phase finetune \
+    --dataset_mode "$dataset_mode" \
     --dataset_dir "$dataset_dir" \
-    --dataset_type "$dataset_type" \
-    --num_workers "$num_workers" \
-    $( [ "$pin_memory" = "true" ] && echo "--pin_memory" ) \
-    --device cuda \
+    --hardfake_csv_file "$hardfake_csv_file" \
+    --realfake140k_train_csv "$realfake140k_train_csv" \
+    --realfake140k_valid_csv "$realfake140k_valid_csv" \
+    --realfake140k_test_csv "$realfake140k_test_csv" \
     --arch "$arch" \
-    --seed "$seed" \
+    --device "$device" \
     --result_dir "$result_dir" \
     --teacher_ckpt_path "$teacher_ckpt_path" \
-    --num_epochs "$num_epochs" \
-    --lr "$lr" \
-    --warmup_steps "$warmup_steps" \
-    --warmup_start_lr "$warmup_start_lr" \
-    --lr_decay_T_max "$lr_decay_T_max" \
-    --lr_decay_eta_min "$lr_decay_eta_min" \
-    --weight_decay "$weight_decay" \
-    --train_batch_size "$train_batch_size" \
-    --eval_batch_size "$eval_batch_size" \
-    --target_temperature "$target_temperature" \
-    --gumbel_start_temperature "$gumbel_start_temperature" \
-    --gumbel_end_temperature "$gumbel_end_temperature" \
-    --coef_kdloss "$coef_kdloss" \
-    --coef_rcloss "$coef_rcloss" \
-    --coef_maskloss "$coef_maskloss" \
-    --compress_rate "$compress_rate" \
-    $( [ "$ddp" = "true" ] && echo "--ddp" ) \
+    --finetune_student_ckpt_path "$finetune_student_ckpt_path" \
+    --sparsed_student_ckpt_path "$sparsed_student_ckpt_path" \
+    --num_workers "$num_workers" \
+    $( [ "$pin_memory" = "true" ] && echo "--pin_memory" ) \
+    --seed "$seed" \
+    --finetune_num_epochs "$finetune_num_epochs" \
+    --finetune_lr "$finetune_lr" \
+    --finetune_warmup_steps "$finetune_warmup_steps" \
+    --finetune_warmup_start_lr "$finetune_warmup_start_lr" \
+    --finetune_lr_decay_T_max "$finetune_lr_decay_T_max" \
+    --finetune_lr_decay_eta_min "$finetune_lr_decay_eta_min" \
+    --finetune_weight_decay "$finetune_weight_decay" \
+    --finetune_train_batch_size "$finetune_train_batch_size" \
+    --finetune_eval_batch_size "$finetune_eval_batch_size" \
+    --test_batch_size "$test_batch_size" \
     "$@"
