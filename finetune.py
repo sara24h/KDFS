@@ -1,18 +1,21 @@
+import os
+import json
+import random
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import autocast, GradScaler  # اضافه کردن ماژول‌های Mixed Precision
-import os
-import json
-import random
-import numpy as np
+from torch.amp import autocast, GradScaler  # Updated AMP import
 from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+
+# Suppress XLA/CUDA factory warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 class Finetune:
     def __init__(self, args):
@@ -48,7 +51,7 @@ class Finetune:
 
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
-        self.scaler = GradScaler() if self.device == "cuda" else None  # اضافه کردن GradScaler برای Mixed Precision
+        self.scaler = torch.amp.GradScaler('cuda') if self.device == "cuda" else None  # Updated GradScaler
 
     def result_init(self):
         self.writer = SummaryWriter(self.result_dir)
@@ -64,7 +67,6 @@ class Finetune:
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -132,7 +134,10 @@ class Finetune:
         self.logger.info("==> Building model..")
         self.logger.info("Loading student model")
         if not os.path.exists(self.finetune_student_ckpt_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
+            raise FileNotFoundError(
+                f"Student checkpoint not found at {self.finetune_student_ckpt_path}. "
+                f"Please ensure the checkpoint exists or provide a valid path."
+            )
         if self.dataset_mode == "hardfake":
             self.student = ResNet_50_sparse_hardfakevsreal()
         else:  # rvf10k or 140k
@@ -217,7 +222,7 @@ class Finetune:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
-            # آموزش
+            # Training
             self.student.train()
             self.student.ticket = True
             meter_oriloss.reset()
@@ -237,7 +242,7 @@ class Finetune:
                         images = images.cuda()
                         targets = targets.cuda().float()
                     
-                    with autocast(enabled=self.device == "cuda"):  # فعال‌سازی Mixed Precision
+                    with torch.amp.autocast('cuda', enabled=self.device == "cuda"):  # Updated autocast
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         ori_loss = self.ori_loss(logits_student, targets)
@@ -281,7 +286,7 @@ class Finetune:
                 f"Prec@1 {meter_top1.avg:.2f}"
             )
 
-            # اعتبارسنجی
+            # Validation
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
@@ -292,7 +297,7 @@ class Finetune:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-                        with autocast(enabled=self.device == "cuda"):  # Mixed Precision برای اعتبارسنجی
+                        with torch.amp.autocast('cuda', enabled=self.device == "cuda"):  # Updated autocast
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
@@ -319,11 +324,11 @@ class Finetune:
             else:
                 self.save_student_ckpt(False)
 
-            self.logger.info(f" => Best top1 accuracy before finetune : {self.best_prec1_before_finetune}")
-            self.logger.info(f" => Best top1 accuracy after finetune : {self Roscher Precision: {:.2f}%".format(self.best_prec1_after_finetune))
+            self.logger.info(f" => Best top1 accuracy before finetune: {self.best_prec1_before_finetune:.2f}%")
+            self.logger.info(f" => Best top1 accuracy after finetune: {self.best_prec1_after_finetune:.2f}%")
 
         self.logger.info("Finetune finished!")
-        self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
+        self.logger.info(f"Best top1 accuracy: {self.best_prec1_after_finetune:.2f}%")
 
         try:
             (
