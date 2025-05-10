@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 dataset_dir=${DATASET_DIR:-/kaggle/input/140k-real-and-fake-faces}  # مسیر دیتاست را تنظیم کنید
-dataset_type=${DATASET_TYPE:-140k}  # نوع دیتاست: hardfake, rvf10k, یا 140k
+dataset_mode=${DATASET_MODE:-140k}  # نوع دیتاست: hardfake, rvf10k, یا 140k
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
@@ -54,7 +54,7 @@ mkdir -p "$result_dir"
 torchrun --nproc_per_node=2 --master_port="$master_port" /kaggle/working/KDFS/main.py \
     --phase train \
     --dataset_dir "$dataset_dir" \
-    --dataset_type "$dataset_type" \
+    --dataset_mode "$dataset_mode" \
     --arch "$arch" \
     --device cuda \
     --result_dir "$result_dir" \
@@ -90,7 +90,7 @@ fi
 torchrun --nproc_per_node=2 --master_port="$master_port" /kaggle/working/KDFS/main.py \
     --phase finetune \
     --dataset_dir "$dataset_dir" \
-    --dataset_type "$dataset_type" \
+    --dataset_mode "$dataset_mode" \
     --arch "$arch" \
     --device cuda \
     --result_dir "$result_dir" \
