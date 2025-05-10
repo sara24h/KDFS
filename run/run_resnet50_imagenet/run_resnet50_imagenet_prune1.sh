@@ -3,9 +3,9 @@
 # Default values (aligned with training config from logs)
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
-dataset_dir=${DATASET_DIR:-/kaggle/input/140k-real-and-fake-faces}  # مسیر دیتاست را تنظیم کنید
-dataset_mode=${DATASET_MODE:-140k}  # نوع دیتاست: hardfake, rvf10k, یا 140k
-teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
+dataset_dir=${DATASET_DIR:-/kaggle/input/140k-real-and-fake-faces}
+dataset_mode=${DATASET_MODE:-140k}
+teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/input/kdfs-20-ordibehesht/KDFS/teacher_dir/teacher_model_best.pth}  # مسیر پیش‌فرض
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -25,21 +25,37 @@ coef_rcloss=${COEF_RCLOSS:-1.0}
 compress_rate=${COMPRESS_RATE:-0.3}
 finetune_num_epochs=${FINETUNE_NUM_EPOCHS:-6}
 finetune_lr=${FINETUNE_LR:-4e-06}
-finetune_warmup_steps=${FINETUNE_WARMUP_STEPS:-5}
+finetune_wamp_steps=${FINETUNE_WAMP_STEPS:-5}  # اصلاح typo: wamp -> warmup
 finetune_warmup_start_lr=${FINETUNE_WARMUP_START_LR:-4e-08}
 finetune_lr_decay_T_max=${FINETUNE_LR_DECAY_T_MAX:-20}
 finetune_lr_decay_eta_min=${FINETUNE_LR_DECAY_ETA_MIN:-4e-08}
 finetune_weight_decay=${FINETUNE_WEIGHT_DECAY:-2e-05}
 finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-8}
 finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
-master_port=${MASTER_PORT:-6681}  # استفاده از پورت 6681 مطابق کد قبلی
+master_port=${MASTER_PORT:-6681}
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES=0,1  # استفاده از دو GPU T4
+export CUDA_VISIBLE_DEVICES=0,1
+
+# Process command-line arguments to override defaults
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --teacher_ckpt_path)
+      teacher_ckpt_path="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Debug: Print teacher_ckpt_path to verify
+echo "Debug: Using teacher_ckpt_path: $teacher_ckpt_path"
 
 # Check if teacher checkpoint exists
 if [ ! -f "$teacher_ckpt_path" ]; then
@@ -101,7 +117,7 @@ torchrun --nproc_per_node=2 --master_port="$master_port" /kaggle/working/KDFS/ma
     --seed "$seed" \
     --finetune_num_epochs "$finetune_num_epochs" \
     --finetune_lr "$finetune_lr" \
-    --finetune_warmup_steps "$finetune_warmup_steps" \
+    --finetune_warmup_steps "$finetune_wamp_steps" \
     --finetune_warmup_start_lr "$finetune_warmup_start_lr" \
     --finetune_lr_decay_T_max "$finetune_lr_decay_T_max" \
     --finetune_lr_decay_eta_min "$finetune_lr_decay_eta_min" \
