@@ -461,7 +461,7 @@ class Train:
                         train_acc="{:.4f}".format(meter_top1.avg),
                      )
                     _tqdm.update(1)
-                    time.sleep(0.01)
+                    #time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
@@ -536,7 +536,7 @@ class Train:
 
                         _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
-                        time.sleep(0.01)
+                        #time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
@@ -598,7 +598,7 @@ class Train:
 
                     _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
                     _tqdm.update(1)
-                    time.sleep(0.01)
+                    #time.sleep(0.01)
 
         Flops = self.student.get_flops()
         self.logger.info(
