@@ -152,12 +152,12 @@ class ResNet(nn.Module):
 
 
 def ResNet_18_imagenet():
-    return ResNet(block=BasicBlock, num_blocks=[2, 2, 2, 2], num_classes=2)
+    return ResNet(block=BasicBlock, num_blocks=[2, 2, 2, 2], num_classes=1)
 
 
 def ResNet_34_imagenet():
-    return ResNet(block=BasicBlock, num_blocks=[3, 4, 6, 3], num_classes=2)
+    return ResNet(block=BasicBlock, num_blocks=[3, 4, 6, 3], num_classes=1)
 
 
 def ResNet_50_hardfakevsreal():
-    return ResNet(block=Bottleneck, num_blocks=[3, 4, 6, 3], num_classes=2)
+    return ResNet(block=Bottleneck, num_blocks=[3, 4, 6, 3], num_classes=1)
