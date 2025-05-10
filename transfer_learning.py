@@ -3,9 +3,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchvision import transforms, models
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler 
-import torchvision.transforms, models
+#import torchvision.transforms, models
 from PIL import Image
 import argparse
 import random
