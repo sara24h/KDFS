@@ -6,13 +6,12 @@ import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
-# کلاس‌های FaceDataset و Dataset_selector (از کد خودتون)
 class FaceDataset(Dataset):
     def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column
+        self.img_column = img_column  # Dynamic column name
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
@@ -37,7 +36,7 @@ class FaceDataset(Dataset):
 class Dataset_selector(Dataset):
     def __init__(
         self,
-        dataset_mode,
+        dataset_mode,  # 'hardfake', 'rvf10k', or '140k'
         hardfake_csv_file=None,
         hardfake_root_dir=None,
         rvf10k_train_csv=None,
@@ -57,8 +56,22 @@ class Dataset_selector(Dataset):
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
 
         self.dataset_mode = dataset_mode
+
+        # Define image size based on dataset_mode
         image_size = (256, 256) if dataset_mode in ['rvf10k', '140k'] else (300, 300)
 
+        # Define mean and std based on dataset_mode
+        if dataset_mode == 'hardfake':
+            mean = (0.5124, 0.4165, 0.3684)
+            std = (0.2363, 0.2087, 0.2029)
+        elif dataset_mode == 'rvf10k':
+            mean = (0.5212, 0.4260, 0.3811)
+            std = (0.2486, 0.2238, 0.2211)
+        else:  # dataset_mode == '140k'
+            mean = (0.5207, 0.4258, 0.3806)
+            std = (0.2490, 0.2239, 0.2212)
+
+        # Define transforms
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -67,17 +80,19 @@ class Dataset_selector(Dataset):
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
             transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=mean, std=std),
         ])
 
         transform_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=mean, std=std),
         ])
 
+        # Set img_column based on dataset_mode
         img_column = 'path' if dataset_mode == '140k' else 'images_id'
 
+        # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
             if not hardfake_csv_file or not hardfake_root_dir:
                 raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
@@ -128,7 +143,7 @@ class Dataset_selector(Dataset):
             test_data = test_data.reset_index(drop=True)
             root_dir = rvf10k_root_dir
 
-        else:
+        else:  # dataset_mode == '140k'
             if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
                 raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
             train_data = pd.read_csv(realfake140k_train_csv)
@@ -143,6 +158,7 @@ class Dataset_selector(Dataset):
             val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
             test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
 
+        # Debug: Print data statistics
         print(f"{dataset_mode} dataset statistics:")
         print(f"Sample train image paths:\n{train_data[img_column].head()}")
         print(f"Total train dataset size: {len(train_data)}")
@@ -154,6 +170,7 @@ class Dataset_selector(Dataset):
         print(f"Total test dataset size: {len(test_data)}")
         print(f"Test label distribution:\n{test_data['label'].value_counts()}")
 
+        # Check for missing images
         for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
             missing_images = []
             for img_path in data[img_column]:
@@ -164,36 +181,67 @@ class Dataset_selector(Dataset):
                 print(f"Missing {split} images: {len(missing_images)}")
                 print(f"Sample missing {split} images:", missing_images[:5])
 
+        # Create datasets
         train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
         val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
         test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
 
+        # Create data loaders with DDP support for all loaders
         if ddp:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
+            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
+            
             self.loader_train = DataLoader(
-                train_dataset, batch_size=train_batch_size, num_workers=num_workers,
-                pin_memory=pin_memory, sampler=train_sampler,
+                train_dataset, 
+                batch_size=train_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=train_sampler,
+            )
+            self.loader_val = DataLoader(
+                val_dataset, 
+                batch_size=eval_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=val_sampler,
+            )
+            self.loader_test = DataLoader(
+                test_dataset, 
+                batch_size=eval_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=test_sampler,
             )
         else:
             self.loader_train = DataLoader(
-                train_dataset, batch_size=train_batch_size, shuffle=True,
-                num_workers=num_workers, pin_memory=pin_memory,
+                train_dataset, 
+                batch_size=train_batch_size, 
+                shuffle=True,
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
+            )
+            self.loader_val = DataLoader(
+                val_dataset, 
+                batch_size=eval_batch_size, 
+                shuffle=False,
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
+            )
+            self.loader_test = DataLoader(
+                test_dataset, 
+                batch_size=eval_batch_size, 
+                shuffle=False,
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
             )
 
-        self.loader_val = DataLoader(
-            val_dataset, batch_size=eval_batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=pin_memory,
-        )
-
-        self.loader_test = DataLoader(
-            test_dataset, batch_size=eval_batch_size, shuffle=True,
-            num_workers=num_workers, pin_memory=pin_memory,
-        )
-
+        # Debug: Print loader sizes
         print(f"Train loader batches: {len(self.loader_train)}")
         print(f"Validation loader batches: {len(self.loader_val)}")
         print(f"Test loader batches: {len(self.loader_test)}")
 
+        # Test a sample batch
         for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
                 sample = next(iter(loader))
@@ -202,33 +250,18 @@ class Dataset_selector(Dataset):
             except Exception as e:
                 print(f"Error loading sample {name} batch: {e}")
 
-# تابع محاسبه mean و std
-def compute_mean_std(loader):
-    mean = 0.0
-    std = 0.0
-    total_images = 0
-
-    for images, _ in loader:
-        batch_samples = images.size(0)
-        images = images.view(batch_samples, images.size(1), -1)
-        mean += images.mean(2).sum(0)
-        std += images.std(2).sum(0)
-        total_images += batch_samples
-
-    mean /= total_images
-    std /= total_images
-    return mean, std
-
 if __name__ == "__main__":
-    # ساخت نمونه‌های Dataset_selector
+    # Example for hardfakevsrealfaces
     dataset_hardfake = Dataset_selector(
         dataset_mode='hardfake',
         hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
         hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
         train_batch_size=64,
         eval_batch_size=64,
+        ddp=True,  # Enable DDP
     )
 
+    # Example for rvf10k
     dataset_rvf10k = Dataset_selector(
         dataset_mode='rvf10k',
         rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
@@ -236,8 +269,10 @@ if __name__ == "__main__":
         rvf10k_root_dir='/kaggle/input/rvf10k',
         train_batch_size=64,
         eval_batch_size=64,
+        ddp=True,  # Enable DDP
     )
 
+    # Example for 140k Real and Fake Faces
     dataset_140k = Dataset_selector(
         dataset_mode='140k',
         realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
@@ -246,61 +281,5 @@ if __name__ == "__main__":
         realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
         train_batch_size=64,
         eval_batch_size=64,
+        ddp=True,  # Enable DDP
     )
-
-    # محاسبه برای hardfake
-    image_size = (300, 300)
-    transform_for_stats = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-    ])
-    train_dataset_for_stats = FaceDataset(
-        data_frame=dataset_hardfake.loader_train.dataset.data,
-        root_dir=dataset_hardfake.loader_train.dataset.root_dir,
-        transform=transform_for_stats,
-        img_column=dataset_hardfake.loader_train.dataset.img_column
-    )
-    loader_for_stats = DataLoader(
-        train_dataset_for_stats, batch_size=64, shuffle=False, num_workers=8, pin_memory=True
-    )
-    print(f"Number of training samples for hardfake: {len(train_dataset_for_stats)}")
-    mean_hardfake, std_hardfake = compute_mean_std(loader_for_stats)
-    print(f"Hardfake dataset: mean={mean_hardfake}, std={std_hardfake}")
-
-    # محاسبه برای rvf10k
-    image_size = (256, 256)
-    transform_for_stats = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-    ])
-    train_dataset_for_stats = FaceDataset(
-        data_frame=dataset_rvf10k.loader_train.dataset.data,
-        root_dir=dataset_rvf10k.loader_train.dataset.root_dir,
-        transform=transform_for_stats,
-        img_column=dataset_rvf10k.loader_train.dataset.img_column
-    )
-    loader_for_stats = DataLoader(
-        train_dataset_for_stats, batch_size=64, shuffle=False, num_workers=8, pin_memory=True
-    )
-    print(f"Number of training samples for rvf10k: {len(train_dataset_for_stats)}")
-    mean_rvf10k, std_rvf10k = compute_mean_std(loader_for_stats)
-    print(f"RVF10k dataset: mean={mean_rvf10k}, std={std_rvf10k}")
-
-    # محاسبه برای 140k
-    image_size = (256, 256)
-    transform_for_stats = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-    ])
-    train_dataset_for_stats = FaceDataset(
-        data_frame=dataset_140k.loader_train.dataset.data,
-        root_dir=dataset_140k.loader_train.dataset.root_dir,
-        transform=transform_for_stats,
-        img_column=dataset_140k.loader_train.dataset.img_column
-    )
-    loader_for_stats = DataLoader(
-        train_dataset_for_stats, batch_size=64, shuffle=False, num_workers=8, pin_memory=True
-    )
-    print(f"Number of training samples for 140k: {len(train_dataset_for_stats)}")
-    mean_140k, std_140k = compute_mean_std(loader_for_stats)
-    print(f"140k dataset: mean={mean_140k}, std={std_140k}")
