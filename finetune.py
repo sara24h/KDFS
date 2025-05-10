@@ -12,7 +12,7 @@ from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k
 
 # Suppress XLA/CUDA factory warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
