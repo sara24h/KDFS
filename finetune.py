@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import autocast, GradScaler  # اضافه کردن ماژول‌های Mixed Precision
 import os
 import json
 import random
@@ -47,6 +48,7 @@ class Finetune:
 
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
+        self.scaler = GradScaler() if self.device == "cuda" else None  # اضافه کردن GradScaler برای Mixed Precision
 
     def result_init(self):
         self.writer = SummaryWriter(self.result_dir)
@@ -62,7 +64,7 @@ class Finetune:
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # برای کاهش خطاهای CUDA
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -141,7 +143,7 @@ class Finetune:
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()  # برای مسئله باینری
+        self.ori_loss = nn.BCEWithLogitsLoss()
 
     def define_optim(self):
         weight_params = map(
@@ -234,12 +236,20 @@ class Finetune:
                     if self.device == "cuda":
                         images = images.cuda()
                         targets = targets.cuda().float()
-                    logits_student, _ = self.student(images)
-                    logits_student = logits_student.squeeze(1)  # برای مسئله باینری
-                    ori_loss = self.ori_loss(logits_student, targets)
-                    total_loss = ori_loss
-                    total_loss.backward()
-                    self.finetune_optim_weight.step()
+                    
+                    with autocast(enabled=self.device == "cuda"):  # فعال‌سازی Mixed Precision
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze(1)
+                        ori_loss = self.ori_loss(logits_student, targets)
+                        total_loss = ori_loss
+                    
+                    if self.device == "cuda":
+                        self.scaler.scale(total_loss).backward()
+                        self.scaler.step(self.finetune_optim_weight)
+                        self.scaler.update()
+                    else:
+                        total_loss.backward()
+                        self.finetune_optim_weight.step()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
@@ -282,8 +292,9 @@ class Finetune:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
+                        with autocast(enabled=self.device == "cuda"):  # Mixed Precision برای اعتبارسنجی
+                            logits_student, _ = self.student(images)
+                            logits_student = logits_student.squeeze(1)
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
@@ -309,12 +320,11 @@ class Finetune:
                 self.save_student_ckpt(False)
 
             self.logger.info(f" => Best top1 accuracy before finetune : {self.best_prec1_before_finetune}")
-            self.logger.info(f" => Best top1 accuracy after finetune : {self.best_prec1_after_finetune}")
+            self.logger.info(f" => Best top1 accuracy after finetune : {self Roscher Precision: {:.2f}%".format(self.best_prec1_after_finetune))
 
         self.logger.info("Finetune finished!")
         self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
 
-        # محاسبه و لاگ کردن FLOPs و Params
         try:
             (
                 Flops_baseline,
