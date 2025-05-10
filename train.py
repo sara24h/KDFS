@@ -1,4 +1,3 @@
-
 import json
 import os
 import random
@@ -268,6 +267,10 @@ class Train:
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
         self.student = self.student.to(self.device)
+        
+        # اعمال torch.compile بر روی مدل دانش‌آموز
+        self.student = torch.compile(self.student)
+        self.logger.info("Student model compiled with torch.compile for optimization")
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss()
@@ -367,7 +370,6 @@ class Train:
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
 
-
         scaler = GradScaler()
 
         if self.resume:
@@ -387,7 +389,7 @@ class Train:
             meter_oriloss.reset()
             meter_kdloss.reset()
             meter_rcloss.reset()
-            meter_maskloss.reset()  # اصلاح‌شده
+            meter_maskloss.reset()
             meter_loss.reset()
             meter_top1.reset()
 
@@ -407,11 +409,10 @@ class Train:
                         images = images.cuda()
                         targets = targets.cuda().float()
 
-       
                     with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
-                        with torch.no_grad():  # معلم نیازی به autocast نداره
+                        with torch.no_grad():
                             logits_teacher, feature_list_teacher = self.teacher(images)
                             logits_teacher = logits_teacher.squeeze(1)
 
@@ -437,11 +438,10 @@ class Train:
                             + self.coef_maskloss * mask_loss
                         )
 
-            
                     scaler.scale(total_loss).backward()
-                    scaler.step(self.optim_weight)  # به‌روزرسانی optim_weight
-                    scaler.step(self.optim_mask)   # به‌روزرسانی optim_mask
-                    scaler.update()  # به‌روزرسانی scaler
+                    scaler.step(self.optim_weight)
+                    scaler.step(self.optim_mask)
+                    scaler.update()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
@@ -459,15 +459,12 @@ class Train:
                     _tqdm.set_postfix(
                         loss="{:.4f}".format(meter_loss.avg),
                         train_acc="{:.4f}".format(meter_top1.avg),
-                     )
+                    )
                     _tqdm.update(1)
-                    #time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
             self.scheduler_student_mask.step()
-
-
 
             self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
             self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
@@ -536,7 +533,6 @@ class Train:
 
                         _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
-                        #time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
@@ -598,7 +594,6 @@ class Train:
 
                     _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
                     _tqdm.update(1)
-                    #time.sleep(0.01)
 
         Flops = self.student.get_flops()
         self.logger.info(
@@ -608,7 +603,7 @@ class Train:
             "[Test model Flops] : " + str(Flops.item() / (10**6)) + "M"
         )
         self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=0)
-        self.writer.add_scalar("test/Flops", Flops, global_step=0)
+        self.writer.add_scalar("test/Fl Wops", Flops, global_step=0)
 
     def main(self):
         self.result_init()
