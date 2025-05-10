@@ -3,8 +3,9 @@
 # Default values (aligned with training config from logs)
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
+dataset_dir=${DATASET_DIR:-/kaggle/input/140k-real-and-fake-faces}  # مسیر دیتاست را تنظیم کنید
+dataset_type=${DATASET_TYPE:-140k}  # نوع دیتاست: hardfake, rvf10k, یا 140k
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-cuda}
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -31,12 +32,14 @@ finetune_lr_decay_eta_min=${FINETUNE_LR_DECAY_ETA_MIN:-4e-08}
 finetune_weight_decay=${FINETUNE_WEIGHT_DECAY:-2e-05}
 finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-8}
 finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
+master_port=${MASTER_PORT:-6681}  # استفاده از پورت 6681 مطابق کد قبلی
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
-export CUDA_DEVICE_ORDER=PCI_BUS_ID  # Reduce CUDA factory registration warnings
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=0,1  # استفاده از دو GPU T4
 
 # Check if teacher checkpoint exists
 if [ ! -f "$teacher_ckpt_path" ]; then
@@ -47,11 +50,13 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# Run training
-python /kaggle/working/KDFS/main.py \
+# Run training with DDP
+torchrun --nproc_per_node=2 --master_port="$master_port" /kaggle/working/KDFS/main.py \
     --phase train \
+    --dataset_dir "$dataset_dir" \
+    --dataset_type "$dataset_type" \
     --arch "$arch" \
-    --device "$device" \
+    --device cuda \
     --result_dir "$result_dir" \
     --teacher_ckpt_path "$teacher_ckpt_path" \
     --num_workers "$num_workers" \
@@ -71,6 +76,7 @@ python /kaggle/working/KDFS/main.py \
     --coef_kdloss "$coef_kdloss" \
     --coef_rcloss "$coef_rcloss" \
     --compress_rate "$compress_rate" \
+    --ddp \
     "$@"
 
 # Check if student checkpoint exists before finetuning
@@ -80,11 +86,13 @@ if [ ! -f "$student_ckpt_path" ]; then
     exit 1
 fi
 
-# Run finetuning
-python /kaggle/working/KDFS/main.py \
+# Run finetuning with DDP
+torchrun --nproc_per_node=2 --master_port="$master_port" /kaggle/working/KDFS/main.py \
     --phase finetune \
+    --dataset_dir "$dataset_dir" \
+    --dataset_type "$dataset_type" \
     --arch "$arch" \
-    --device "$device" \
+    --device cuda \
     --result_dir "$result_dir" \
     --teacher_ckpt_path "$teacher_ckpt_path" \
     --finetune_student_ckpt_path "$student_ckpt_path" \
@@ -101,4 +109,5 @@ python /kaggle/working/KDFS/main.py \
     --finetune_train_batch_size "$finetune_train_batch_size" \
     --finetune_eval_batch_size "$finetune_eval_batch_size" \
     --sparsed_student_ckpt_path "$result_dir/student_model/finetune_${arch}_sparse_best.pt" \
+    --ddp \
     "$@"
