@@ -2,7 +2,9 @@ import os
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel as DDP
 from sklearn.model_selection import train_test_split
 from PIL import Image
 import argparse
@@ -21,8 +23,10 @@ from model.teacher.ResNet import ResNet_50_hardfakevsreal
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
 from utils import utils, loss, meter, scheduler
 from train import Train
+from train_ddp import TrainDDP
 from test import Test
 from finetune import Finetune
+from finetune_ddp import FinetuneDDP
 import json
 import time
 
@@ -157,7 +161,7 @@ def parse_args():
     parser.add_argument(
         "--teacher_ckpt_path",
         type=str,
-        default="/kaggle/working/KDFS/teacher_dir/teacher_model.pth",
+        default="/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth",
         help="The path where the teacher model is stored",
     )
     parser.add_argument(
@@ -275,7 +279,7 @@ def parse_args():
         help="The initial learning rate of model in finetune",
     )
     parser.add_argument(
-        "--finetune_warmup_steps",
+        "--finetune_wamp_steps",
         default=5,
         type=int,
         help="The steps of warmup in finetune",
@@ -364,6 +368,17 @@ def validate_args(args):
     if args.phase == "test" and args.sparsed_student_ckpt_path and not os.path.exists(args.sparsed_student_ckpt_path):
         raise FileNotFoundError(f"Sparsed student checkpoint not found: {args.sparsed_student_ckpt_path}")
 
+def setup_ddp():
+    """Initialize DDP environment"""
+    dist.init_process_group(backend='nccl')
+    local_rank = int(os.environ['LOCAL_RANK'])
+    torch.cuda.set_device(local_rank)
+    return local_rank
+
+def cleanup_ddp():
+    """Cleanup DDP environment"""
+    dist.destroy_process_group()
+
 def main():
     args = parse_args()
     
@@ -390,18 +405,32 @@ def main():
         print("Warning: DALI is not implemented in this version. Ignoring --dali flag.")
 
     if args.ddp:
-        raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
-    
-    # Execute the corresponding phase
-    if args.phase == "train":
-        train = Train(args=args)
-        train.main()
-    elif args.phase == "finetune":
-        finetune = Finetune(args=args)
-        finetune.main()
-    elif args.phase == "test":
-        test = Test(args=args)
-        test.main()
+        local_rank = setup_ddp()
+        args.device = f"cuda:{local_rank}"
+        
+        # Execute the corresponding phase with DDP
+        if args.phase == "train":
+            train = TrainDDP(args=args)
+            train.main()
+        elif args.phase == "finetune":
+            finetune = FinetuneDDP(args=args)
+            finetune.main()
+        elif args.phase == "test":
+            test = Test(args=args)
+            test.main()
+        
+        cleanup_ddp()
+    else:
+        # Execute the corresponding phase without DDP
+        if args.phase == "train":
+            train = Train(args=args)
+            train.main()
+        elif args.phase == "finetune":
+            finetune = Finetune(args=args)
+            finetune.main()
+        elif args.phase == "test":
+            test = Test(args=args)
+            test.main()
 
 if __name__ == "__main__":
     main()
