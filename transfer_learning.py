@@ -3,10 +3,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import transforms, models
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler 
-#import torchvision.transforms, models
+from torchvision import transforms, models
+from torch.amp import autocast, GradScaler  # Updated import for AMP
 from PIL import Image
 import argparse
 import random
@@ -38,7 +37,6 @@ def parse_args():
 
 args = parse_args()
 
-
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 torch.backends.cudnn.benchmark = True  
 torch.backends.cudnn.enabled = True
@@ -57,7 +55,6 @@ if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
-
 
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
@@ -102,18 +99,13 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-
 model = models.resnet50(weights='IMAGENET1K_V1')
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
-
-try:
-    model = torch.compile(model)
-except Exception as e:
-    print(f"Warning: torch.compile not supported: {e}")
-
+# Skip torch.compile due to Tesla P100 (CUDA 6.0)
+print("Skipping torch.compile due to incompatible GPU (Tesla P100, CUDA capability 6.0)")
 
 for param in model.parameters():
     param.requires_grad = False
@@ -122,20 +114,16 @@ for param in model.layer4.parameters():
 for param in model.fc.parameters():
     param.requires_grad = True
 
-
 criterion = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam([
     {'params': model.layer4.parameters(), 'lr': 1e-5},
     {'params': model.fc.parameters(), 'lr': lr}
 ], weight_decay=1e-4)
 
-
-scaler = GradScaler() if device.type == 'cuda' else None
-
+scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
 if device.type == 'cuda':
     torch.cuda.empty_cache()
-
 
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
@@ -150,7 +138,7 @@ for epoch in range(epochs):
         labels = labels.to(device).float()
         optimizer.zero_grad()
 
-        with autocast(enabled=device.type == 'cuda'):  # Mixed Precision
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
             outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
 
@@ -171,7 +159,6 @@ for epoch in range(epochs):
     train_accuracy = 100 * correct_train / total_train
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
-   
     model.eval()
     val_loss = 0.0
     correct_val = 0
@@ -180,7 +167,7 @@ for epoch in range(epochs):
         for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with autocast(enabled=device.type == 'cuda'):  # Mixed Precision
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
             val_loss += loss.item()
@@ -197,10 +184,8 @@ for epoch in range(epochs):
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
-
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
-
 
 model.eval()
 test_loss = 0.0
@@ -210,7 +195,7 @@ with torch.no_grad():
     for images, labels in test_loader:
         images = images.to(device)
         labels = labels.to(device).float()
-        with autocast(enabled=device.type == 'cuda'): 
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
             outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
         test_loss += loss.item()
@@ -218,7 +203,6 @@ with torch.no_grad():
         correct += (preds == labels).sum().item()
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
-
 
 val_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
@@ -241,7 +225,7 @@ with torch.no_grad():
             continue
         image = Image.open(img_path).convert('RGB')
         image_transformed = transform_test(image).unsqueeze(0).to(device)
-        with autocast(enabled=device.type == 'cuda'):  # Mixed Precision
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
             output = model(image_transformed).squeeze(1)
         prob = torch.sigmoid(output).item()
         predicted_label = 'real' if prob > 0.5 else 'fake'
@@ -255,7 +239,6 @@ plt.tight_layout()
 file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
-
 
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
