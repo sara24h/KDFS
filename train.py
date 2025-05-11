@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torchvision import models
-from torch.cuda.amp import autocast, GradScaler  # اضافه کردن برای Mixed Precision
+from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
@@ -21,7 +21,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,  
+        "140k": 5000.0,
     }
 }
 
@@ -141,7 +141,6 @@ class Train:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
-        # بررسی وجود فایل‌های CSV
         if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
             raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         if self.dataset_mode == 'rvf10k':
@@ -171,7 +170,7 @@ class Train:
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
+           尦pin_memory=self.pin_memory,
             ddp=False
         )
 
@@ -232,7 +231,6 @@ class Train:
         self.teacher = ResNet50Wrapper(resnet).to(self.device)
         self.teacher.eval()
 
-        # تست دقت معلم روی مجموعه اعتبارسنجی
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -309,7 +307,7 @@ class Train:
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr, 
+            warmup_start_lr=self.warmup_start_lr,
         )
 
     def resume_student_ckpt(self):
@@ -366,7 +364,6 @@ class Train:
             self.rc_loss = self.rc_loss.cuda()
             self.mask_loss = self.mask_loss.cuda()
 
-        # اضافه کردن GradScaler برای mixed precision
         scaler = GradScaler()
 
         if self.resume:
@@ -406,11 +403,10 @@ class Train:
                         images = images.cuda()
                         targets = targets.cuda().float()
 
-                    # استفاده از autocast برای forward pass و محاسبه loss
                     with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
-                        with torch.no_grad():  # معلم نیازی به autocast نداره
+                        with torch.no_grad():
                             logits_teacher, feature_list_teacher = self.teacher(images)
                             logits_teacher = logits_teacher.squeeze(1)
 
@@ -436,11 +432,10 @@ class Train:
                             + self.coef_maskloss * mask_loss
                         )
 
-                    # Backward با استفاده از scaler
                     scaler.scale(total_loss).backward()
-                    scaler.step(self.optim_weight)  # به‌روزرسانی optim_weight
-                    scaler.step(self.optim_mask)   # به‌روزرسانی optim_mask
-                    scaler.update()  # به‌روزرسانی scaler
+                    scaler.step(self.optim_weight)
+                    scaler.step(self.optim_mask)
+                    scaler.update()
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
@@ -514,6 +509,7 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # برای Validation Loss
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -525,26 +521,36 @@ class Train:
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
 
+                        # محاسبه Validation Loss
+                        val_loss = self.ori_loss(logits_student, targets)
+
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
+                        meter_val_loss.update(val_loss.item(), n)
 
-                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
+                        _tqdm.set_postfix(
+                            val_acc="{:.4f}".format(meter_top1.avg),
+                            val_loss="{:.4f}".format(meter_val_loss.avg)
+                        )
                         _tqdm.update(1)
                         time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+            self.writer.add_scalar("val/loss", meter_val_loss.avg, global_step=epoch)
             self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
             self.logger.info(
                 "[Val] "
                 "Epoch {0} : "
-                "Val_Acc {val_acc:.2f}".format(
+                "Val_Acc {val_acc:.2f} "
+                "Val_Loss {val_loss:.4f}".format(
                     epoch,
                     val_acc=meter_top1.avg,
+                    val_loss=meter_val_loss.avg,
                 )
             )
 
@@ -559,7 +565,6 @@ class Train:
                 + "M"
             )
 
-            # Save checkpoint based on validation accuracy
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
