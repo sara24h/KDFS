@@ -466,7 +466,7 @@ class Train:
 
             # Validation
             self.student.eval()
-            self.student.ticket = True
+            #self.student.ticket = True
             meter_top1.reset()
             meter_loss.reset()
 
