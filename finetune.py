@@ -11,7 +11,7 @@ from tqdm import tqdm
 import time
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k,  ResNet_50_sparse_140k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 
 class Finetune:
     def __init__(self, args):
@@ -62,7 +62,7 @@ class Finetune:
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # برای کاهش خطاهای CUDA
         torch.use_deterministic_algorithms(True)
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -141,7 +141,7 @@ class Finetune:
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()  
+        self.ori_loss = nn.BCEWithLogitsLoss()  # برای مسئله باینری
 
     def define_optim(self):
         weight_params = map(
@@ -215,7 +215,7 @@ class Finetune:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
-
+            # آموزش
             self.student.train()
             self.student.ticket = True
             meter_oriloss.reset()
@@ -271,7 +271,7 @@ class Finetune:
                 f"Prec@1 {meter_top1.avg:.2f}"
             )
 
-       
+            # اعتبارسنجی
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
@@ -314,7 +314,7 @@ class Finetune:
         self.logger.info("Finetune finished!")
         self.logger.info(f"Best top1 accuracy : {self.best_prec1_after_finetune}")
 
-
+        # محاسبه و لاگ کردن FLOPs و Params
         try:
             (
                 Flops_baseline,
