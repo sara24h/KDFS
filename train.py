@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler  
+from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
@@ -21,7 +21,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,  
+        "140k": 5000.0,
     }
 }
 
@@ -141,7 +141,6 @@ class Train:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
-        
         if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
             raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         if self.dataset_mode == 'rvf10k':
@@ -184,21 +183,14 @@ class Train:
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
 
-        
         resnet = ResNet_50_hardfakevsreal()
-
-     
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        
-        
-        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)  
-        resnet.load_state_dict(state_dict, strict=True)  
+        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)
+        resnet.load_state_dict(state_dict, strict=True)
 
-      
         self.teacher = resnet.to(self.device)
         self.teacher.eval()
 
-  
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -206,7 +198,7 @@ class Train:
             for images, targets in self.val_loader:
                 images = images.to(self.device)
                 targets = targets.to(self.device).float()
-                logits, _ = self.teacher(images) 
+                logits, _ = self.teacher(images)
                 logits = logits.squeeze(1)
                 preds = (torch.sigmoid(logits) > 0.5).float()
                 correct += (preds == targets).sum().item()
@@ -275,7 +267,7 @@ class Train:
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr, 
+            warmup_start_lr=self.warmup_start_lr,
         )
 
     def resume_student_ckpt(self):
@@ -475,8 +467,8 @@ class Train:
             # Validation
             self.student.eval()
             self.student.ticket = True
-            meter_top1.reset() 
-            meter_loss.reset()  # Reset loss meter for validation
+            meter_top1.reset()
+            meter_loss.reset()
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -485,18 +477,21 @@ class Train:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-
                         
-                        val_loss = self.ori_loss(logits_student, targets)
-            
+                        # Use autocast here as well
+                        with autocast():
+                            logits_student, _ = self.student(images)
+                            logits_student = logits_student.squeeze(1)
+                            
+                            # Calculate validation loss
+                            val_loss = self.ori_loss(logits_student, targets)
+                        
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
-                        meter_loss.update(val_loss.item(), n)  # Update loss meter
+                        meter_loss.update(val_loss.item(), n)
 
                         _tqdm.set_postfix(
                             val_loss="{:.4f}".format(meter_loss.avg),
@@ -504,8 +499,7 @@ class Train:
                         )
                         _tqdm.update(1)
 
-
-                self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
+            self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
