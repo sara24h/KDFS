@@ -473,7 +473,6 @@ class Train:
             )
 
             # Validation
-            # Validation
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset() 
@@ -488,8 +487,8 @@ class Train:
                             targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
-            
-            # Calculate validation loss
+
+                        
                         val_loss = self.ori_loss(logits_student, targets)
             
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
@@ -505,8 +504,8 @@ class Train:
                         )
                         _tqdm.update(1)
 
-# Add validation loss to tensorboard
-self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
+
+           self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
