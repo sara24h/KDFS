@@ -10,12 +10,12 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torchvision import models
 from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -88,30 +88,25 @@ class TrainDDP:
         if self.rank == 0:
             if not os.path.exists(self.result_dir):
                 os.makedirs(self.result_dir)
-
             self.writer = SummaryWriter(self.result_dir)
             self.logger = utils.get_logger(
                 os.path.join(self.result_dir, "train_logger.log"), "train_logger"
             )
-
             self.logger.info("train config:")
             self.logger.info(str(json.dumps(vars(self.args), indent=4)))
             utils.record_config(
                 self.args, os.path.join(self.result_dir, "train_config.txt")
             )
-
             self.logger.info("--------- Train -----------")
 
     def setup_seed(self):
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
-
         self.seed = self.seed + self.rank
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
         os.environ["PYTHONHASHSEED"] = str(self.seed)
-
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -154,20 +149,21 @@ class TrainDDP:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
-        if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
-            raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
-        if self.dataset_mode == 'rvf10k':
-            if not os.path.exists(rvf10k_train_csv):
-                raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
-            if not os.path.exists(rvf10k_valid_csv):
-                raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
-        if self.dataset_mode == '140k':
-            if not os.path.exists(realfake140k_train_csv):
-                raise FileNotFoundError(f"Train CSV file not found: {realfake140k_train_csv}")
-            if not os.path.exists(realfake140k_valid_csv):
-                raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
-            if not os.path.exists(realfake140k_test_csv):
-                raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
+        if self.rank == 0:
+            if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
+                raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
+            if self.dataset_mode == 'rvf10k':
+                if not os.path.exists(rvf10k_train_csv):
+                    raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
+                if not os.path.exists(rvf10k_valid_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
+            if self.dataset_mode == '140k':
+                if not os.path.exists(realfake140k_train_csv):
+                    raise FileNotFoundError(f"Train CSV file not found: {realfake140k_train_csv}")
+                if not os.path.exists(realfake140k_valid_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
+                if not os.path.exists(realfake140k_test_csv):
+                    raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -198,47 +194,11 @@ class TrainDDP:
             self.logger.info("==> Building model..")
             self.logger.info("Loading teacher model")
 
-        class ResNet50Wrapper(nn.Module):
-            def __init__(self, resnet_model):
-                super().__init__()
-                self.resnet = resnet_model
-
-            def forward(self, x):
-                feature_list = []
-                out = self.resnet.conv1(x)
-                out = self.resnet.bn1(out)
-                out = self.resnet.relu(out)
-                out = self.resnet.maxpool(out)
-                out = self.resnet.layer1(out)
-                feature_list.append(out)
-                out = self.resnet.layer2(out)
-                feature_list.append(out)
-                out = self.resnet.layer3(out)
-                feature_list.append(out)
-                out = self.resnet.layer4(out)
-                feature_list.append(out)
-                out = self.resnet.avgpool(out)
-                out = torch.flatten(out, 1)
-                out = self.resnet.fc(out)
-                return out, feature_list
-
-        resnet = models.resnet50(weights=None)
-        num_ftrs = resnet.fc.in_features
-        resnet.fc = nn.Linear(num_ftrs, 1)
+        resnet = ResNet_50_hardfakevsreal()
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        state_dict = ckpt_teacher
-        model_state_dict = resnet.state_dict()
-        new_state_dict = {}
-        for key in state_dict:
-            if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-                new_state_dict[key] = state_dict[key]
-            elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-            elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-        resnet.load_state_dict(new_state_dict, strict=False)
-        self.teacher = ResNet50Wrapper(resnet).cuda()
-        self.teacher.eval()
+        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)
+        resnet.load_state_dict(state_dict, strict=True)
+        self.teacher = resnet.cuda()
 
         if self.rank == 0:
             self.logger.info("Testing teacher model on validation batch...")
@@ -275,13 +235,13 @@ class TrainDDP:
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
         self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank], find_unused_parameters=True)
+        self.student = DDP(self.student, device_ids=[self.local_rank])
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()
-        self.kd_loss = loss.KDLoss()
-        self.rc_loss = loss.RCLoss()
-        self.mask_loss = loss.MaskLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss().cuda()
+        self.kd_loss = loss.KDLoss().cuda()
+        self.rc_loss = loss.RCLoss().cuda()
+        self.mask_loss = loss.MaskLoss().cuda()
 
     def define_optim(self):
         weight_params = map(
@@ -363,10 +323,7 @@ class TrainDDP:
                     ckpt_student,
                     os.path.join(folder, self.arch + "_sparse_best.pt"),
                 )
-            torch.save(
-                ckpt_student,
-                os.path.join(folder, self.arch + "_sparse_last.pt"),
-            )
+            torch.save(ckpt_student, os.path.join(folder, self.arch + "_sparse_last.pt"))
 
     def reduce_tensor(self, tensor):
         rt = tensor.clone()
@@ -378,12 +335,8 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info(f"Starting training from epoch: {self.start_epoch + 1}")
 
-        self.teacher = self.teacher.cuda()
-        self.ori_loss = self.ori_loss.cuda()
-        self.kd_loss = self.kd_loss.cuda()
-        self.rc_loss = self.rc_loss.cuda()
-        self.mask_loss = self.mask_loss.cuda()
-
+        torch.cuda.empty_cache()
+        self.teacher.eval()
         scaler = GradScaler()
 
         if self.resume:
@@ -397,10 +350,9 @@ class TrainDDP:
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
-            self.student.module.train()
+            self.student.train()
             self.student.module.ticket = False
             if self.rank == 0:
                 meter_oriloss.reset()
@@ -415,7 +367,8 @@ class TrainDDP:
                     else self.warmup_start_lr
                 )
 
-            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
+            self.student.module.update_gumbel_temperature(epoch)
+            with tqdm(total=len(self.train_loader), ncols=100, disable=self.rank != 0) as _tqdm:
                 if self.rank == 0:
                     _tqdm.set_description("epoch: {}/{}".format(epoch, self.num_epochs))
                 for images, targets in self.train_loader:
@@ -460,8 +413,7 @@ class TrainDDP:
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
-                    prec1 = torch.tensor(100. * correct / images.size(0), device=images.device)
-                    n = images.size(0)
+                    prec1 = 100. * correct / images.size(0)
 
                     dist.barrier()
                     reduced_ori_loss = self.reduce_tensor(ori_loss)
@@ -469,9 +421,10 @@ class TrainDDP:
                     reduced_rc_loss = self.reduce_tensor(rc_loss)
                     reduced_mask_loss = self.reduce_tensor(mask_loss)
                     reduced_total_loss = self.reduce_tensor(total_loss)
-                    reduced_prec1 = self.reduce_tensor(prec1)
+                    reduced_prec1 = self.reduce_tensor(torch.tensor(prec1).cuda())
 
                     if self.rank == 0:
+                        n = images.size(0)
                         meter_oriloss.update(reduced_ori_loss.item(), n)
                         meter_kdloss.update(self.coef_kdloss * reduced_kd_loss.item(), n)
                         meter_rcloss.update(
@@ -486,13 +439,14 @@ class TrainDDP:
                             train_acc="{:.4f}".format(meter_top1.avg),
                         )
                         _tqdm.update(1)
+
                     time.sleep(0.01)
 
-            Flops = self.student.module.get_flops()
             self.scheduler_student_weight.step()
             self.scheduler_student_mask.step()
 
             if self.rank == 0:
+                Flops = self.student.module.get_flops()
                 self.writer.add_scalar("train/loss/ori_loss", meter_oriloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
@@ -538,35 +492,30 @@ class TrainDDP:
                 )
 
             # Validation
-            self.student.module.eval()
-            self.student.module.ticket = True
             if self.rank == 0:
+                self.student.eval()
+                self.student.module.ticket = True
                 meter_top1.reset()
-
-            with torch.no_grad():
-                with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    if self.rank == 0:
+                with torch.no_grad():
+                    with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
-                    for images, targets in self.val_loader:
-                        images = images.cuda()
-                        targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
+                        for images, targets in self.val_loader:
+                            images = images.cuda()
+                            targets = targets.cuda().float()
+                            logits_student, _ = self.student(images)
+                            logits_student = logits_student.squeeze(1)
 
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets).sum().item()
-                        prec1 = torch.tensor(100. * correct / images.size(0), device=images.device)
-                        n = images.size(0)
+                            preds = (torch.sigmoid(logits_student) > 0.5).float()
+                            correct = (preds == targets).sum().item()
+                            prec1 = 100. * correct / images.size(0)
+                            n = images.size(0)
+                            meter_top1.update(prec1, n)
 
-                        reduced_prec1 = self.reduce_tensor(prec1)
-                        if self.rank == 0:
-                            meter_top1.update(reduced_prec1.item(), n)
                             _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                             _tqdm.update(1)
-                        time.sleep(0.01)
+                            time.sleep(0.01)
 
-            Flops = self.student.module.get_flops()
-            if self.rank == 0:
+                Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
@@ -604,35 +553,31 @@ class TrainDDP:
             self.logger.info("Train finished!")
 
     def test(self):
-        self.student.module.eval()
-        self.student.module.ticket = True
         if self.rank == 0:
+            self.student.eval()
+            self.student.module.ticket = True
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
-        with torch.no_grad():
-            with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
-                if self.rank == 0:
+            with torch.no_grad():
+                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("Test")
-                for images, targets in self.test_loader:
-                    images = images.cuda()
-                    targets = targets.cuda().float()
-                    logits_student, _ = self.student(images)
-                    logits_student = logits_student.squeeze(1)
+                    for images, targets in self.test_loader:
+                        images = images.cuda()
+                        targets = targets.cuda().float()
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze(1)
 
-                    preds = (torch.sigmoid(logits_student) > 0.5).float()
-                    correct = (preds == targets).sum().item()
-                    prec1 = torch.tensor(100. * correct / images.size(0), device=images.device)
-                    n = images.size(0)
+                        preds = (torch.sigmoid(logits_student) > 0.5).float()
+                        correct = (preds == targets).sum().item()
+                        prec1 = 100. * correct / images.size(0)
+                        n = images.size(0)
+                        meter_top1.update(prec1, n)
 
-                    reduced_prec1 = self.reduce_tensor(prec1)
-                    if self.rank == 0:
-                        meter_top1.update(reduced_prec1.item(), n)
                         _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
-                    time.sleep(0.01)
+                        time.sleep(0.01)
 
-        Flops = self.student.module.get_flops()
-        if self.rank == 0:
+            Flops = self.student.module.get_flops()
             self.logger.info(
                 "[Test] Test_Acc {test_acc:.2f}".format(test_acc=meter_top1.avg)
             )
@@ -651,4 +596,4 @@ class TrainDDP:
         self.define_loss()
         self.define_optim()
         self.train()
-        dist.destroy_process_group()
+        self.test()
