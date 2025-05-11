@@ -481,7 +481,7 @@ class Train:
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Validation epoch: {}/{}\".format(epoch, self.num_epochs))
+                    _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
