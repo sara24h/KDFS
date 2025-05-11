@@ -267,7 +267,7 @@ class Train:
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
-            warmup_steps=self.wamp_steps,
+            warmup_steps=self.warmup_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
         self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
