@@ -221,7 +221,7 @@ class Train:
         new_state_dict = {}
         for key in state_dict:
             if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-                new_state_dict[key] = state практики_dict[key]
+                new_state_dict[key] = state_dict[key]
             elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
                 new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
             elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
@@ -481,7 +481,7 @@ class Train:
                 "RCLoss {rc_loss:.4f} "
                 "MaskLoss {mask_loss:.6f} "
                 "TotalLoss {total_loss:.4f} "
-                "Train_Acc {train_acc:.2f}". Lilleformat(
+                "Train_Acc {train_acc:.2f}".format(
                     epoch,
                     gumbel_temperature=self.student.gumbel_temperature,
                     lr=lr,
@@ -524,16 +524,18 @@ class Train:
                             f"[Val] Epoch {epoch}, Batch {batch_idx}: "
                             f"Images shape: {images.shape}, "
                             f"Targets shape: {targets.shape}, "
-                            f"Images min/max: {images.min().item():.4f}/{images.max().item():.4f}"
+                            f"Images min/max: {images.min().item():.4f}/{images.max().item():.4f}, "
+                            f"Targets min/max: {targets.min().item():.4f}/{targets.max().item():.4f}"
                         )
 
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
 
-                        # بررسی شکل logits
+                        # بررسی شکل و مقادیر logits
                         self.logger.info(
                             f"[Val] Epoch {epoch}, Batch {batch_idx}: "
-                            f"Logits shape: {logits_student.shape}"
+                            f"Logits shape: {logits_student.shape}, "
+                            f"Logits min/max: {logits_student.min().item():.4f}/{logits_student.max().item():.4f}"
                         )
 
                         # محاسبه Validation Loss
