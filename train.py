@@ -505,7 +505,7 @@ class Train:
                         _tqdm.update(1)
 
 
-           self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
