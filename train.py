@@ -227,7 +227,7 @@ class Train:
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss(reduction='mean')  # صراحتاً mean تنظیم شده
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
@@ -473,18 +473,28 @@ class Train:
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
-                    for images, targets in self.val_loader:
+                    for batch_idx, (images, targets) in enumerate(self.val_loader):
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
                         
-                        # Use autocast here as well
-                        with autocast():
+                        with autocast():  # حفظ mixed precision
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
                             
-                            # Calculate validation loss
+                            # لاگ برای بررسی لوجیت‌ها و برچسب‌ها
+                            self.logger.info(
+                                f"Validation Batch {batch_idx}: "
+                                f"Logits range: min={logits_student.min().item()}, "
+                                f"max={logits_student.max().item()}, "
+                                f"Targets: {targets.tolist()}"
+                            )
+                            
+                            # محاسبه val_loss
                             val_loss = self.ori_loss(logits_student, targets)
+                        
+                        # لاگ برای val_loss هر بچ
+                        self.logger.info(f"Validation Batch {batch_idx} val_loss: {val_loss.item():.4f}")
                         
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
@@ -512,7 +522,7 @@ class Train:
                 + "M"
             )
 
-            # Save checkpoint based on validation accuracy
+            # ذخیره checkpoint بر اساس دقت اعتبارسنجی
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
@@ -537,8 +547,9 @@ class Train:
                     if self.device == "cuda":
                         images = images.cuda()
                         targets = targets.cuda().float()
-                    logits_student, _ = self.student(images)
-                    logits_student = logits_student.squeeze(1)
+                    with autocast():  # حفظ mixed precision
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze(1)
 
                     preds = (torch.sigmoid(logits_student) > 0.5).float()
                     correct = (preds == targets).sum().item()
