@@ -473,41 +473,40 @@ class Train:
             )
 
             # Validation
+            # Validation
             self.student.eval()
             self.student.ticket = True
-            meter_top1.reset()
+            meter_top1.reset() 
+            meter_loss.reset()  # Reset loss meter for validation
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
+                    _tqdm.set_description("Validation epoch: {}/{}\".format(epoch, self.num_epochs))
                     for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
-
+            
+            # Calculate validation loss
+                        val_loss = self.ori_loss(logits_student, targets)
+            
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
+                        meter_loss.update(val_loss.item(), n)  # Update loss meter
 
-                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
+                        _tqdm.set_postfix(
+                            val_loss="{:.4f}".format(meter_loss.avg),
+                            val_acc="{:.4f}".format(meter_top1.avg)
+                        )
                         _tqdm.update(1)
 
-            Flops = self.student.get_flops()
-            self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
-
-            self.logger.info(
-                "[Val] "
-                "Epoch {0} : "
-                "Val_Acc {val_acc:.2f}".format(
-                    epoch,
-                    val_acc=meter_top1.avg,
-                )
-            )
+# Add validation loss to tensorboard
+self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
