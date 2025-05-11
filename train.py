@@ -386,7 +386,7 @@ class Train:
             meter_oriloss.reset()
             meter_kdloss.reset()
             meter_rcloss.reset()
-            meter_mask  meter_maskloss.reset()
+            meter_maskloss.reset()
             meter_loss.reset()
             meter_top1.reset()
 
