@@ -221,7 +221,7 @@ class Train:
         new_state_dict = {}
         for key in state_dict:
             if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-                new_state_dict[key] = state_dict[key]
+                new_state_dict[key] = state практики_dict[key]
             elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
                 new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
             elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
@@ -267,7 +267,7 @@ class Train:
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss()
+        self.ori_loss = nn.BCEWithLogitsLoss(reduction='mean')
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
@@ -481,7 +481,7 @@ class Train:
                 "RCLoss {rc_loss:.4f} "
                 "MaskLoss {mask_loss:.6f} "
                 "TotalLoss {total_loss:.4f} "
-                "Train_Acc {train_acc:.2f}".format(
+                "Train_Acc {train_acc:.2f}". Lilleformat(
                     epoch,
                     gumbel_temperature=self.student.gumbel_temperature,
                     lr=lr,
@@ -509,20 +509,41 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # برای Validation Loss
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
-                    for images, targets in self.val_loader:
+                    for batch_idx, (images, targets) in enumerate(self.val_loader):
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
+
+                        # لاگ برای عیب‌یابی
+                        self.logger.info(
+                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
+                            f"Images shape: {images.shape}, "
+                            f"Targets shape: {targets.shape}, "
+                            f"Images min/max: {images.min().item():.4f}/{images.max().item():.4f}"
+                        )
+
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
 
+                        # بررسی شکل logits
+                        self.logger.info(
+                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
+                            f"Logits shape: {logits_student.shape}"
+                        )
+
                         # محاسبه Validation Loss
                         val_loss = self.ori_loss(logits_student, targets)
+
+                        # لاگ مقدار val_loss برای هر دسته
+                        self.logger.info(
+                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
+                            f"Batch val_loss: {val_loss.item():.4f}"
+                        )
 
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
