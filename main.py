@@ -13,6 +13,7 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import GradScaler, autocast
+import torch.distributed as dist
 
 matplotlib.use('Agg')
 
@@ -23,6 +24,8 @@ from utils import utils, loss, meter, scheduler
 from train import Train
 from test import Test
 from finetune import Finetune
+from train_ddp import TrainDDP
+from finetune_ddp import FinetuneDDP
 import json
 import time
 
@@ -389,19 +392,27 @@ def main():
     if args.dali:
         print("Warning: DALI is not implemented in this version. Ignoring --dali flag.")
 
-    if args.ddp:
-        raise NotImplementedError("Distributed Data Parallel (DDP) is not implemented in this version.")
-    
     # Execute the corresponding phase
-    if args.phase == "train":
-        train = Train(args=args)
-        train.main()
-    elif args.phase == "finetune":
-        finetune = Finetune(args=args)
-        finetune.main()
-    elif args.phase == "test":
-        test = Test(args=args)
-        test.main()
+    if args.ddp:
+        if args.phase == "train":
+            train = TrainDDP(args=args)
+            train.main()
+        elif args.phase == "finetune":
+            finetune = FinetuneDDP(args=args)
+            finetune.main()
+        elif args.phase == "test":
+            test = Test(args=args)
+            test.main()
+    else:
+        if args.phase == "train":
+            train = Train(args=args)
+            train.main()
+        elif args.phase == "finetune":
+            finetune = Finetune(args=args)
+            finetune.main()
+        elif args.phase == "test":
+            test = Test(args=args)
+            test.main()
 
 if __name__ == "__main__":
     main()
