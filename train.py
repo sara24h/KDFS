@@ -267,7 +267,7 @@ class Train:
             T_max=self.lr_decay_T_max,
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
-            warmup_steps=self.warmup_steps,
+            warmup_steps=self.wamp_steps,
             warmup_start_lr=self.warmup_start_lr,
         )
         self.scheduler_student_mask = scheduler.CosineAnnealingLRWarmup(
@@ -546,7 +546,7 @@ class Train:
 
         # Plot training and validation accuracy
         plt.figure(figsize=(10, 6))
-        epochs = range(self.start_epoch + 1, self.num_epochs + 1)
+        epochs = list(range(self.start_epoch + 1, self.num_epochs + 1))
         plt.plot(epochs, train_acc_history, 'b-', label='Training Accuracy')
         plt.plot(epochs, val_acc_history, 'r-', label='Validation Accuracy')
         plt.title('Training and Validation Accuracy')
@@ -554,6 +554,8 @@ class Train:
         plt.ylabel('Accuracy (%)')
         plt.grid(True)
         plt.legend()
+        # Ensure x-axis shows only integer ticks
+        plt.xticks(ticks=epochs, labels=[str(int(e)) for e in epochs])
         plt.savefig(os.path.join(self.result_dir, 'accuracy_plot.png'))
         plt.close()
 
