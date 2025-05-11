@@ -43,6 +43,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 
 # Check phase argument
 PHASE=${1:-train}
+shift # Remove the first argument (train/finetune) from "$@"
 if [[ "$PHASE" != "train" && "$PHASE" != "finetune" ]]; then
     echo "Error: Invalid phase. Use 'train' or 'finetune'."
     exit 1
