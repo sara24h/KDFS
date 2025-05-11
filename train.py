@@ -170,7 +170,7 @@ class Train:
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
-           尦pin_memory=self.pin_memory,
+            pin_memory=self.pin_memory,
             ddp=False
         )
 
