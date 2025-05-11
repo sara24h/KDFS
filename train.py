@@ -8,12 +8,12 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torchvision import models
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler  
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
+from model.teacher.ResNet import ResNet_50_hardfakevsreal
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -21,7 +21,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,
+        "140k": 5000.0,  
     }
 }
 
@@ -141,6 +141,7 @@ class Train:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
+        
         if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
             raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         if self.dataset_mode == 'rvf10k':
@@ -182,55 +183,22 @@ class Train:
     def build_model(self):
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
-        
-        class ResNet50Wrapper(nn.Module):
-            def __init__(self, resnet_model):
-                super().__init__()
-                self.resnet = resnet_model
-            
-            def forward(self, x):
-                feature_list = []
-                
-                out = self.resnet.conv1(x)
-                out = self.resnet.bn1(out)
-                out = self.resnet.relu(out)
-                out = self.resnet.maxpool(out)
-                
-                out = self.resnet.layer1(out)
-                feature_list.append(out)
-                out = self.resnet.layer2(out)
-                feature_list.append(out)
-                out = self.resnet.layer3(out)
-                feature_list.append(out)
-                out = self.resnet.layer4(out)
-                feature_list.append(out)
-                
-                out = self.resnet.avgpool(out)
-                out = torch.flatten(out, 1)
-                out = self.resnet.fc(out)
-                
-                return out, feature_list
 
-        resnet = models.resnet50(weights=None)
-        num_ftrs = resnet.fc.in_features
-        resnet.fc = nn.Linear(num_ftrs, 1)
+        
+        resnet = ResNet_50_hardfakevsreal()
+
+     
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
         
-        state_dict = ckpt_teacher
-        model_state_dict = resnet.state_dict()
-        new_state_dict = {}
-        for key in state_dict:
-            if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
-                new_state_dict[key] = state_dict[key]
-            elif key == 'fc.weight' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-            elif key == 'fc.bias' and state_dict[key].shape[0] == 2:
-                new_state_dict[key] = state_dict[key].mean(dim=0, keepdim=True)
-        resnet.load_state_dict(new_state_dict, strict=False)
         
-        self.teacher = ResNet50Wrapper(resnet).to(self.device)
+        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)  
+        resnet.load_state_dict(state_dict, strict=True)  
+
+      
+        self.teacher = resnet.to(self.device)
         self.teacher.eval()
 
+  
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -238,7 +206,7 @@ class Train:
             for images, targets in self.val_loader:
                 images = images.to(self.device)
                 targets = targets.to(self.device).float()
-                logits, _ = self.teacher(images)
+                logits, _ = self.teacher(images) 
                 logits = logits.squeeze(1)
                 preds = (torch.sigmoid(logits) > 0.5).float()
                 correct += (preds == targets).sum().item()
@@ -267,7 +235,7 @@ class Train:
         self.student = self.student.to(self.device)
 
     def define_loss(self):
-        self.ori_loss = nn.BCEWithLogitsLoss(reduction='mean')
+        self.ori_loss = nn.BCEWithLogitsLoss()
         self.kd_loss = loss.KDLoss()
         self.rc_loss = loss.RCLoss()
         self.mask_loss = loss.MaskLoss()
@@ -307,7 +275,7 @@ class Train:
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
+            warmup_start_lr=self.warmup_start_lr, 
         )
 
     def resume_student_ckpt(self):
@@ -455,7 +423,6 @@ class Train:
                         train_acc="{:.4f}".format(meter_top1.avg),
                     )
                     _tqdm.update(1)
-                    time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
@@ -509,71 +476,36 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                     _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
-                    for batch_idx, (images, targets) in enumerate(self.val_loader):
+                    for images, targets in self.val_loader:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-
-                        # لاگ برای عیب‌یابی
-                        self.logger.info(
-                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
-                            f"Images shape: {images.shape}, "
-                            f"Targets shape: {targets.shape}, "
-                            f"Images min/max: {images.min().item():.4f}/{images.max().item():.4f}, "
-                            f"Targets min/max: {targets.min().item():.4f}/{targets.max().item():.4f}"
-                        )
-
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
-
-                        # بررسی شکل و مقادیر logits
-                        self.logger.info(
-                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
-                            f"Logits shape: {logits_student.shape}, "
-                            f"Logits min/max: {logits_student.min().item():.4f}/{logits_student.max().item():.4f}"
-                        )
-
-                        # محاسبه Validation Loss
-                        val_loss = self.ori_loss(logits_student, targets)
-
-                        # لاگ مقدار val_loss برای هر دسته
-                        self.logger.info(
-                            f"[Val] Epoch {epoch}, Batch {batch_idx}: "
-                            f"Batch val_loss: {val_loss.item():.4f}"
-                        )
 
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
-                        meter_val_loss.update(val_loss.item(), n)
 
-                        _tqdm.set_postfix(
-                            val_acc="{:.4f}".format(meter_top1.avg),
-                            val_loss="{:.4f}".format(meter_val_loss.avg)
-                        )
+                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
-                        time.sleep(0.01)
 
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-            self.writer.add_scalar("val/loss", meter_val_loss.avg, global_step=epoch)
             self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
             self.logger.info(
                 "[Val] "
                 "Epoch {0} : "
-                "Val_Acc {val_acc:.2f} "
-                "Val_Loss {val_loss:.4f}".format(
+                "Val_Acc {val_acc:.2f}".format(
                     epoch,
                     val_acc=meter_top1.avg,
-                    val_loss=meter_val_loss.avg,
                 )
             )
 
@@ -588,6 +520,7 @@ class Train:
                 + "M"
             )
 
+            # Save checkpoint based on validation accuracy
             if self.best_prec1 < meter_top1.avg:
                 self.best_prec1 = meter_top1.avg
                 self.save_student_ckpt(True, epoch)
@@ -623,7 +556,6 @@ class Train:
 
                     _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
                     _tqdm.update(1)
-                    time.sleep(0.01)
 
         Flops = self.student.get_flops()
         self.logger.info(
