@@ -8,12 +8,13 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler  
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
+import matplotlib.pyplot as plt
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
@@ -21,7 +22,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,
+        "140k": 5000.0,  
     }
 }
 
@@ -141,6 +142,7 @@ class Train:
             realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
             realfake140k_root_dir = self.dataset_dir
 
+        
         if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
             raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         if self.dataset_mode == 'rvf10k':
@@ -183,14 +185,21 @@ class Train:
         self.logger.info("==> Building model..")
         self.logger.info("Loading teacher model")
 
+        
         resnet = ResNet_50_hardfakevsreal()
-        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
-        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)
-        resnet.load_state_dict(state_dict, strict=True)
 
+     
+        ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu", weights_only=True)
+        
+        
+        state_dict = ckpt_teacher.get('model_state_dict', ckpt_teacher)  
+        resnet.load_state_dict(state_dict, strict=True)  
+
+      
         self.teacher = resnet.to(self.device)
         self.teacher.eval()
 
+  
         self.logger.info("Testing teacher model on validation batch...")
         with torch.no_grad():
             correct = 0
@@ -198,7 +207,7 @@ class Train:
             for images, targets in self.val_loader:
                 images = images.to(self.device)
                 targets = targets.to(self.device).float()
-                logits, _ = self.teacher(images)
+                logits, _ = self.teacher(images) 
                 logits = logits.squeeze(1)
                 preds = (torch.sigmoid(logits) > 0.5).float()
                 correct += (preds == targets).sum().item()
@@ -267,7 +276,7 @@ class Train:
             eta_min=self.lr_decay_eta_min,
             last_epoch=-1,
             warmup_steps=self.warmup_steps,
-            warmup_start_lr=self.warmup_start_lr,
+            warmup_start_lr=self.warmup_start_lr, 
         )
 
     def resume_student_ckpt(self):
@@ -335,6 +344,10 @@ class Train:
         meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
         meter_loss = meter.AverageMeter("Loss", ":.4e")
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
+
+        # Lists to store accuracy for plotting
+        train_acc_history = []
+        val_acc_history = []
 
         self.teacher.eval()
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
@@ -416,6 +429,9 @@ class Train:
                     )
                     _tqdm.update(1)
 
+            # Store training accuracy
+            train_acc_history.append(meter_top1.avg)
+
             Flops = self.student.get_flops()
             self.scheduler_student_weight.step()
             self.scheduler_student_mask.step()
@@ -468,7 +484,6 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
-            meter_loss.reset()
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -477,29 +492,33 @@ class Train:
                         if self.device == "cuda":
                             images = images.cuda()
                             targets = targets.cuda().float()
-                        
-                        # Use autocast here as well
-                        with autocast():
-                            logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze(1)
-                            
-                            # Calculate validation loss
-                            val_loss = self.ori_loss(logits_student, targets)
-                        
+                        logits_student, _ = self.student(images)
+                        logits_student = logits_student.squeeze(1)
+
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
-                        meter_loss.update(val_loss.item(), n)
 
-                        _tqdm.set_postfix(
-                            val_loss="{:.4f}".format(meter_loss.avg),
-                            val_acc="{:.4f}".format(meter_top1.avg)
-                        )
+                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
                         _tqdm.update(1)
 
-            self.writer.add_scalar("val/loss", meter_loss.avg, global_step=epoch)
+            # Store validation accuracy
+            val_acc_history.append(meter_top1.avg)
+
+            Flops = self.student.get_flops()
+            self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
+            self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
+
+            self.logger.info(
+                "[Val] "
+                "Epoch {0} : "
+                "Val_Acc {val_acc:.2f}".format(
+                    epoch,
+                    val_acc=meter_top1.avg,
+                )
+            )
 
             masks = []
             for _, m in enumerate(self.student.mask_modules):
@@ -524,6 +543,19 @@ class Train:
             )
 
         self.logger.info("Train finished!")
+
+        # Plot training and validation accuracy
+        plt.figure(figsize=(10, 6))
+        epochs = range(self.start_epoch + 1, self.num_epochs + 1)
+        plt.plot(epochs, train_acc_history, 'b-', label='Training Accuracy')
+        plt.plot(epochs, val_acc_history, 'r-', label='Validation Accuracy')
+        plt.title('Training and Validation Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy (%)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(os.path.join(self.result_dir, 'accuracy_plot.png'))
+        plt.close()
 
     def test(self):
         self.student.eval()
