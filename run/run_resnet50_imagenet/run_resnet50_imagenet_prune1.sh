@@ -70,6 +70,39 @@ if [ "$pin_memory" = "true" ]; then
     pin_memory_flag="--pin_memory"
 fi
 
+# Print arguments for debugging
+echo "Running torchrun with arguments:"
+if [ "$PHASE" = "train" ]; then
+    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
+        --phase train \
+        --arch $arch \
+        --device cuda \
+        --result_dir $result_dir \
+        --teacher_ckpt_path $teacher_ckpt_path \
+        --num_workers $num_workers \
+        $pin_memory_flag \
+        --seed $seed \
+        --lr $lr \
+        --warmup_steps $warmup_steps \
+        --warmup_start_lr $warmup_start_lr \
+        --lr_decay_T_max $lr_decay_T_max \
+        --lr_decay_eta_min $lr_decay_eta_min \
+        --weight_decay $weight_decay \
+        --train_batch_size $train_batch_size \
+        --eval_batch_size $eval_batch_size \
+        --target_temperature $target_temperature \
+        --gumbel_start_temperature $gumbel_start_temperature \
+        --gumbel_end_temperature $gumbel_end_temperature \
+        --coef_kdloss $coef_kdloss \
+        --coef_rcloss $coef_rcloss \
+        --coef_maskloss $coef_maskloss \
+        --compress_rate $compress_rate \
+        --dataset_mode $dataset_mode \
+        --dataset_dir $dataset_dir \
+        --ddp \
+        $@"
+fi
+
 if [ "$PHASE" = "train" ]; then
     # Run training with DDP
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
@@ -107,6 +140,32 @@ elif [ "$PHASE" = "finetune" ]; then
         echo "Error: Student checkpoint not found at $student_ckpt_path"
         exit 1
     fi
+
+    # Print arguments for debugging
+    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
+        --phase finetune \
+        --arch $arch \
+        --device cuda \
+        --result_dir $result_dir \
+        --teacher_ckpt_path $teacher_ckpt_path \
+        --finetune_student_ckpt_path $student_ckpt_path \
+        --num_workers $num_workers \
+        $pin_memory_flag \
+        --seed $seed \
+        --finetune_num_epochs $finetune_num_epochs \
+        --finetune_lr $finetune_lr \
+        --finetune_warmup_steps $finetune_warmup_steps \
+        --finetune_warmup_start_lr $finetune_warmup_start_lr \
+        --finetune_lr_decay_T_max $finetune_lr_decay_T_max \
+        --finetune_lr_decay_eta_min $finetune_lr_decay_eta_min \
+        --finetune_weight_decay $finetune_weight_decay \
+        --finetune_train_batch_size $finetune_train_batch_size \
+        --finetune_eval_batch_size $finetune_eval_batch_size \
+        --sparsed_student_ckpt_path $result_dir/student_model/finetune_${arch}_sparse_best.pt \
+        --dataset_mode $dataset_mode \
+        --dataset_dir $dataset_dir \
+        --ddp \
+        $@"
 
     # Run finetuning with DDP
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
