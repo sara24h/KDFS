@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-0,1}
+device=${DEVICE:-0}  # فقط یک GPU
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -58,12 +58,7 @@ fi
 mkdir -p "$result_dir"
 
 # Calculate number of GPUs
-nproc_per_node=$(echo $device | tr -cd ',' | wc -c)
-nproc_per_node=$((nproc_per_node + 1))
-if [ "$nproc_per_node" -ne 2 ]; then
-    echo "Warning: Expected 2 GPUs, but found $nproc_per_node. Adjusting to 2."
-    nproc_per_node=2
-fi
+nproc_per_node=1  # فقط یک فرآیند
 
 # Define pin_memory flag
 pin_memory_flag=""
@@ -91,9 +86,9 @@ while [ $# -gt 0 ]; do
         --dataset_dir) dataset_dir="$2"; shift 2 ;;
         --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;
         --resume) resume="$2"; shift 2 ;;
-        --train_batch_size) train_batch_size="$2"; shift 2 ;;  # اضافه کردن آرگومان
-        --eval_batch_size) eval_batch_size="$2"; shift 2 ;;   # اضافه کردن آرگومان
-        --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;     # اضافه کردن آرگومان
+        --train_batch_size) train_batch_size="$2"; shift 2 ;;
+        --eval_batch_size) eval_batch_size="$2"; shift 2 ;;
+        --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
