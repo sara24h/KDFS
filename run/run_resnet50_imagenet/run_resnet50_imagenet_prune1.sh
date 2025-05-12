@@ -86,6 +86,7 @@ if [ "$PHASE" = "train" ]; then
         --compress_rate "$compress_rate" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
+        --ddp \
         "$@"
 elif [ "$PHASE" = "finetune" ]; then
     # Check if student checkpoint exists
@@ -118,5 +119,6 @@ elif [ "$PHASE" = "finetune" ]; then
         --sparsed_student_ckpt_path "$result_dir/student_model/finetune_${arch}_sparse_best.pt" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
+        --ddp \
         "$@"
 fi
