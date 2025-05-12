@@ -36,7 +36,7 @@ dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
 master_port=${MASTER_PORT:-6681}
 num_epochs=${NUM_EPOCHS:-6}
-resume=${RESUME:-}  # مقدار پیش‌فرض برای resume
+resume=${RESUME:-}
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -51,12 +51,6 @@ PHASE=${1:-train}
 shift
 if [[ "$PHASE" != "train" && "$PHASE" != "finetune" ]]; then
     echo "Error: Invalid phase. Use 'train' or 'finetune'."
-    exit 1
-fi
-
-# Check if teacher checkpoint exists
-if [ ! -f "$teacher_ckpt_path" ]; then
-    echo "Error: Teacher checkpoint not found at $teacher_ckpt_path"
     exit 1
 fi
 
@@ -95,12 +89,18 @@ while [ $# -gt 0 ]; do
         --warmup_steps) warmup_steps="$2"; shift 2 ;;
         --dataset_mode) dataset_mode="$2"; shift 2 ;;
         --dataset_dir) dataset_dir="$2"; shift 2 ;;
-        --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;  # اضافه کردن آرگومان teacher_ckpt_path
-        --resume) resume="$2"; shift 2 ;;  # اضافه کردن آرگومان resume
+        --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;
+        --resume) resume="$2"; shift 2 ;;
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
 done
+
+# Check if teacher checkpoint exists
+if [ ! -f "$teacher_ckpt_path" ]; then
+    echo "Error: Teacher checkpoint not found at $teacher_ckpt_path"
+    exit 1
+fi
 
 # Check if resume checkpoint exists (if provided)
 if [ -n "$resume" ] && [ ! -f "$resume" ]; then
