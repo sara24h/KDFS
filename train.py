@@ -484,6 +484,7 @@ class Train:
             self.student.eval()
             self.student.ticket = True
             meter_top1.reset()
+            meter_oriloss.reset() # Add meter for loss
 
             with torch.no_grad():
                 with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
@@ -495,13 +496,18 @@ class Train:
                         logits_student, _ = self.student(images)
                         logits_student = logits_student.squeeze(1)
 
+                        # Calculate loss
+                        ori_loss = self.ori_loss(logits_student, targets) # Use the original loss
+
                         preds = (torch.sigmoid(logits_student) > 0.5).float()
                         correct = (preds == targets).sum().item()
                         prec1 = 100. * correct / images.size(0)
                         n = images.size(0)
                         meter_top1.update(prec1, n)
+                        meter_oriloss.update(ori_loss.item(), n) # Update loss meter
 
-                        _tqdm.set_postfix(val_acc="{:.4f}".format(meter_top1.avg))
+
+                        _tqdm.set_postfix(val_acc="{:.4f}, val_loss={:.4f}".format(meter_top1.avg, meter_oriloss.avg))
                         _tqdm.update(1)
 
             # Store validation accuracy
@@ -510,13 +516,16 @@ class Train:
             Flops = self.student.get_flops()
             self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
             self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
+            self.writer.add_scalar("val/loss/ori_loss", meter_oriloss.avg, global_step=epoch) # Log validation loss
+
 
             self.logger.info(
                 "[Val] "
                 "Epoch {0} : "
-                "Val_Acc {val_acc:.2f}".format(
+                "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}".format(
                     epoch,
                     val_acc=meter_top1.avg,
+                    val_loss=meter_oriloss.avg
                 )
             )
 
