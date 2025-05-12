@@ -22,7 +22,7 @@ Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5000.0,  
+        "140k": 5390.0,  
     }
 }
 
