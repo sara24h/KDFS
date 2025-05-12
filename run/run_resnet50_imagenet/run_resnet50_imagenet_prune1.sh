@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-0,1,2,3}
+device=${DEVICE:-0,1}  # Use 2 GPUs (indices 0 and 1)
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -23,7 +23,7 @@ coef_kdloss=${COEF_KDLOSS:-0.5}
 coef_rcloss=${COEF_RCLOSS:-1.0}
 coef_maskloss=${COEF_MASKLOSS:-1.0}
 compress_rate=${COMPRESS_RATE:-0.3}
-finetune_num_epochs=${FINETUNE_NUM_EPOCHS:-2}
+finetune_num_epochs=${FINETUNE_NUM_EPOCHS:-15}
 finetune_lr=${FINETUNE_LR:-4e-06}
 finetune_warmup_steps=${FINETUNE_WARMUP_STEPS:-5}
 finetune_warmup_start_lr=${FINETUNE_WARMUP_START_LR:-4e-08}
@@ -35,6 +35,7 @@ finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
 dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
 master_port=${MASTER_PORT:-6681}
+num_epochs=${NUM_EPOCHS:-6}
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -42,6 +43,7 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=$device
+export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda
 
 # Check phase argument
 PHASE=${1:-train}
@@ -60,15 +62,42 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# Calculate number of GPUs
+# Calculate number of GPUs (should be 2)
 nproc_per_node=$(echo $device | tr -cd ',' | wc -c)
 nproc_per_node=$((nproc_per_node + 1))
+if [ "$nproc_per_node" -ne 2 ]; then
+    echo "Warning: Expected 2 GPUs, but found $nproc_per_node. Adjusting to 2."
+    nproc_per_node=2
+fi
 
 # Define pin_memory flag
 pin_memory_flag=""
 if [ "$pin_memory" = "true" ]; then
     pin_memory_flag="--pin_memory"
 fi
+
+# Parse additional arguments to avoid duplicates
+declare -A args
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --lr) lr="$2"; shift 2 ;;
+        --num_epochs) num_epochs="$2"; shift 2 ;;
+        --finetune_num_epochs) finetune_num_epochs="$2"; shift 2 ;;
+        --weight_decay) weight_decay="$2"; shift 2 ;;
+        --gumbel_start_temperature) gumbel_start_temperature="$2"; shift 2 ;;
+        --gumbel_end_temperature) gumbel_end_temperature="$2"; shift 2 ;;
+        --warmup_start_lr) warmup_start_lr="$2"; shift 2 ;;
+        --coef_kdloss) coef_kdloss="$2"; shift 2 ;;
+        --coef_rcloss) coef_rcloss="$2"; shift 2 ;;
+        --coef_maskloss) coef_maskloss="$2"; shift 2 ;;
+        --compress_rate) compress_rate="$2"; shift 2 ;;
+        --warmup_steps) warmup_steps="$2"; shift 2 ;;
+        --dataset_mode) dataset_mode="$2"; shift 2 ;;
+        --dataset_dir) dataset_dir="$2"; shift 2 ;;
+        --ddp) ddp_flag="--ddp"; shift ;;
+        *) echo "Ignoring unrecognized argument: $1"; shift ;;
+    esac
+done
 
 # Print arguments for debugging
 echo "Running torchrun with arguments:"
@@ -82,6 +111,7 @@ if [ "$PHASE" = "train" ]; then
         --num_workers $num_workers \
         $pin_memory_flag \
         --seed $seed \
+        --num_epochs $num_epochs \
         --lr $lr \
         --warmup_steps $warmup_steps \
         --warmup_start_lr $warmup_start_lr \
@@ -99,8 +129,7 @@ if [ "$PHASE" = "train" ]; then
         --compress_rate $compress_rate \
         --dataset_mode $dataset_mode \
         --dataset_dir $dataset_dir \
-        --ddp \
-        $@"
+        $ddp_flag"
 fi
 
 if [ "$PHASE" = "train" ]; then
@@ -114,6 +143,7 @@ if [ "$PHASE" = "train" ]; then
         --num_workers "$num_workers" \
         $pin_memory_flag \
         --seed "$seed" \
+        --num_epochs "$num_epochs" \
         --lr "$lr" \
         --warmup_steps "$warmup_steps" \
         --warmup_start_lr "$warmup_start_lr" \
@@ -131,8 +161,7 @@ if [ "$PHASE" = "train" ]; then
         --compress_rate "$compress_rate" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
-        --ddp \
-        "$@"
+        $ddp_flag
 elif [ "$PHASE" = "finetune" ]; then
     # Check if student checkpoint exists
     student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
@@ -164,8 +193,7 @@ elif [ "$PHASE" = "finetune" ]; then
         --sparsed_student_ckpt_path $result_dir/student_model/finetune_${arch}_sparse_best.pt \
         --dataset_mode $dataset_mode \
         --dataset_dir $dataset_dir \
-        --ddp \
-        $@"
+        $ddp_flag"
 
     # Run finetuning with DDP
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
@@ -190,6 +218,5 @@ elif [ "$PHASE" = "finetune" ]; then
         --sparsed_student_ckpt_path "$result_dir/student_model/finetune_${arch}_sparse_best.pt" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
-        --ddp \
-        "$@"
+        $ddp_flag
 fi
