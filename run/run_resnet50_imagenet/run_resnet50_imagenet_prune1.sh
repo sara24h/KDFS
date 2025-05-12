@@ -91,6 +91,9 @@ while [ $# -gt 0 ]; do
         --dataset_dir) dataset_dir="$2"; shift 2 ;;
         --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;
         --resume) resume="$2"; shift 2 ;;
+        --train_batch_size) train_batch_size="$2"; shift 2 ;;  # اضافه کردن آرگومان
+        --eval_batch_size) eval_batch_size="$2"; shift 2 ;;   # اضافه کردن آرگومان
+        --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;     # اضافه کردن آرگومان
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
