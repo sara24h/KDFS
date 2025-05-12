@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-cuda}
+device=${DEVICE:-0,1,2,3}  # فرض می‌کنیم چندین GPU داریم
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -34,12 +34,14 @@ finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-8}
 finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
 dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
+master_port=${MASTER_PORT:-6681}  # پورت اصلی برای DDP
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES=$device
 
 # Check phase argument
 PHASE=${1:-train}
@@ -58,12 +60,16 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
+# تعداد GPUها را از متغیر device محاسبه می‌کنیم (با شمارش کاماها)
+nproc_per_node=$(echo $device | tr -cd ',' | wc -c)
+nproc_per_node=$((nproc_per_node + 1))
+
 if [ "$PHASE" = "train" ]; then
-    # Run training
-    python /kaggle/working/KDFS/main.py \
+    # Run training with DDP
+    torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase train \
         --arch "$arch" \
-        --device "$device" \
+        --device cuda \
         --result_dir "$result_dir" \
         --teacher_ckpt_path "$teacher_ckpt_path" \
         --num_workers "$num_workers" \
@@ -96,11 +102,11 @@ elif [ "$PHASE" = "finetune" ]; then
         exit 1
     fi
 
-    # Run finetuning
-    python /kaggle/working/KDFS/main.py \
+    # Run finetuning with DDP
+    torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch "$arch" \
-        --device "$device" \
+        --device cuda \
         --result_dir "$result_dir" \
         --teacher_ckpt_path "$teacher_ckpt_path" \
         --finetune_student_ckpt_path "$student_ckpt_path" \
