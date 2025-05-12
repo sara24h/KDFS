@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-0,1,2,3}  # فرض می‌کنیم چندین GPU داریم
+device=${DEVICE:-0,1,2,3}
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -34,7 +34,7 @@ finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-8}
 finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
 dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
-master_port=${MASTER_PORT:-6681}  # پورت اصلی برای DDP
+master_port=${MASTER_PORT:-6681}
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -60,9 +60,15 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# تعداد GPUها را از متغیر device محاسبه می‌کنیم (با شمارش کاماها)
+# Calculate number of GPUs
 nproc_per_node=$(echo $device | tr -cd ',' | wc -c)
 nproc_per_node=$((nproc_per_node + 1))
+
+# Define pin_memory flag
+pin_memory_flag=""
+if [ "$pin_memory" = "true" ]; then
+    pin_memory_flag="--pin_memory"
+fi
 
 if [ "$PHASE" = "train" ]; then
     # Run training with DDP
@@ -73,7 +79,7 @@ if [ "$PHASE" = "train" ]; then
         --result_dir "$result_dir" \
         --teacher_ckpt_path "$teacher_ckpt_path" \
         --num_workers "$num_workers" \
-        $( [ "$pin_memory" = "true" ] && echo "--pin_memory" ) \
+        $pin_memory_flag \
         --seed "$seed" \
         --lr "$lr" \
         --warmup_steps "$warmup_steps" \
@@ -111,7 +117,7 @@ elif [ "$PHASE" = "finetune" ]; then
         --teacher_ckpt_path "$teacher_ckpt_path" \
         --finetune_student_ckpt_path "$student_ckpt_path" \
         --num_workers "$num_workers" \
-        $( [ "$pin_memory" = "true" ] && echo "--pin_memory" ) \
+        $pin_memory_flag \
         --seed "$seed" \
         --finetune_num_epochs "$finetune_num_epochs" \
         --finetune_lr "$finetune_lr" \
