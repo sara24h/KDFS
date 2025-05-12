@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-0,1}  # Use 2 GPUs (indices 0 and 1)
+device=${DEVICE:-0,1}
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -36,6 +36,7 @@ dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
 master_port=${MASTER_PORT:-6681}
 num_epochs=${NUM_EPOCHS:-6}
+resume=${RESUME:-}  # مقدار پیش‌فرض برای resume
 
 # Environment variables for CUDA and memory management
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -47,7 +48,7 @@ export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda
 
 # Check phase argument
 PHASE=${1:-train}
-shift # Remove the first argument (train/finetune) from "$@"
+shift
 if [[ "$PHASE" != "train" && "$PHASE" != "finetune" ]]; then
     echo "Error: Invalid phase. Use 'train' or 'finetune'."
     exit 1
@@ -62,7 +63,7 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# Calculate number of GPUs (should be 2)
+# Calculate number of GPUs
 nproc_per_node=$(echo $device | tr -cd ',' | wc -c)
 nproc_per_node=$((nproc_per_node + 1))
 if [ "$nproc_per_node" -ne 2 ]; then
@@ -94,10 +95,18 @@ while [ $# -gt 0 ]; do
         --warmup_steps) warmup_steps="$2"; shift 2 ;;
         --dataset_mode) dataset_mode="$2"; shift 2 ;;
         --dataset_dir) dataset_dir="$2"; shift 2 ;;
+        --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;  # اضافه کردن آرگومان teacher_ckpt_path
+        --resume) resume="$2"; shift 2 ;;  # اضافه کردن آرگومان resume
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
 done
+
+# Check if resume checkpoint exists (if provided)
+if [ -n "$resume" ] && [ ! -f "$resume" ]; then
+    echo "Error: Resume checkpoint not found at $resume"
+    exit 1
+fi
 
 # Print arguments for debugging
 echo "Running torchrun with arguments:"
@@ -129,11 +138,11 @@ if [ "$PHASE" = "train" ]; then
         --compress_rate $compress_rate \
         --dataset_mode $dataset_mode \
         --dataset_dir $dataset_dir \
+        $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag"
 fi
 
 if [ "$PHASE" = "train" ]; then
-    # Run training with DDP
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase train \
         --arch "$arch" \
@@ -161,16 +170,15 @@ if [ "$PHASE" = "train" ]; then
         --compress_rate "$compress_rate" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
+        $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag
 elif [ "$PHASE" = "finetune" ]; then
-    # Check if student checkpoint exists
     student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
     if [ ! -f "$student_ckpt_path" ]; then
         echo "Error: Student checkpoint not found at $student_ckpt_path"
         exit 1
     fi
 
-    # Print arguments for debugging
     echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch $arch \
@@ -193,9 +201,9 @@ elif [ "$PHASE" = "finetune" ]; then
         --sparsed_student_ckpt_path $result_dir/student_model/finetune_${arch}_sparse_best.pt \
         --dataset_mode $dataset_mode \
         --dataset_dir $dataset_dir \
+        $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag"
 
-    # Run finetuning with DDP
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch "$arch" \
@@ -218,5 +226,6 @@ elif [ "$PHASE" = "finetune" ]; then
         --sparsed_student_ckpt_path "$result_dir/student_model/finetune_${arch}_sparse_best.pt" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
+        $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag
 fi
