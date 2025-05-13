@@ -36,7 +36,7 @@ class FinetuneDDP:
         self.finetune_student_ckpt_path = args.finetune_student_ckpt_path
         self.finetune_num_epochs = args.finetune_num_epochs
         self.finetune_lr = args.finetune_lr
-        self.finetune_warmup_steps = args.finetune_wamp_steps 
+        self.finetune_warmup_steps = args.finetune_warmup_steps
         self.finetune_warmup_start_lr = args.finetune_warmup_start_lr
         self.finetune_lr_decay_T_max = args.finetune_lr_decay_T_max
         self.finetune_lr_decay_eta_min = args.finetune_lr_decay_eta_min
