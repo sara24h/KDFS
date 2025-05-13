@@ -105,7 +105,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# دوباره بررسی تعداد GPUها بعد از پارシング آرگومان‌ها
+# دوباره بررسی تعداد GPUها بعد از پار싱 آرگومان‌ها
 if [ "$num_gpus" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES=0
 elif [ "$num_gpus" -eq 2 ]; then
