@@ -195,42 +195,14 @@ if [ "$PHASE" = "train" ]; then
 
         
 elif [ "$PHASE" = "finetune" ]; then
-    if [ -n "$finetune_student_ckpt_path" ]; then
-        student_ckpt_path="$finetune_student_ckpt_path"
-    else
-        student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
-    fi
+    student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_best.pt}"
     if [ ! -f "$student_ckpt_path" ]; then
         echo "Error: Student checkpoint not found at $student_ckpt_path"
         exit 1
     fi
 
-    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
-        --phase finetune \
-        --arch $arch \
-        --device cuda \
-        --result_dir $result_dir \
-        --teacher_ckpt_path $teacher_ckpt_path \
-        --finetune_student_ckpt_path $student_ckpt_path \
-        --num_workers $num_workers \
-        $pin_memory_flag \
-        --seed $seed \
-        --finetune_num_epochs $finetune_num_epochs \
-        --finetune_lr $finetune_lr \
-        --finetune_warmup_steps $finetune_warmup_steps \
-        --finetune_warmup_start_lr $finetune_warmup_start_lr \
-        --finetune_lr_decay_T_max $finetune_lr_decay_T_max \
-        --finetune_lr_decay_eta_min $finetune_lr_decay_eta_min \
-        --finetune_weight_decay $finetune_weight_decay \
-        --finetune_train_batch_size $finetune_train_batch_size \
-        --finetune_eval_batch_size $finetune_eval_batch_size \
-        --sparsed_student_ckpt_path $result_dir/student_model/finetune_${arch}_sparse_best.pt \
-        --dataset_mode $dataset_mode \
-        --dataset_dir $dataset_dir \
-        $( [ -n "$resume" ] && echo "--resume $resume" ) \
-        $ddp_flag"
-
-    torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
+    echo "Running finetune with student checkpoint: $student_ckpt_path"
+    torchrun --nproc_per_node="$nproc_per_node" --master_port="$master_port" /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch "$arch" \
         --device cuda \
