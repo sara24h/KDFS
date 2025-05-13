@@ -585,7 +585,7 @@ class TrainDDP:
                         meter_top1.update(prec1, n)
 
                         _tqdm.set_postbuild_model(self):
-                            _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
+                            _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg), test_loss="{:.4f}".format(meter_loss.avg))
                         _tqdm.update(1)
                         time.sleep(0.01)
 
