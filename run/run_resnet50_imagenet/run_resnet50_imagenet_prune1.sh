@@ -14,8 +14,8 @@ warmup_start_lr=${WARMUP_START_LR:-1e-05}
 lr_decay_T_max=${LR_DECAY_T_MAX:-250}
 lr_decay_eta_min=${LR_DECAY_ETA_MIN:-4e-05}
 weight_decay=${WEIGHT_DECAY:-0.0005}
-train_batch_size=${TRAIN_BATCH_SIZE:-16}
-eval_batch_size=${EVAL_BATCH_SIZE:-16}
+train_batch_size=${TRAIN_BATCH_SIZE:-32}  # افزایش به 32 برای استفاده بهینه از 2 GPU
+eval_batch_size=${EVAL_BATCH_SIZE:-32}    # افزایش به 32 برای استفاده بهینه از 2 GPU
 target_temperature=${TARGET_TEMPERATURE:-3}
 gumbel_start_temperature=${GUMBEL_START_TEMPERATURE:-1}
 gumbel_end_temperature=${GUMBEL_END_TEMPERATURE:-0.1}
@@ -35,7 +35,7 @@ finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
 dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
 master_port=${MASTER_PORT:-6681}
-num_epochs=${NUM_EPOCHS:-6}
+num_epochs=${NUM_EPOCHS:-3}
 resume=${RESUME:-}
 
 # Environment variables for CUDA and memory management
