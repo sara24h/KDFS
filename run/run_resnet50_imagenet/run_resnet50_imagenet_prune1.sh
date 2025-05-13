@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-device=${DEVICE:-0}  # فقط یک GPU
+num_gpus=${NUM_GPUS:-1}  # تعداد GPUهای پیش‌فرض: 1
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -43,7 +43,17 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES=$device
+
+# تنظیم CUDA_VISIBLE_DEVICES بر اساس تعداد GPUها
+if [ "$num_gpus" -eq 1 ]; then
+    export CUDA_VISIBLE_DEVICES=0
+elif [ "$num_gpus" -eq 2 ]; then
+    export CUDA_VISIBLE_DEVICES=0,1
+else
+    echo "Error: Invalid number of GPUs. Use 1 or 2."
+    exit 1
+fi
+
 export XLA_FLAGS=--xla_gpu_cuda_data_dir=/usr/local/cuda
 
 # Check phase argument
@@ -57,8 +67,8 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# Calculate number of GPUs
-nproc_per_node=1  # فقط یک فرآیند
+# تنظیم nproc_per_node به تعداد GPUها
+nproc_per_node=$num_gpus
 
 # Define pin_memory flag
 pin_memory_flag=""
@@ -70,6 +80,7 @@ fi
 declare -A args
 while [ $# -gt 0 ]; do
     case "$1" in
+        --num_gpus) num_gpus="$2"; shift 2 ;;
         --lr) lr="$2"; shift 2 ;;
         --num_epochs) num_epochs="$2"; shift 2 ;;
         --finetune_num_epochs) finetune_num_epochs="$2"; shift 2 ;;
@@ -93,6 +104,16 @@ while [ $# -gt 0 ]; do
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
 done
+
+# دوباره بررسی تعداد GPUها بعد از پارシング آرگومان‌ها
+if [ "$num_gpus" -eq 1 ]; then
+    export CUDA_VISIBLE_DEVICES=0
+elif [ "$num_gpus" -eq 2 ]; then
+    export CUDA_VISIBLE_DEVICES=0,1
+else
+    echo "Error: Invalid number of GPUs. Use 1 or 2."
+    exit 1
+fi
 
 # Check if teacher checkpoint exists
 if [ ! -f "$teacher_ckpt_path" ]; then
