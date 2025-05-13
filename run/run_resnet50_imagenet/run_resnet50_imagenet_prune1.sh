@@ -191,8 +191,15 @@ if [ "$PHASE" = "train" ]; then
         --dataset_dir "$dataset_dir" \
         $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag
+
+
+        
 elif [ "$PHASE" = "finetune" ]; then
-    student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
+    if [ -n "$finetune_student_ckpt_path" ]; then
+        student_ckpt_path="$finetune_student_ckpt_path"
+    else
+        student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
+    fi
     if [ ! -f "$student_ckpt_path" ]; then
         echo "Error: Student checkpoint not found at $student_ckpt_path"
         exit 1
