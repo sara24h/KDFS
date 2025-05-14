@@ -1,9 +1,4 @@
 #!/bin/bash
-
-# Install required packages
-echo "Installing thop..."
-pip install thop
-
 # Default values
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
