@@ -174,7 +174,7 @@ if [ "$PHASE" = "train" ]; then
         $( [ -n "$resume" ] && echo "--resume $resume" ) \
         --ddp  # فعال‌سازی DDP
 elif [ "$PHASE" = "finetune" ]; then
-    student_ckpt_path="$result_dir/student_model/${arch}_sparse_last.pt"
+    student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_last.pt}"  # Use provided path or default
     if [ ! -f "$student_ckpt_path" ]; then
         echo "Error: Student checkpoint not found at $student_ckpt_path"
         exit 1
