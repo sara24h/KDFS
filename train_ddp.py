@@ -607,4 +607,4 @@ class TrainDDP:
         self.define_loss()
         self.define_optim()
         self.train()
-        self.test()
+        #self.test()
