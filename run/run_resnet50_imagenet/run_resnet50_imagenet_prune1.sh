@@ -186,8 +186,8 @@ elif [ "$PHASE" = "finetune" ]; then
         --finetune_lr_decay_T_max "$finetune_lr_decay_T_max" \
         --finetune_lr_decay_eta_min "$finetune_lr_decay_eta_min" \
         --finetune_weight_decay "$finetune_weight_decay" \
-        --finetune_train_batch_size "$finetune_train_batch_size" \
-        --finetune_eval_batch_size "$finetune_eval_batch_size" \
+        --train_batch_size "$finetune_train_batch_size" \
+        --eval_batch_size "$finetune_eval_batch_size" \
         --sparsed_student_ckpt_path "$result_dir/student_model/finetune_${arch}_sparse_best.pt" \
         --dataset_mode "$dataset_mode" \
         --dataset_dir "$dataset_dir" \
