@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Install required packages
+echo "Installing thop..."
+pip install thop
+
 # Default values
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
@@ -44,7 +48,7 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 
-
+# Set CUDA_VISIBLE_DEVICES based on num_gpus
 if [ "$num_gpus" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES=0
 elif [ "$num_gpus" -eq 2 ]; then
@@ -67,7 +71,7 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# تنظیم nproc_per_node
+# Set nproc_per_node
 nproc_per_node=$num_gpus
 
 # Define pin_memory flag
@@ -77,7 +81,6 @@ if [ "$pin_memory" = "true" ]; then
 fi
 
 # Parse additional arguments
-declare -A args
 while [ $# -gt 0 ]; do
     case "$1" in
         --num_gpus) num_gpus="$2"; shift 2 ;;
@@ -108,7 +111,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-
+# Re-validate CUDA_VISIBLE_DEVICES
 if [ "$num_gpus" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES=0
 elif [ "$num_gpus" -eq 2 ]; then
@@ -130,8 +133,8 @@ if [ -n "$resume" ] && [ ! -f "$resume" ]; then
     exit 1
 fi
 
-
 if [ "$PHASE" = "train" ]; then
+    echo "Running training phase with train_batch_size=$train_batch_size, eval_batch_size=$eval_batch_size"
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
         --phase train \
         --arch "$arch" \
@@ -162,7 +165,6 @@ if [ "$PHASE" = "train" ]; then
         $( [ -n "$resume" ] && echo "--resume $resume" ) \
         $ddp_flag
 
-
 elif [ "$PHASE" = "finetune" ]; then
     student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_best.pt}"
     if [ ! -f "$student_ckpt_path" ]; then
@@ -170,7 +172,8 @@ elif [ "$PHASE" = "finetune" ]; then
         exit 1
     fi
 
-    echo "Running finetune with student checkpoint: $student_ckpt_path"
+    echo "Running finetune phase with finetune_train_batch_size=$finetune_train_batch_size, finetune_eval_batch_size=$finetune_eval_batch_size"
+    echo "Student checkpoint: $student_ckpt_path"
     torchrun --nproc_per_node="$nproc_per_node" --master_port="$master_port" /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch "$arch" \
