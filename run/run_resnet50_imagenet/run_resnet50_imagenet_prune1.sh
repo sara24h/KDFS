@@ -30,8 +30,8 @@ finetune_warmup_start_lr=${FINETUNE_WARMUP_START_LR:-4e-08}
 finetune_lr_decay_T_max=${FINETUNE_LR_DECAY_T_MAX:-20}
 finetune_lr_decay_eta_min=${FINETUNE_LR_DECAY_ETA_MIN:-4e-08}
 finetune_weight_decay=${FINETUNE_WEIGHT_DECAY:-2e-05}
-finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-8}
-finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-8}
+finetune_train_batch_size=${FINETUNE_TRAIN_BATCH_SIZE:-128}
+finetune_eval_batch_size=${FINETUNE_EVAL_BATCH_SIZE:-128}
 dataset_mode=${DATASET_MODE:-hardfake}
 dataset_dir=${DATASET_DIR:-/kaggle/input/hardfakevsrealfaces}
 master_port=${MASTER_PORT:-6681}
@@ -101,8 +101,8 @@ while [ $# -gt 0 ]; do
         --eval_batch_size) eval_batch_size="$2"; shift 2 ;;
         --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;
         --finetune_student_ckpt_path) finetune_student_ckpt_path="$2"; shift 2 ;;
-        --finetune_train_batch_size) finetune_train_batch_size="$2"; shift 2 ;;  # Added
-        --finetune_eval_batch_size) finetune_eval_batch_size="$2"; shift 2 ;;   # Added
+        --finetune_train_batch_size) finetune_train_batch_size="$2"; shift 2 ;;
+        --finetune_eval_batch_size) finetune_eval_batch_size="$2"; shift 2 ;;
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
