@@ -100,7 +100,9 @@ while [ $# -gt 0 ]; do
         --train_batch_size) train_batch_size="$2"; shift 2 ;;
         --eval_batch_size) eval_batch_size="$2"; shift 2 ;;
         --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;
-        --finetune_student_ckpt_path) finetune_student_ckpt_path="$2"; shift 2 ;;  # خط اضافه‌شده
+        --finetune_student_ckpt_path) finetune_student_ckpt_path="$2"; shift 2 ;;
+        --finetune_train_batch_size) finetune_train_batch_size="$2"; shift 2 ;;  # Added
+        --finetune_eval_batch_size) finetune_eval_batch_size="$2"; shift 2 ;;   # Added
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
