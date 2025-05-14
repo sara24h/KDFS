@@ -161,14 +161,24 @@ if [ "$PHASE" = "train" ]; then
         $ddp_flag
 
 elif [ "$PHASE" = "finetune" ]; then
-    student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_best.pt}"
-    if [ ! -f "$student_ckpt_path" ]; then
-        echo "Error: Student checkpoint not found at $student_ckpt_path"
+    # اعتبارسنجی دوباره CUDA_VISIBLE_DEVICES برای فاین‌تیونینگ
+    if [ "$num_gpus" -eq 1 ]; then
+        export CUDA_VISIBLE_DEVICES=0
+    elif [ "$num_gpus" -eq 2 ]; then
+        export CUDA_VISIBLE_DEVICES=0,1
+    else
+        echo "خطا: تعداد GPU نامعتبر است. از 1 یا 2 استفاده کنید."
         exit 1
     fi
 
-    echo "Running finetune phase with finetune_train_batch_size=$finetune_train_batch_size, finetune_eval_batch_size=$finetune_eval_batch_size"
-    echo "Student checkpoint: $student_ckpt_path"
+    student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_best.pt}"
+    if [ ! -f "$student_ckpt_path" ]; then
+        echo "خطا: فایل چک‌پوینت دانش‌آموز در $student_ckpt_path یافت نشد"
+        exit 1
+    fi
+
+    echo "اجرای فاز فاین‌تیونینگ با finetune_train_batch_size=$finetune_train_batch_size, finetune_eval_batch_size=$finetune_eval_batch_size"
+    echo "چک‌پوینت دانش‌آموز: $student_ckpt_path"
     torchrun --nproc_per_node="$nproc_per_node" --master_port="$master_port" /kaggle/working/KDFS/main.py \
         --phase finetune \
         --arch "$arch" \
