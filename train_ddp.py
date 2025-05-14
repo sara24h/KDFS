@@ -563,8 +563,6 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Train finished!")
 
-    
-
     def main(self):
         self.dist_init()
         self.result_init()
@@ -574,4 +572,4 @@ class TrainDDP:
         self.define_loss()
         self.define_optim()
         self.train()
-        self.test()
+        
