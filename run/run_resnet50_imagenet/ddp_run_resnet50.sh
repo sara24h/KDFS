@@ -85,6 +85,9 @@ while [ $# -gt 0 ]; do
         --dataset_mode) dataset_mode="$2"; shift 2 ;;
         --dataset_dir) dataset_dir="$2"; shift 2 ;;
         --teacher_ckpt_path) teacher_ckpt_path="$2"; shift 2 ;;
+        --finetune_student_ckpt_path) finetune_student_ckpt_path="$2"; shift 2 ;;  # Add this
+        --finetune_train_batch_size) finetune_train_batch_size="$2"; shift 2 ;;  # Add this
+        --finetune_eval_batch_size) finetune_eval_batch_size="$2"; shift 2 ;;    # Add this
         --resume) resume="$2"; shift 2 ;;
         --train_batch_size) train_batch_size="$2"; shift 2 ;;
         --eval_batch_size) eval_batch_size="$2"; shift 2 ;;
