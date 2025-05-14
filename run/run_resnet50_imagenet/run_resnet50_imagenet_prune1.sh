@@ -175,7 +175,7 @@ elif [ "$PHASE" = "finetune" ]; then
         --device cuda \
         --result_dir "$result_dir" \
         --teacher_ckpt_path "$teacher_ckpt_path" \
-        --finernels_student_ckpt_path "$student_ckpt_path" \
+        --finetune_student_ckpt_path "$student_ckpt_path" \
         --num_workers "$num_workers" \
         $pin_memory_flag \
         --seed "$seed" \
