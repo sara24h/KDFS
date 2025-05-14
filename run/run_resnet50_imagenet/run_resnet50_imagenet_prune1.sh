@@ -4,7 +4,7 @@
 arch=${ARCH:-ResNet_50}
 result_dir=${RESULT_DIR:-/kaggle/working/results/run_resnet50_imagenet_prune1}
 teacher_ckpt_path=${TEACHER_CKPT_PATH:-/kaggle/working/KDFS/teacher_dir/teacher_model_best.pth}
-num_gpus=${NUM_GPUS:-1}  # تعداد GPUهای پیش‌فرض: 1
+num_gpus=${NUM_GPUS:-1}
 num_workers=${NUM_WORKERS:-4}
 pin_memory=${PIN_MEMORY:-true}
 seed=${SEED:-3407}
@@ -14,8 +14,8 @@ warmup_start_lr=${WARMUP_START_LR:-1e-05}
 lr_decay_T_max=${LR_DECAY_T_MAX:-250}
 lr_decay_eta_min=${LR_DECAY_ETA_MIN:-4e-05}
 weight_decay=${WEIGHT_DECAY:-0.0005}
-train_batch_size=${TRAIN_BATCH_SIZE:-32}  # افزایش به 32 برای استفاده بهینه از 2 GPU
-eval_batch_size=${EVAL_BATCH_SIZE:-32}    # افزایش به 32 برای استفاده بهینه از 2 GPU
+train_batch_size=${TRAIN_BATCH_SIZE:-32}
+eval_batch_size=${EVAL_BATCH_SIZE:-32}
 target_temperature=${TARGET_TEMPERATURE:-3}
 gumbel_start_temperature=${GUMBEL_START_TEMPERATURE:-1}
 gumbel_end_temperature=${GUMBEL_END_TEMPERATURE:-0.1}
@@ -44,7 +44,7 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 
-# تنظیم CUDA_VISIBLE_DEVICES بر اساس تعداد GPUها
+
 if [ "$num_gpus" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES=0
 elif [ "$num_gpus" -eq 2 ]; then
@@ -67,7 +67,7 @@ fi
 # Create result directory
 mkdir -p "$result_dir"
 
-# تنظیم nproc_per_node به تعداد GPUها
+# تنظیم nproc_per_node
 nproc_per_node=$num_gpus
 
 # Define pin_memory flag
@@ -76,7 +76,7 @@ if [ "$pin_memory" = "true" ]; then
     pin_memory_flag="--pin_memory"
 fi
 
-# Parse additional arguments to avoid duplicates
+# Parse additional arguments
 declare -A args
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -100,12 +100,13 @@ while [ $# -gt 0 ]; do
         --train_batch_size) train_batch_size="$2"; shift 2 ;;
         --eval_batch_size) eval_batch_size="$2"; shift 2 ;;
         --lr_decay_T_max) lr_decay_T_max="$2"; shift 2 ;;
+        --finetune_student_ckpt_path) finetune_student_ckpt_path="$2"; shift 2 ;;  # خط اضافه‌شده
         --ddp) ddp_flag="--ddp"; shift ;;
         *) echo "Ignoring unrecognized argument: $1"; shift ;;
     esac
 done
 
-# دوباره بررسی تعداد GPUها بعد از پار싱 آرگومان‌ها
+
 if [ "$num_gpus" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES=0
 elif [ "$num_gpus" -eq 2 ]; then
@@ -127,39 +128,6 @@ if [ -n "$resume" ] && [ ! -f "$resume" ]; then
     exit 1
 fi
 
-# Print arguments for debugging
-echo "Running torchrun with arguments:"
-if [ "$PHASE" = "train" ]; then
-    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
-        --phase train \
-        --arch $arch \
-        --device cuda \
-        --result_dir $result_dir \
-        --teacher_ckpt_path $teacher_ckpt_path \
-        --num_workers $num_workers \
-        $pin_memory_flag \
-        --seed $seed \
-        --num_epochs $num_epochs \
-        --lr $lr \
-        --warmup_steps $warmup_steps \
-        --warmup_start_lr $warmup_start_lr \
-        --lr_decay_T_max $lr_decay_T_max \
-        --lr_decay_eta_min $lr_decay_eta_min \
-        --weight_decay $weight_decay \
-        --train_batch_size $train_batch_size \
-        --eval_batch_size $eval_batch_size \
-        --target_temperature $target_temperature \
-        --gumbel_start_temperature $gumbel_start_temperature \
-        --gumbel_end_temperature $gumbel_end_temperature \
-        --coef_kdloss $coef_kdloss \
-        --coef_rcloss $coef_rcloss \
-        --coef_maskloss $coef_maskloss \
-        --compress_rate $compress_rate \
-        --dataset_mode $dataset_mode \
-        --dataset_dir $dataset_dir \
-        $( [ -n "$resume" ] && echo "--resume $resume" ) \
-        $ddp_flag"
-fi
 
 if [ "$PHASE" = "train" ]; then
     torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
@@ -193,7 +161,6 @@ if [ "$PHASE" = "train" ]; then
         $ddp_flag
 
 
-        
 elif [ "$PHASE" = "finetune" ]; then
     student_ckpt_path="${finetune_student_ckpt_path:-$result_dir/student_model/${arch}_sparse_best.pt}"
     if [ ! -f "$student_ckpt_path" ]; then
@@ -208,7 +175,7 @@ elif [ "$PHASE" = "finetune" ]; then
         --device cuda \
         --result_dir "$result_dir" \
         --teacher_ckpt_path "$teacher_ckpt_path" \
-        --finetune_student_ckpt_path "$student_ckpt_path" \
+        --finernels_student_ckpt_path "$student_ckpt_path" \
         --num_workers "$num_workers" \
         $pin_memory_flag \
         --seed "$seed" \
