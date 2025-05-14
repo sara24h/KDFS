@@ -310,13 +310,13 @@ def parse_args():
     parser.add_argument(
         "--finetune_train_batch_size",
         type=int,
-        default=128,
+        default=64,
         help="Batch size for training in finetune",
     )
     parser.add_argument(
         "--finetune_eval_batch_size",
         type=int,
-        default=128,
+        default=64,
         help="Batch size for validation in finetune",
     )
     parser.add_argument(
