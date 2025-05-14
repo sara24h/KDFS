@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, ResNet_50_sparse_140k
 from utils import utils, meter
 from get_flops_and_params import get_flops_and_params
 
@@ -18,7 +18,7 @@ class Test:
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode  # 'hardfake' یا 'rvf10k'
+        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', یا '140k'
 
     def dataload(self):
         print("==> Loading test dataset..")
@@ -32,9 +32,10 @@ class Test:
                     eval_batch_size=self.test_batch_size,
                     num_workers=self.num_workers,
                     pin_memory=self.pin_memory,
-                    ddp=False
+                    ddp=False,
+                    max_samples=140000  # محدود کردن به 140k نمونه (در صورت نیاز)
                 )
-            else:  # rvf10k
+            elif self.dataset_mode == 'rvf10k':
                 dataset = Dataset_selector(
                     dataset_mode='rvf10k',
                     rvf10k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
@@ -44,7 +45,20 @@ class Test:
                     eval_batch_size=self.test_batch_size,
                     num_workers=self.num_workers,
                     pin_memory=self.pin_memory,
-                    ddp=False
+                    ddp=False,
+                    max_samples=140000  # محدود کردن به 140k نمونه (در صورت نیاز)
+                )
+            else:  # فرضاً حالت 140k
+                dataset = Dataset_selector(
+                    dataset_mode='140k',
+                    hardfake_csv_file=os.path.join(self.dataset_dir, 'data.csv'),  # یا فایل مناسب
+                    hardfake_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False,
+                    max_samples=140000  # محدود کردن به 140k نمونه
                 )
             
             self.test_loader = dataset.loader_test
@@ -59,8 +73,10 @@ class Test:
             print("Loading sparse student model")
             if self.dataset_mode == 'hardfake':
                 self.student = ResNet_50_sparse_hardfakevsreal()
-            else:  # rvf10k
+            elif self.dataset_mode == 'rvf10k':
                 self.student = ResNet_50_sparse_rvf10k()
+            else:  # فرضاً برای 140k
+                self.student = ResNet_50_sparse_140k()  # مدل جدید با حدود 140k پارامتر
             
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
             state_dict = ckpt_student["student"] if "student" in ckpt_student else ckpt_student
@@ -114,6 +130,9 @@ class Test:
                 f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
                 f"Flops reduction: {Flops_reduction:.2f}%"
             )
+            # بررسی تعداد پارامترها برای 140k
+            if abs(Params * 1e6 - 140000) > 10000:  # اگر تعداد پارامترها بیش از 10k از 140k فاصله داشته باشد
+                print(f"Warning: Model parameters ({Params:.2f}M) are not close to 140k!")
         except Exception as e:
             print(f"Error during testing: {str(e)}")
             raise
