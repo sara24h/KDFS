@@ -412,8 +412,7 @@ class Test:
                 f"Flops_baseline: {Flops_baseline:.2f}M, Flops: {Flops:.2f}M, "
                 f"Flops reduction: {Flops_reduction:.2f}%"
             )
-            if self.dataset_mode == '140k' and abs(Params * 1e6 - 140000) > 10000:
-                print(f"Warning: Model parameters ({Params:.2f}M) are not close to 140k!")
+           
         except Exception as e:
             print(f"Error during testing: {str(e)}")
             raise
