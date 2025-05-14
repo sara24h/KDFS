@@ -563,40 +563,7 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Train finished!")
 
-    def test(self):
-        if self.rank == 0:
-            self.student.eval()
-            self.student.module.ticket = True
-            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-
-            with torch.no_grad():
-                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Test")
-                    for images, targets in self.test_loader:
-                        images = images.cuda()
-                        targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets).sum().item()
-                        prec1 = 100. * correct / images.size(0)
-                        n = images.size(0)
-                        meter_top1.update(prec1, n)
-
-                        _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
-                        _tqdm.update(1)
-                        time.sleep(0.01)
-
-            Flops = self.student.module.get_flops()
-            self.logger.info(
-                "[Test] Test_Acc {test_acc:.2f}".format(test_acc=meter_top1.avg)
-            )
-            self.logger.info(
-                "[Test model Flops] : " + str(Flops.item() / (10**6)) + "M"
-            )
-            self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=0)
-            self.writer.add_scalar("test/Flops", Flops, global_step=0)
+    
 
     def main(self):
         self.dist_init()
