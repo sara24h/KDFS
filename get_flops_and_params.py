@@ -16,7 +16,7 @@ Params_baselines = {
     "ResNet_50": {
         "hardfakevsreal": 14.97,
         "rvf10k": 25.50,
-        "140k": 14.97,
+        "140k": 23.51,
     }
 }
 image_sizes = {
