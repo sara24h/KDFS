@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms, models
-from torch.amp import autocast, GradScaler  # Updated import for AMP
+from torch.amp import autocast, GradScaler
 from PIL import Image
 import argparse
 import random
@@ -104,7 +104,6 @@ num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 model = model.to(device)
 
-# Skip torch.compile due to Tesla P100 (CUDA 6.0)
 print("Skipping torch.compile due to incompatible GPU (Tesla P100, CUDA capability 6.0)")
 
 for param in model.parameters():
@@ -138,7 +137,7 @@ for epoch in range(epochs):
         labels = labels.to(device).float()
         optimizer.zero_grad()
 
-        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
             outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
 
@@ -167,7 +166,7 @@ for epoch in range(epochs):
         for images, labels in val_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
+            with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
             val_loss += loss.item()
@@ -195,7 +194,7 @@ with torch.no_grad():
     for images, labels in test_loader:
         images = images.to(device)
         labels = labels.to(device).float()
-        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
             outputs = model(images).squeeze(1)
             loss = criterion(outputs, labels)
         test_loss += loss.item()
@@ -225,7 +224,7 @@ with torch.no_grad():
             continue
         image = Image.open(img_path).convert('RGB')
         image_transformed = transform_test(image).unsqueeze(0).to(device)
-        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):  # Updated autocast
+        with torch.amp.autocast('cuda', enabled=device.type == 'cuda'):
             output = model(image_transformed).squeeze(1)
         prob = torch.sigmoid(output).item()
         predicted_label = 'real' if prob > 0.5 else 'fake'
@@ -240,6 +239,12 @@ file_path = os.path.join(teacher_dir, 'test_samples.png')
 plt.savefig(file_path)
 display(IPImage(filename=file_path))
 
+
+for param in model.parameters():
+    param.requires_grad = True
+
+
 flops, params = get_model_complexity_info(model, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
 print('FLOPs:', flops)
 print('Parameters:', params)
+
