@@ -16,7 +16,6 @@ import numpy as np
 from IPython.display import Image as IPImage, display
 from ptflops import get_model_complexity_info
 from data.dataset import FaceDataset, Dataset_selector
-import uuid
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a ResNet50 model with DDP for fake vs real face classification.')
@@ -41,12 +40,24 @@ def parse_args():
     return parser.parse_args()
 
 def setup_ddp():
-    dist.init_process_group(backend='nccl')
-    local_rank = int(os.environ['LOCAL_RANK'])
-    torch.cuda.set_device(local_rank)
-    return local_rank
+    if not torch.cuda.is_available():
+        print("CUDA not available, falling back to CPU (no DDP).")
+        return -1, 1
+    try:
+        dist.init_process_group(backend='nccl', init_method='env://')
+        local_rank = int(os.environ.get('LOCAL_RANK', -1))
+        if local_rank == -1:
+            raise ValueError("LOCAL_RANK not set, cannot initialize DDP.")
+        world_size = dist.get_world_size()
+        torch.cuda.set_device(local_rank)
+        return local_rank, world_size
+    except Exception as e:
+        print(f"Failed to initialize DDP: {e}. Falling back to single GPU/CPU.")
+        return -1, 1
 
 def reduce_tensor(tensor, world_size):
+    if world_size == 1:
+        return tensor
     rt = tensor.clone()
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= world_size
@@ -54,9 +65,9 @@ def reduce_tensor(tensor, world_size):
 
 def main():
     args = parse_args()
-    local_rank = setup_ddp()
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
+    local_rank, world_size = setup_ddp()
+    rank = dist.get_rank() if world_size > 1 else 0
+    use_ddp = world_size > 1 and local_rank >= 0
 
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True)
@@ -77,7 +88,7 @@ def main():
     batch_size = args.batch_size
     epochs = args.epochs
     lr = args.lr
-    device = torch.device(f'cuda:{local_rank}')
+    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() and local_rank >= 0 else 'cuda' if torch.cuda.is_available() else 'cpu')
 
     if rank == 0:
         if not os.path.exists(data_dir):
@@ -94,7 +105,7 @@ def main():
             eval_batch_size=batch_size,
             num_workers=4,
             pin_memory=True,
-            ddp=True
+            ddp=use_ddp
         )
     elif dataset_mode == 'rvf10k':
         dataset = Dataset_selector(
@@ -106,7 +117,7 @@ def main():
             eval_batch_size=batch_size,
             num_workers=4,
             pin_memory=True,
-            ddp=True
+            ddp=use_ddp
         )
     elif dataset_mode == '140k':
         dataset = Dataset_selector(
@@ -119,19 +130,20 @@ def main():
             eval_batch_size=batch_size,
             num_workers=4,
             pin_memory=True,
-            ddp=True
+            ddp=use_ddp
         )
     else:
         raise ValueError("Invalid dataset_mode. Choose 'hardfake', 'rvf10k', or '140k'.")
 
-    train_sampler = DistributedSampler(dataset.loader_train.dataset, shuffle=True)
-    val_sampler = DistributedSampler(dataset.loader_val.dataset, shuffle=False)
-    test_sampler = DistributedSampler(dataset.loader_test.dataset, shuffle=False)
+    train_sampler = DistributedSampler(dataset.loader_train.dataset, shuffle=True) if use_ddp else None
+    val_sampler = DistributedSampler(dataset.loader_val.dataset, shuffle=False) if use_ddp else None
+    test_sampler = DistributedSampler(dataset.loader_test.dataset, shuffle=False) if use_ddp else None
 
     train_loader = DataLoader(
         dataset.loader_train.dataset,
         batch_size=batch_size,
         sampler=train_sampler,
+        shuffle=(train_sampler is None),
         num_workers=4,
         pin_memory=True
     )
@@ -139,6 +151,7 @@ def main():
         dataset.loader_val.dataset,
         batch_size=batch_size,
         sampler=val_sampler,
+        shuffle=False,
         num_workers=4,
         pin_memory=True
     )
@@ -146,6 +159,7 @@ def main():
         dataset.loader_test.dataset,
         batch_size=batch_size,
         sampler=test_sampler,
+        shuffle=False,
         num_workers=4,
         pin_memory=True
     )
@@ -154,31 +168,33 @@ def main():
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 1)
     model = model.to(device)
-    model = DDP(model, device_ids=[local_rank])
+    if use_ddp:
+        model = DDP(model, device_ids=[local_rank])
 
-    for param in model.module.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-    for param in model.module.layer4.parameters():
+    for param in (model.module if use_ddp else model).layer4.parameters():
         param.requires_grad = True
-    for param in model.module.fc.parameters():
+    for param in (model.module if use_ddp else model).fc.parameters():
         param.requires_grad = True
 
     criterion = nn.BCEWithLogitsLoss().to(device)
     optimizer = optim.Adam([
-        {'params': model.module.layer4.parameters(), 'lr': 1e-5},
-        {'params': model.module.fc.parameters(), 'lr': lr}
+        {'params': (model.module if use_ddp else model).layer4.parameters(), 'lr': 1e-5},
+        {'params': (model.module if use_ddp else model).fc.parameters(), 'lr': lr}
     ], weight_decay=1e-4)
 
-    scaler = GradScaler() if device.type == 'cuda' else None
+    scaler = GradScaler() if device.type.startswith('cuda') else None
 
-    if device.type == 'cuda':
+    if device.type.startswith('cuda'):
         torch.cuda.empty_cache()
 
     best_val_acc = 0.0
     best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
 
     for epoch in range(epochs):
-        train_sampler.set_epoch(epoch)
+        if use_ddp and train_sampler:
+            train_sampler.set_epoch(epoch)
         model.train()
         running_loss = 0.0
         correct_train = 0
@@ -188,11 +204,11 @@ def main():
             labels = labels.to(device).float()
             optimizer.zero_grad()
 
-            with autocast(device_type='cuda', enabled=device.type == 'cuda'):
+            with autocast(device_type='cuda', enabled=device.type.startswith('cuda')):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
 
-            if device.type == 'cuda':
+            if scaler:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -223,7 +239,7 @@ def main():
             for images, labels in val_loader:
                 images = images.to(device)
                 labels = labels.to(device).float()
-                with autocast(device_type='cuda', enabled=device.type == 'cuda'):
+                with autocast(device_type='cuda', enabled=device.type.startswith('cuda')):
                     outputs = model(images).squeeze(1)
                     loss = criterion(outputs, labels)
                 reduced_loss = reduce_tensor(loss, world_size)
@@ -242,11 +258,11 @@ def main():
 
             if val_accuracy > best_val_acc:
                 best_val_acc = val_accuracy
-                torch.save(model.module.state_dict(), best_model_path)
+                torch.save((model.module if use_ddp else model).state_dict(), best_model_path)
                 print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
 
     if rank == 0:
-        torch.save(model.module.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
+        torch.save((model.module if use_ddp else model).state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
         print(f'Saved final model at epoch {epochs}')
 
     model.eval()
@@ -257,7 +273,7 @@ def main():
         for images, labels in test_loader:
             images = images.to(device)
             labels = labels.to(device).float()
-            with autocast(device_type='cuda', enabled=device.type == 'cuda'):
+            with autocast(device_type='cuda', enabled=device.type.startswith('cuda')):
                 outputs = model(images).squeeze(1)
                 loss = criterion(outputs, labels)
             reduced_loss = reduce_tensor(loss, world_size)
@@ -294,7 +310,7 @@ def main():
                     continue
                 image = Image.open(img_path).convert('RGB')
                 image_transformed = transform_test(image).unsqueeze(0).to(device)
-                with autocast(device_type='cuda', enabled=device.type == 'cuda'):
+                with autocast(device_type='cuda', enabled=device.type.startswith('cuda')):
                     output = model(image_transformed).squeeze(1)
                 prob = torch.sigmoid(output).item()
                 predicted_label = 'real' if prob > 0.5 else 'fake'
@@ -309,13 +325,14 @@ def main():
         plt.savefig(file_path)
         display(IPImage(filename=file_path))
 
-        for param in model.module.parameters():
+        for param in (model.module if use_ddp else model).parameters():
             param.requires_grad = True
-        flops, params = get_model_complexity_info(model.module, (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
+        flops, params = get_model_complexity_info((model.module if use_ddp else model), (3, img_height, img_width), as_strings=True, print_per_layer_stat=True)
         print('FLOPs:', flops)
         print('Parameters:', params)
 
-    dist.destroy_process_group()
+    if use_ddp:
+        dist.destroy_process_group()
 
 if __name__ == '__main__':
     main()
