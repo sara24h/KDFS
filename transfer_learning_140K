@@ -1,4 +1,4 @@
-import os
+
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -103,26 +103,28 @@ test_loader = dataset.loader_test
 # لود کردن معماری خالی ResNet50
 model = models.resnet50()
 
-
+# مسیر فایل چک‌پوینت
 checkpoint_path = '/kaggle/input/resnet50_sparse/pytorch/default/1/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
 
 # لود کردن چک‌پوینت
 checkpoint = torch.load(checkpoint_path)
 
-# لود وزنه‌ها به مدل با strict=True
-if 'state_dict' in checkpoint:
-    model.load_state_dict(checkpoint['state_dict'], strict=True)
+# بررسی کلیدهای موجود توی چک‌پوینت
+print("کلیدهای موجود توی چک‌پوینت:", checkpoint.keys())
+
+# لود وزنه‌های مدل از کلید 'student'
+if 'student' in checkpoint:
+    state_dict = checkpoint['student']
+    # بررسی لایه آخر (fc) توی state_dict
+    if 'fc.weight' in state_dict and state_dict['fc.weight'].shape[0] != 1:
+        print("هشدار: لایه آخر برای تسک باینری تنظیم نشده. تغییر به یک خروجی.")
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, 1)
+    model.load_state_dict(state_dict, strict=True)
 else:
-    model.load_state_dict(checkpoint, strict=True)
+    raise KeyError("کلید 'student' توی چک‌پوینت پیدا نشد. لطفاً ساختار چک‌پوینت رو بررسی کنید.")
 
 model = model.to(device)
-
-
-if model.fc.out_features != 1:
-    print("هشدار: لایه آخر برای یک خروجی تنظیم نشده. تنظیم لایه آخر برای تسک باینری.")
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 1)
-    model = model.to(device)
 
 # فریز کردن همه لایه‌ها به جز layer4 و لایه آخر
 for param in model.parameters():
