@@ -38,7 +38,7 @@ def parse_args():
 args = parse_args()
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-torch.backends.cudnn.benchmark = True  
+torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
 dataset_mode = args.dataset_mode
@@ -55,7 +55,6 @@ if not os.path.exists(data_dir):
     raise FileNotFoundError(f"Directory {data_dir} not found!")
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
-
 
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
@@ -100,36 +99,26 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-
 model = models.resnet50()
-
-
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 
-
 checkpoint_path = '/kaggle/input/resnet50_sparse/pytorch/default/1/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
-
-
 checkpoint = torch.load(checkpoint_path)
 
 print("keys in checkpoint:", checkpoint.keys())
 
-
 if 'student' in checkpoint:
     state_dict = checkpoint['student']
-    
     filtered_state_dict = {k: v for k, v in state_dict.items() if not k.endswith('mask_weight') and k not in ['feat1.weight', 'feat1.bias', 'feat2.weight', 'feat2.bias', 'feat3.weight', 'feat3.bias', 'feat4.weight', 'feat4.bias']}
     model.load_state_dict(filtered_state_dict, strict=False)
     missing, unexpected = model.load_state_dict(filtered_state_dict, strict=False)
     print("Missing keys:", missing)
     print("Unexpected keys:", unexpected)
-
 else:
     raise KeyError("keys not found")
 
 model = model.to(device)
-
 
 for param in model.parameters():
     param.requires_grad = False
@@ -148,6 +137,12 @@ scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
 if device.type == 'cuda':
     torch.cuda.empty_cache()
+
+# Initialize lists to store metrics
+train_losses = []
+train_accuracies = []
+val_losses = []
+val_accuracies = []
 
 best_val_acc = 0.0
 best_model_path = os.path.join(teacher_dir, 'teacher_model_best.pth')
@@ -181,6 +176,8 @@ for epoch in range(epochs):
 
     train_loss = running_loss / len(train_loader)
     train_accuracy = 100 * correct_train / total_train
+    train_losses.append(train_loss)
+    train_accuracies.append(train_accuracy)
     print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.2f}%')
 
     model.eval()
@@ -201,12 +198,43 @@ for epoch in range(epochs):
 
     val_loss = val_loss / len(val_loader)
     val_accuracy = 100 * correct_val / total_val
+    val_losses.append(val_loss)
+    val_accuracies.append(val_accuracy)
     print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.2f}%')
 
     if val_accuracy > best_val_acc:
         best_val_acc = val_accuracy
         torch.save(model.state_dict(), best_model_path)
         print(f'Saved best model with validation accuracy: {val_accuracy:.2f}% at epoch {epoch+1}')
+
+# Plot training and validation metrics
+plt.figure(figsize=(12, 5))
+
+# Plot Loss
+plt.subplot(1, 2, 1)
+plt.plot(range(1, epochs + 1), train_losses, label='Training Loss', color='blue')
+plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss', color='orange')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+plt.grid(True)
+
+# Plot Accuracy
+plt.subplot(1, 2, 2)
+plt.plot(range(1, epochs + 1), train_accuracies, label='Training Accuracy', color='blue')
+plt.plot(range(1, epochs + 1), val_accuracies, label='Validation Accuracy', color='orange')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy (%)')
+plt.title('Training and Validation Accuracy')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+metrics_plot_path = os.path.join(teacher_dir, 'training_metrics.png')
+plt.savefig(metrics_plot_path)
+display(IPImage(filename=metrics_plot_path))
+plt.close()
 
 torch.save(model.state_dict(), os.path.join(teacher_dir, 'teacher_model_final.pth'))
 print(f'Saved final model at epoch {epochs}')
