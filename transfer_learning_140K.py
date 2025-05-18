@@ -257,12 +257,16 @@ with torch.no_grad():
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
 
-test_data = dataset.loader_test.dataset.data  
+test_data = dataset.loader_test.dataset.data
 transform_test = dataset.loader_test.dataset.transform
 
 random_indices = random.sample(range(len(test_data)), min(20, len(test_data)))
 fig, axes = plt.subplots(4, 5, figsize=(15, 8))
 axes = axes.ravel()
+
+# تعریف نگاشت‌ها
+label_map = {'fake': 0, 'real': 1, 0: 0, 1: 1, 'Fake': 0, 'Real': 1}
+inverse_label_map = {0: 'fake', 1: 'real'}
 
 with torch.no_grad():
     for i, idx in enumerate(random_indices):
@@ -273,7 +277,7 @@ with torch.no_grad():
 
         if dataset_mode == '140k':
             img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name)
-        else:  
+        else:
             img_path = os.path.join(data_dir, img_name)
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
@@ -286,7 +290,13 @@ with torch.no_grad():
             output = model(image_transformed).squeeze(1)
         prob = torch.sigmoid(output).item()
         predicted_label = 'real' if prob > 0.5 else 'fake'
-        true_label = 'real' if label == 1 else 'fake'
+        
+        # اصلاح‌شده: مدیریت هر دو نوع برچسب (رشته‌ای و عددی)
+        if isinstance(label, (int, float)):
+            true_label = inverse_label_map[int(label)]
+        else:
+            true_label = inverse_label_map[label_map[label]]
+        
         axes[i].imshow(image)
         axes[i].set_title(f'True: {true_label}\nPred: {predicted_label}', fontsize=10)
         axes[i].axis('off')
