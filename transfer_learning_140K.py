@@ -100,8 +100,12 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-# لود کردن معماری خالی ResNet50
+# لود کردن معماری ResNet50
 model = models.resnet50()
+
+# تنظیم لایه آخر برای تسک باینری (1 خروجی)
+num_ftrs = model.fc.in_features
+model.fc = nn.Linear(num_ftrs, 1)
 
 # مسیر فایل چک‌پوینت
 checkpoint_path = '/kaggle/input/resnet50_sparse/pytorch/default/1/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
@@ -115,12 +119,9 @@ print("کلیدهای موجود توی چک‌پوینت:", checkpoint.keys())
 # لود وزنه‌های مدل از کلید 'student'
 if 'student' in checkpoint:
     state_dict = checkpoint['student']
-    # بررسی لایه آخر (fc) توی state_dict
-    if 'fc.weight' in state_dict and state_dict['fc.weight'].shape[0] != 1:
-        print("هشدار: لایه آخر برای تسک باینری تنظیم نشده. تغییر به یک خروجی.")
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 1)
-    model.load_state_dict(state_dict, strict=True)
+    # فیلتر کردن کلیدهای غیرضروری (مثل mask_weight)
+    filtered_state_dict = {k: v for k, v in state_dict.items() if not k.endswith('mask_weight') and k not in ['feat1.weight', 'feat1.bias', 'feat2.weight', 'feat2.bias', 'feat3.weight', 'feat3.bias', 'feat4.weight', 'feat4.bias']}
+    model.load_state_dict(filtered_state_dict, strict=False)
 else:
     raise KeyError("کلید 'student' توی چک‌پوینت پیدا نشد. لطفاً ساختار چک‌پوینت رو بررسی کنید.")
 
