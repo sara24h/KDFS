@@ -256,12 +256,12 @@ with torch.no_grad():
         total += labels.size(0)
 print(f'Test Loss: {test_loss / len(test_loader):.4f}, Test Accuracy: {100 * correct / total:.2f}%')
 
-# استفاده از داده‌های تست برای رسم پیش‌بینی‌ها
-test_data = dataset.loader_test.dataset.data  # تغییر نام از val_data به test_data
+
+test_data = dataset.loader_test.dataset.data  
 transform_test = dataset.loader_test.dataset.transform
 
-random_indices = random.sample(range(len(test_data)), min(10, len(test_data)))
-fig, axes = plt.subplots(2, 5, figsize=(15, 8))
+random_indices = random.sample(range(len(test_data)), min(20, len(test_data)))
+fig, axes = plt.subplots(4, 5, figsize=(15, 8))
 axes = axes.ravel()
 
 with torch.no_grad():
@@ -270,10 +270,10 @@ with torch.no_grad():
         img_column = 'path' if dataset_mode == '140k' else 'images_id'
         img_name = row[img_column]
         label = row['label']
-        # ساخت مسیر تصویر
+
         if dataset_mode == '140k':
             img_path = os.path.join(data_dir, 'real_vs_fake', 'real-vs-fake', img_name)
-        else:  # hardfake یا rvf10k
+        else:  
             img_path = os.path.join(data_dir, img_name)
         if not os.path.exists(img_path):
             print(f"Warning: Image not found: {img_path}")
