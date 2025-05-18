@@ -56,7 +56,7 @@ if not os.path.exists(data_dir):
 if not os.path.exists(teacher_dir):
     os.makedirs(teacher_dir)
 
-# تنظیم دیتاست
+
 if dataset_mode == 'hardfake':
     dataset = Dataset_selector(
         dataset_mode='hardfake',
@@ -100,34 +100,37 @@ train_loader = dataset.loader_train
 val_loader = dataset.loader_val
 test_loader = dataset.loader_test
 
-# لود کردن معماری ResNet50
+
 model = models.resnet50()
 
-# تنظیم لایه آخر برای تسک باینری (1 خروجی)
+
 num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 
-# مسیر فایل چک‌پوینت
+
 checkpoint_path = '/kaggle/input/resnet50_sparse/pytorch/default/1/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
 
-# لود کردن چک‌پوینت
+
 checkpoint = torch.load(checkpoint_path)
 
-# بررسی کلیدهای موجود توی چک‌پوینت
-print("کلیدهای موجود توی چک‌پوینت:", checkpoint.keys())
+print("keys in checkpoint:", checkpoint.keys())
 
-# لود وزنه‌های مدل از کلید 'student'
+
 if 'student' in checkpoint:
     state_dict = checkpoint['student']
-    # فیلتر کردن کلیدهای غیرضروری (مثل mask_weight)
+    
     filtered_state_dict = {k: v for k, v in state_dict.items() if not k.endswith('mask_weight') and k not in ['feat1.weight', 'feat1.bias', 'feat2.weight', 'feat2.bias', 'feat3.weight', 'feat3.bias', 'feat4.weight', 'feat4.bias']}
     model.load_state_dict(filtered_state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(filtered_state_dict, strict=False)
+    print("Missing keys:", missing)
+    print("Unexpected keys:", unexpected)
+
 else:
-    raise KeyError("کلید 'student' توی چک‌پوینت پیدا نشد. لطفاً ساختار چک‌پوینت رو بررسی کنید.")
+    raise KeyError("keys not found")
 
 model = model.to(device)
 
-# فریز کردن همه لایه‌ها به جز layer4 و لایه آخر
+
 for param in model.parameters():
     param.requires_grad = False
 for param in model.layer4.parameters():
