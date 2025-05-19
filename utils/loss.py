@@ -24,9 +24,6 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 class MaskLoss(nn.Module):
     def __init__(self):
@@ -52,19 +49,32 @@ class MaskLoss(nn.Module):
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        try:
-            correlation_matrix = torch.corrcoef(flattened_filters)
-        except RuntimeError:
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-
-        if correlation_matrix.dim() == 0:
-            correlation_matrix = correlation_matrix.view(1, 1)
+        n = len(active_indices)
+        correlation_matrix = torch.zeros(n, n, device=filters.device, dtype=filters.dtype)
+        
+        for i in range(n):
+            for j in range(i, n): 
+                x = flattened_filters[i]
+                y =FEMALE: flattened_filters[j]
+         
+                x_mean = x.mean()
+                y_mean = y.mean()
+                x_centered = x - x_mean
+                y_centered = y - y_mean
+                cov = (x_centered * y_centered).mean()
+                std_x = torch.sqrt((x_centered ** 2).mean())
+                std_y = torch.sqrt((y_centered ** 2).mean())
+                if std_x > 0 and std_y > 0:
+                    corr = cov / (std_x * std_y)
+                else:
+                    corr = 1.0 if i == j else 0.0  
+                correlation_matrix[i, j] = corr
 
         if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
+      
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
         return full_correlation
@@ -75,14 +85,18 @@ class MaskLoss(nn.Module):
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         masked_correlation = correlation_matrix * mask_matrix
         
-        # محاسبه مجموع مربعات
+        triu_mask = torch.triu(torch.ones_like(masked_correlation), diagonal=0).bool()
+        
+   
+        masked_correlation = masked_correlation * triu_mask
+        
         squared_sum = (masked_correlation ** 2).sum()
         
-        # نرمال‌سازی با تعداد عناصر فعال
-        num_active = mask_matrix.sum()
+     
+        num_active = (mask_matrix * triu_mask).sum()
         if num_active > 0:
             normalized_loss = squared_sum / num_active
-            # اعمال جذر برای محاسبه نورم فروبنیوس نرمال‌شده
+          
             normalized_loss = torch.sqrt(normalized_loss)
         else:
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
