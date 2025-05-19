@@ -23,71 +23,79 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
-        # اطمینان از یکسان بودن تعداد کانال‌ها
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
-
-        # فشرده‌سازی ماسک به 1D
-        mask = mask.squeeze().to(dtype=torch.bool, device=filters.device)
-        if mask.dim() != 1:
-            raise ValueError(f"Mask must be 1D, got shape: {mask.shape}")
-
-        # انتخاب فیلترهای فعال
-        active_indices = torch.nonzero(mask, as_tuple=True)[0]
-        n_active = active_indices.size(0)
-
-        # مدیریت موارد خاص
-        if n_active <= 1:
-            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
-
-        # انتخاب فیلترهای فعال و فشرده‌سازی
-        active_filters = filters[active_indices].view(n_active, -1)
-
-        # بررسی مقادیر نامعتبر
-        if torch.any(torch.isnan(active_filters)) or torch.any(torch.isinf(active_filters)) or torch.all(active_filters == 0):
-            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
-
-        # نرمال‌سازی فیلترها
-        norm_filters = F.normalize(active_filters, p=2, dim=1)
-
-        # محاسبه اندیس‌های بالا مثلثی
-        triu_indices = torch.triu_indices(row=n_active, col=n_active, offset=1, device=filters.device)
         
-        # محاسبه ضرب داخلی فقط برای اندیس‌های بالا مثلثی
-        triu_correlation = torch.einsum('ik,jk->ij', norm_filters[triu_indices[0]], norm_filters[triu_indices[1]])
+        mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
+        if mask.dim() != 1:
+            raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
-        # بررسی مقادیر نامعتبر
-        if torch.any(torch.isnan(triu_correlation)) or torch.any(torch.isinf(triu_correlation)):
-            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
+        active_indices = torch.where(mask > 0)[0]
+        if len(active_indices) == 0:
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        elif len(active_indices) == 1:
+            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
+        
+        active_filters = filters[active_indices]
+        flattened_filters = active_filters.view(active_filters.size(0), -1)
 
-        return triu_correlation
+        if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+
+        try:
+            correlation_matrix = torch.corrcoef(flattened_filters)
+        except RuntimeError:
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+
+        if correlation_matrix.dim() == 0:
+            correlation_matrix = correlation_matrix.view(1, 1)
+
+        if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+
+        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
+        full_correlation[active_indices[:, None], active_indices] = correlation_matrix
+
+        return full_correlation
 
     def forward(self, weights, mask):
-        # محاسبه مقادیر بالا مثلثی ماتریس همبستگی
-        triu_correlation = self.pearson_correlation(weights, mask)
+        # محاسبه ماتریس همبستگی پیرسون
+        correlation_matrix = self.pearson_correlation(weights, mask)
+        mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         
-        # اگر نتیجه یک تنسور صفر است، ضرر صفر برگردان
-        if torch.is_tensor(triu_correlation) and triu_correlation.size(0) == 0:
-            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-
-        # محاسبه مجموع مربعات مقادیر بالا مثلثی
-        squared_sum = torch.sum(triu_correlation ** 2)
-        num_active = triu_correlation.size(0)
-
-        # نرمال‌سازی ضرر
-        normalized_loss = squared_sum / num_active if num_active > 0 else torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-
+        # ساخت ماتریس ماسک
+        mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
+        
+        # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
+        upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
+        
+        # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
+        masked_upper_tri = upper_tri_pearson * mask_matrix
+        
+        # محاسبه جمع مربعات (نرم بدون جذر)
+        squared_sum = (masked_upper_tri ** 2).sum()
+        
+        # تعداد جفت‌های فعال در بخش بالا مثلثی
+        num_active = torch.triu(mask_matrix, diagonal=1).sum()
+        
+        # نرمال‌سازی یا بازگشت 0 در صورت عدم وجود جفت فعال
+        if num_active > 0:
+            normalized_loss = squared_sum / num_active
+        else:
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+        
         # بررسی مقادیر نامعتبر
         if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-
+        
         return normalized_loss
+
 
 
 class CrossEntropyLabelSmooth(nn.Module):
