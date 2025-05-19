@@ -24,59 +24,55 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
+        # بررسی سازگاری ابعاد
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
         
+        # فشرده‌سازی ماسک به 1D
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         if mask.dim() != 1:
             raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
+        # یافتن ایندکس‌های فعال
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         elif len(active_indices) == 1:
             return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
-        
+
+        # انتخاب فیلترهای فعال
         active_filters = filters[active_indices]
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
+        # بررسی مقادیر نامعتبر (NaN یا Inf)
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        n = len(active_indices)
-        correlation_matrix = torch.zeros(n, n, device=filters.device, dtype=filters.dtype)
-        
-        for i in range(n):
-            for j in range(i, n):  # فقط i <= j
-                x = flattened_filters[i]
-                y = flattened_filters[j]  # اصلاح خطا: حذف FEMALE:
-                x_mean = x.mean()
-                y_mean = y.mean()
-                x_centered = x - x_mean
-                y_centered = y - y_mean
-                cov = (x_centered * y_centered).mean()
-                std_x = torch.sqrt((x_centered ** 2).mean())
-                std_y = torch.sqrt((y_centered ** 2).mean())
-                if std_x > 0 and std_y > 0:
-                    corr = cov / (std_x * std_y)
-                else:
-                    corr = 1.0 if i == j else 0.0
-                correlation_matrix[i, j] = corr
+        # محاسبه میانگین و مرکز کردن داده‌ها
+        mean = flattened_filters.mean(dim=1, keepdim=True)
+        centered = flattened_filters - mean
 
-        if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        # محاسبه کوواریانس و انحراف معیار
+        cov = torch.matmul(centered, centered.t()) / centered.size(1)
+        std = torch.sqrt(torch.sum(centered ** 2, dim=1) / centered.size(1))
+        std_matrix = std.unsqueeze(1) * std.unsqueeze(0)
 
+        # محاسبه ماتریس همبستگی
+        correlation_matrix = cov / (std_matrix + 1e-8)  # افزودن epsilon برای جلوگیری از تقسیم بر صفر
+
+        # بررسی مقادیر نامعتبر در ماتریس همبستگی
+        correlation_matrix = torch.where(
+            torch.isnan(correlation_matrix) | torch.isinf(correlation_matrix),
+            torch.zeros_like(correlation_matrix),
+            correlation_matrix
+        )
+
+        # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
@@ -86,26 +82,23 @@ class MaskLoss(nn.Module):
         correlation_matrix = self.pearson_correlation(weights, mask)
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-        masked_correlation = correlation_matrix * mask_matrix
+        triu_mask = torch.triu(torch.ones_like(mask_matrix), diagonal=0).bool()
         
-        triu_mask = torch.triu(torch.ones_like(masked_correlation), diagonal=0).bool()
-        
-        masked_correlation = masked_correlation * triu_mask
+        masked_correlation = correlation_matrix * mask_matrix * triu_mask
         
         squared_sum = (masked_correlation ** 2).sum()
-        
         num_active = (mask_matrix * triu_mask).sum()
+        
         if num_active > 0:
             normalized_loss = squared_sum / num_active
             normalized_loss = torch.sqrt(normalized_loss)
         else:
-            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=filters.dtype)
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
-            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
-
 
 
 class CrossEntropyLabelSmooth(nn.Module):
