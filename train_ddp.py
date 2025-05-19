@@ -394,13 +394,23 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                 
+                        # محاسبه mask_loss با استفاده از mask_modules
                         mask_loss = torch.tensor(0.0, device=images.device)
-                        for name, module in self.student.module.named_modules():
-                            if hasattr(module, 'mask') and isinstance(module, nn.Conv2d):
-                                weights = module.weight  # وزن‌های لایه کانولوشنی
-                                mask = module.mask  # ماسک مربوطه
-                                mask_loss += self.mask_loss(weights, mask)
+                        count = 0
+                        for i, module in enumerate(self.student.module.mask_modules):
+                            if hasattr(module, 'mask') and hasattr(module, 'weight'):
+                                weights = module.weight
+                                mask = module.mask
+                                loss = self.mask_loss(weights, mask)
+                                mask_loss += loss
+                                count += 1
+                                if self.rank == 0:
+                                    print(f"Module {i}: Weights shape = {weights.shape}, Mask shape = {mask.shape}, MaskLoss = {loss.item()}")
+                            else:
+                                if self.rank == 0:
+                                    print(f"Module {i} in mask_modules lacks weight or mask")
+                        if self.rank == 0:
+                            print(f"Total modules with mask found: {count}, Total MaskLoss = {mask_loss.item()}")
 
                         total_loss = (
                             ori_loss
@@ -454,7 +464,7 @@ class TrainDDP:
                 self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
-                self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
+                self.writer.add_scalar("trainleven/loss/total_loss", meter_loss.avg, global_step=epoch)
                 self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
                 self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
                 self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
@@ -499,7 +509,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss.reset()  # Reset validation loss meter
+                meter_val_loss.reset()
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -509,7 +519,6 @@ class TrainDDP:
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
 
-                            # Compute validation loss
                             val_loss = self.ori_loss(logits_student, targets)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
@@ -528,7 +537,7 @@ class TrainDDP:
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
+                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
@@ -565,41 +574,7 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Train finished!")
 
-    def test(self):
-        if self.rank == 0:
-            self.student.eval()
-            self.student.module.ticket = True
-            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-
-            with torch.no_grad():
-                with tqdm(total=len(self.test_loader), ncols=100) as _tqdm:
-                    _tqdm.set_description("Test")
-                    for images, targets in self.test_loader:
-                        images = images.cuda()
-                        targets = targets.cuda().float()
-                        logits_student, _ = self.student(images)
-                        logits_student = logits_student.squeeze(1)
-
-                        preds = (torch.sigmoid(logits_student) > 0.5).float()
-                        correct = (preds == targets).sum().item()
-                        prec1 = 100. * correct / images.size(0)
-                        n = images.size(0)
-                        meter_top1.update(prec1, n)
-
-                        _tqdm.set_postfix(test_acc="{:.4f}".format(meter_top1.avg))
-                        _tqdm.update(1)
-                        time.sleep(0.01)
-
-            Flops = self.student.module.get_flops()
-            self.logger.info(
-                "[Test] Test_Acc {test_acc:.2f}".format(test_acc=meter_top1.avg)
-            )
-            self.logger.info(
-                "[Test model Flops] : " + str(Flops.item() / (10**6)) + "M"
-            )
-            self.writer.add_scalar("test/acc/top1", meter_top1.avg, global_step=0)
-            self.writer.add_scalar("test/Flops", Flops, global_step=0)
-
+    
     def main(self):
         self.dist_init()
         self.result_init()
@@ -609,4 +584,3 @@ class TrainDDP:
         self.define_loss()
         self.define_optim()
         self.train()
-        #self.test()
