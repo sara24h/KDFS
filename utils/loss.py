@@ -60,10 +60,9 @@ class MaskLoss(nn.Module):
             correlation_matrix
         )
 
-        # اعمال ماسک مثلثی بالایی با ایندکس‌گذاری مستقیم
-        n = correlation_matrix.size(0)
-        triu_indices = torch.triu_indices(n, n, offset=0, device=correlation_matrix.device)
-        correlation_matrix = correlation_matrix[triu_indices[0], triu_indices[1]].view(n, n)
+        # اعمال ماسک مثلثی بالایی
+        triu_mask = torch.triu(torch.ones_like(correlation_matrix), diagonal=0).bool()
+        correlation_matrix = correlation_matrix * triu_mask
         
         # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
