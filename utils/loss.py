@@ -104,7 +104,7 @@ class MaskLoss(nn.Module):
             if num_active > 0:
                 normalized_loss = squared_sum / num_active
             else:
-                normalized_loss = torch.tensor(0.0, device rood: weights.device, dtype=weights.dtype)
+                normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
             
             # بررسی مقادیر نامعتبر
             if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
