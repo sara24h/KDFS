@@ -9,7 +9,6 @@ class KDLoss(nn.Module):
         self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, logits_t, logits_s):
-     
         return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
 
 
@@ -44,8 +43,10 @@ class MaskLoss(nn.Module):
         if len(active_indices) == 0:
             print("Warning: No active filters found (all mask values <= 0)")
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device)
-        elif len(active_indices Oversized Warning: The following operation would result in a tensor with too many dimensions: [64, 1, 1, 1, 1, 1]
-
+        elif len(active_indices) == 1:
+            print("Warning: Only one active filter, correlation matrix will be 1x1")
+            return torch.ones(1, 1, device=filters.device)
+        
         active_filters = filters[active_indices]
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
@@ -96,6 +97,7 @@ class MaskLoss(nn.Module):
         print(f"MaskLoss: Frobenius norm = {frobenius_norm.item()}, Active filters = {torch.where(mask > 0)[0].size(0)}")
 
         return frobenius_norm
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
