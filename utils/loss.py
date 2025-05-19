@@ -29,82 +29,53 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
-        # بررسی ابعاد ورودی‌ها
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
         
-        # فشرده‌سازی ماسک به یک بعد
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         if mask.dim() != 1:
             raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
-        # یافتن فیلترهای فعال
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
-            print("Warning: No active filters found (all mask values <= 0)")
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         elif len(active_indices) == 1:
-            print("Warning: Only one active filter, correlation matrix will be 1x1")
             return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
         
         active_filters = filters[active_indices]
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
-        # بررسی مقادیر نامعتبر در فیلترها
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
-            print("Warning: NaN or Inf found in flattened filters")
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # محاسبه ماتریس همبستگی
         try:
             correlation_matrix = torch.corrcoef(flattened_filters)
-        except RuntimeError as e:
-            print(f"Error in corrcoef: {e}")
+        except RuntimeError:
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
         if correlation_matrix.dim() == 0:
             correlation_matrix = correlation_matrix.view(1, 1)
 
-        # بررسی مقادیر نامعتبر در ماتریس همبستگی
         if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-            print("Warning: NaN or Inf found in correlation matrix")
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # ایجاد full_correlation با نوع داده مشابه filters
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-        # تبدیل correlation_matrix به نوع داده مشابه
         correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
-
-        # چاپ نوع داده‌ها برای دیباگ
-        print(f"full_correlation dtype: {full_correlation.dtype}, correlation_matrix dtype: {correlation_matrix.dtype}")
 
         return full_correlation
 
     def forward(self, weights, mask):
-        # محاسبه ماتریس همبستگی
         correlation_matrix = self.pearson_correlation(weights, mask)
-
-        # ساخت ماتریس ماسک
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-
-        # اعمال ماسک روی ماتریس همبستگی
         masked_correlation = correlation_matrix * mask_matrix
-
-        # محاسبه نرم فروبنیوس
         frobenius_norm = torch.norm(masked_correlation, p='fro')
 
-        # بررسی مقادیر نامعتبر در خروجی
         if torch.isnan(frobenius_norm) or torch.isinf(frobenius_norm):
-            print("Warning: NaN or Inf found in frobenius norm")
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
-        # چاپ مقادیر برای دیباگ
-        print(f"MaskLoss: Frobenius norm = {frobenius_norm.item()}, Active filters = {torch.where(mask > 0)[0].size(0)}")
-
         return frobenius_norm
-
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
