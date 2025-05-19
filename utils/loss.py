@@ -53,15 +53,18 @@ class MaskLoss(nn.Module):
         # محاسبه ماتریس همبستگی با torch.corrcoef
         correlation_matrix = torch.corrcoef(flattened_filters)
 
+        # تبدیل نوع داده‌ای به نوع داده‌ای فیلترها (برای سازگاری با دقت مخلوط)
+        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
+
         # بررسی مقادیر نامعتبر در ماتریس همبستگی
         correlation_matrix = torch.where(
             torch.isnan(correlation_matrix) | torch.isinf(correlation_matrix),
-            torch.zeros_like(correlation_matrix),
+            torch.zeros_like(correlation_matrix, dtype=filters.dtype),
             correlation_matrix
         )
 
         # اعمال ماسک مثلثی بالایی
-        triu_mask = torch.triu(torch.ones_like(correlation_matrix), diagonal=0).bool()
+        triu_mask = torch.triu(torch.ones_like(correlation_matrix, dtype=torch.bool), diagonal=0)
         correlation_matrix = correlation_matrix * triu_mask
         
         # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
@@ -76,7 +79,7 @@ class MaskLoss(nn.Module):
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         
         # اعمال عملیات مثلثی بالایی روی mask_matrix
-        mask_matrix = mask_matrix * torch.triu(torch.ones_like(mask_matrix), diagonal=0).bool()
+        mask_matrix = mask_matrix * torch.triu(torch.ones_like(mask_matrix, dtype=torch.bool), diagonal=0)
         
         # اعمال ماسک برای فیلترهای فعال
         masked_correlation = correlation_matrix * mask_matrix
