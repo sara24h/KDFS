@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
@@ -9,6 +10,7 @@ class KDLoss(nn.Module):
 
     def forward(self, logits_t, logits_s):
         return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
+
 
 class RCLoss(nn.Module):
     def __init__(self):
@@ -21,78 +23,79 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
-        # بررسی سازگاری ابعاد
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
         
-        # فشرده‌سازی ماسک به 1D
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         if mask.dim() != 1:
             raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
-        # یافتن ایندکس‌های فعال
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
-            return torch.zeros(1, 1, device=filters.device, dtype=filters.dtype), active_indices
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         elif len(active_indices) == 1:
-            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype), active_indices
-
-        # انتخاب فیلترهای فعال و کلیپ کردن
+            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
+        
         active_filters = filters[active_indices]
-        active_filters = torch.clamp(active_filters, min=-1e10, max=1e10)
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
-        # بررسی مقادیر نامعتبر (NaN یا Inf)
-        if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
-            return torch.zeros(1, 1, device=filters.device, dtype=filters.dtype), active_indices
+        if torch.any(torch.isnan(flattened_filters)) or torch.any(torch.isinf(flattened_filters)):
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # محاسبه ماتریس همبستگی با torch.corrcoef
-        correlation_matrix = torch.corrcoef(flattened_filters)
+        try:
+         
+            correlation_matrix = torch.corrcoef(flattened_filters)
+        except RuntimeError:
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+
+        if correlation_matrix.dim() == 0:
+            correlation_matrix = correlation_matrix.view(1, 1)
+
+        if torch.any(torch.isnan(correlation_matrix)) or torch.any(torch.isinf(correlation_matrix)):
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+
+    
+        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
+        full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
-        # بررسی مقادیر نامعتبر در ماتریس همبستگی
-        correlation_matrix = torch.where(
-            torch.isnan(correlation_matrix) | torch.isinf(correlation_matrix),
-            torch.zeros_like(correlation_matrix, dtype=filters.dtype),
-            correlation_matrix
-        )
-
-        # اعمال ماسک مثلثی بالایی
-        triu_mask = torch.triu(torch.ones_like(correlation_matrix, dtype=torch.bool), diagonal=0)
-        correlation_matrix = correlation_matrix * triu_mask
-
-        return correlation_matrix, active_indices
+        return full_correlation
 
     def forward(self, weights, mask):
-        correlation_matrix, active_indices = self.pearson_correlation(weights, mask)
+        correlation_matrix = self.pearson_correlation(weights, mask)
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
-        
-        if len(active_indices) <= 1:
-            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-
-        # ایجاد mask_matrix با torch.outer
-        active_mask = mask[active_indices]
-        mask_matrix = torch.outer(active_mask, active_mask)
-        mask_matrix = mask_matrix * torch.triu(torch.ones_like(mask_matrix, dtype=torch.bool), diagonal=0)
-
-        # اعمال ماسک برای فیلترهای فعال
+        mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         masked_correlation = correlation_matrix * mask_matrix
+
+       
+        triu_indices = torch.triu_indices(row=masked_correlation.size(0), col=masked_correlation.size(0), offset=0)
+        triu_correlation = masked_correlation[triu_indices[0], triu_indices[1]]
+
         
-        squared_sum = (masked_correlation ** 2).sum()
-        num_active = mask_matrix.sum()  # تعداد جفت‌های فعال در بخش مثلثی بالایی
-        
+        squared_sum = (triu_correlation ** 2).sum()
+
+
+        triu_mask = mask_matrix[triu_indices[0], triu_indices[1]]
+        num_active = triu_mask.sum()
+
         if num_active > 0:
             normalized_loss = squared_sum / num_active
         else:
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
-            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
 
