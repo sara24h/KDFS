@@ -24,6 +24,10 @@ class RCLoss(nn.Module):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
@@ -71,13 +75,15 @@ class MaskLoss(nn.Module):
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         masked_correlation = correlation_matrix * mask_matrix
         
-
+        # محاسبه مجموع مربعات
         squared_sum = (masked_correlation ** 2).sum()
         
-
+        # نرمال‌سازی با تعداد عناصر فعال
         num_active = mask_matrix.sum()
         if num_active > 0:
             normalized_loss = squared_sum / num_active
+            # اعمال جذر برای محاسبه نورم فروبنیوس نرمال‌شده
+            normalized_loss = torch.sqrt(normalized_loss)
         else:
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
