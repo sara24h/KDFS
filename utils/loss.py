@@ -29,7 +29,7 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
-        # اطمینان از اینکه تعداد کانال‌ها یکسان است
+        # اطمینان از یکسان بودن تعداد کانال‌ها
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
 
@@ -42,44 +42,43 @@ class MaskLoss(nn.Module):
         active_indices = torch.nonzero(mask, as_tuple=True)[0]
         n_active = active_indices.size(0)
 
-        # مدیریت موارد خاص (تعداد فیلترهای فعال صفر یا یک)
+        # مدیریت موارد خاص
         if n_active <= 1:
-            return torch.zeros(n_active, n_active, device=filters.device, dtype=filters.dtype)
+            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
 
-        # انتخاب فیلترهای فعال و فشرده‌سازی به شکل (n_active, -1)
+        # انتخاب فیلترهای فعال و فشرده‌سازی
         active_filters = filters[active_indices].view(n_active, -1)
 
-        # بررسی مقادیر نامعتبر یا صفر
+        # بررسی مقادیر نامعتبر
         if torch.any(torch.isnan(active_filters)) or torch.any(torch.isinf(active_filters)) or torch.all(active_filters == 0):
-            return torch.zeros(n_active, n_active, device=filters.device, dtype=filters.dtype)
+            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
 
-        # نرمال‌سازی فیلترها برای محاسبه همبستگی
+        # نرمال‌سازی فیلترها
         norm_filters = F.normalize(active_filters, p=2, dim=1)
-        # محاسبه ماتریس همبستگی
-        correlation_matrix = torch.matmul(norm_filters, norm_filters.t())
 
-        # بررسی مقادیر نامعتبر در ماتریس همبستگی
-        if torch.any(torch.isnan(correlation_matrix)) or torch.any(torch.isinf(correlation_matrix)):
-            return torch.zeros(n_active, n_active, device=filters.device, dtype=filters.dtype)
+        # محاسبه اندیس‌های بالا مثلثی
+        triu_indices = torch.triu_indices(row=n_active, col=n_active, offset=1, device=filters.device)
+        
+        # محاسبه ضرب داخلی فقط برای اندیس‌های بالا مثلثی
+        triu_correlation = torch.einsum('ik,jk->ij', norm_filters[triu_indices[0]], norm_filters[triu_indices[1]])
 
-        return correlation_matrix
+        # بررسی مقادیر نامعتبر
+        if torch.any(torch.isnan(triu_correlation)) or torch.any(torch.isinf(triu_correlation)):
+            return torch.tensor(0.0, device=filters.device, dtype=filters.dtype)
+
+        return triu_correlation
 
     def forward(self, weights, mask):
-        # محاسبه ماتریس همبستگی
-        correlation_matrix = self.pearson_correlation(weights, mask)
-        n_active = correlation_matrix.size(0)
-
-        # مدیریت مورد خاص
-        if n_active <= 1:
+        # محاسبه مقادیر بالا مثلثی ماتریس همبستگی
+        triu_correlation = self.pearson_correlation(weights, mask)
+        
+        # اگر نتیجه یک تنسور صفر است، ضرر صفر برگردان
+        if torch.is_tensor(triu_correlation) and triu_correlation.size(0) == 0:
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-
-        # استخراج مقادیر بالا مثلثی (بدون قطر اصلی)
-        triu_indices = torch.triu_indices(row=n_active, col=n_active, offset=1, device=weights.device)
-        triu_correlation = correlation_matrix[triu_indices[0], triu_indices[1]]
 
         # محاسبه مجموع مربعات مقادیر بالا مثلثی
         squared_sum = torch.sum(triu_correlation ** 2)
-        num_active = triu_indices.size(1)
+        num_active = triu_correlation.size(0)
 
         # نرمال‌سازی ضرر
         normalized_loss = squared_sum / num_active if num_active > 0 else torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
@@ -89,6 +88,7 @@ class MaskLoss(nn.Module):
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
