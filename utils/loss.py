@@ -42,10 +42,10 @@ class MaskLoss(nn.Module):
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
             print("Warning: No active filters found (all mask values <= 0)")
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device)
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         elif len(active_indices) == 1:
             print("Warning: Only one active filter, correlation matrix will be 1x1")
-            return torch.ones(1, 1, device=filters.device)
+            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
         
         active_filters = filters[active_indices]
         flattened_filters = active_filters.view(active_filters.size(0), -1)
@@ -53,14 +53,14 @@ class MaskLoss(nn.Module):
         # بررسی مقادیر نامعتبر در فیلترها
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             print("Warning: NaN or Inf found in flattened filters")
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device)
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
         # محاسبه ماتریس همبستگی
         try:
             correlation_matrix = torch.corrcoef(flattened_filters)
         except RuntimeError as e:
             print(f"Error in corrcoef: {e}")
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device)
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
         if correlation_matrix.dim() == 0:
             correlation_matrix = correlation_matrix.view(1, 1)
@@ -68,10 +68,17 @@ class MaskLoss(nn.Module):
         # بررسی مقادیر نامعتبر در ماتریس همبستگی
         if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
             print("Warning: NaN or Inf found in correlation matrix")
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device)
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device)
+        # ایجاد full_correlation با نوع داده مشابه filters
+        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        # تبدیل correlation_matrix به نوع داده مشابه
+        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
+
+        # چاپ نوع داده‌ها برای دیباگ
+        print(f"full_correlation dtype: {full_correlation.dtype}, correlation_matrix dtype: {correlation_matrix.dtype}")
+
         return full_correlation
 
     def forward(self, weights, mask):
@@ -91,7 +98,7 @@ class MaskLoss(nn.Module):
         # بررسی مقادیر نامعتبر در خروجی
         if torch.isnan(frobenius_norm) or torch.isinf(frobenius_norm):
             print("Warning: NaN or Inf found in frobenius norm")
-            return torch.tensor(0.0, device=weights.device)
+            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         # چاپ مقادیر برای دیباگ
         print(f"MaskLoss: Frobenius norm = {frobenius_norm.item()}, Active filters = {torch.where(mask > 0)[0].size(0)}")
