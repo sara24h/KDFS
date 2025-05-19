@@ -22,7 +22,7 @@ class RCLoss(nn.Module):
 
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
-
+        
 
 class MaskLoss(nn.Module):
     def __init__(self):
@@ -91,7 +91,6 @@ class MaskLoss(nn.Module):
         
         if num_active > 0:
             normalized_loss = squared_sum / num_active
-            normalized_loss = torch.sqrt(normalized_loss)
         else:
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
