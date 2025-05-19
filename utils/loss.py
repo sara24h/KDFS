@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
@@ -10,7 +9,6 @@ class KDLoss(nn.Module):
 
     def forward(self, logits_t, logits_s):
         return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
-
 
 class RCLoss(nn.Module):
     def __init__(self):
@@ -22,7 +20,6 @@ class RCLoss(nn.Module):
 
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
-        
 
 class MaskLoss(nn.Module):
     def __init__(self):
@@ -53,17 +50,8 @@ class MaskLoss(nn.Module):
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # محاسبه میانگین و مرکز کردن داده‌ها
-        mean = flattened_filters.mean(dim=1, keepdim=True)
-        centered = flattened_filters - mean
-
-        # محاسبه کوواریانس و انحراف معیار
-        cov = torch.matmul(centered, centered.t()) / centered.size(1)
-        std = torch.sqrt(torch.sum(centered ** 2, dim=1) / centered.size(1))
-        std_matrix = std.unsqueeze(1) * std.unsqueeze(0)
-
-        # محاسبه ماتریس همبستگی
-        correlation_matrix = cov / (std_matrix + 1e-8)  # افزودن epsilon برای جلوگیری از تقسیم بر صفر
+        # محاسبه ماتریس همبستگی با torch.corrcoef
+        correlation_matrix = torch.corrcoef(flattened_filters)
 
         # بررسی مقادیر نامعتبر در ماتریس همبستگی
         correlation_matrix = torch.where(
@@ -72,10 +60,11 @@ class MaskLoss(nn.Module):
             correlation_matrix
         )
 
-        # اعمال ماسک مثلثی بالایی (شامل قطر اصلی)
-        triu_mask = torch.triu(torch.ones_like(correlation_matrix), diagonal=0).bool()
-        correlation_matrix = correlation_matrix * triu_mask
-
+        # اعمال ماسک مثلثی بالایی با ایندکس‌گذاری مستقیم
+        n = correlation_matrix.size(0)
+        triu_indices = torch.triu_indices(n, n, offset=0, device=correlation_matrix.device)
+        correlation_matrix = correlation_matrix[triu_indices[0], triu_indices[1]].view(n, n)
+        
         # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
@@ -105,7 +94,6 @@ class MaskLoss(nn.Module):
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
-
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
