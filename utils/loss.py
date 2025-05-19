@@ -70,12 +70,21 @@ class MaskLoss(nn.Module):
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         masked_correlation = correlation_matrix * mask_matrix
-        frobenius_norm = torch.norm(masked_correlation, p='fro')
+        
 
-        if torch.isnan(frobenius_norm) or torch.isinf(frobenius_norm):
+        squared_sum = (masked_correlation ** 2).sum()
+        
+
+        num_active = mask_matrix.sum()
+        if num_active > 0:
+            normalized_loss = squared_sum / num_active
+        else:
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+
+        if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
-        return frobenius_norm
+        return normalized_loss
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
