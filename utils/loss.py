@@ -23,10 +23,6 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
-import torch
-import torch.nn as nn
-from torch.cuda.amp import autocast
-
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
@@ -45,55 +41,58 @@ class MaskLoss(nn.Module):
         elif len(active_indices) == 1:
             return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
         
-        with autocast():
-            active_filters = filters[active_indices]
-            flattened_filters = active_filters.view(active_filters.size(0), -1)
+        active_filters = filters[active_indices]
+        flattened_filters = active_filters.view(active_filters.size(0), -1)
 
-            if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
-                return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-            try:
-                correlation_matrix = torch.corrcoef(flattened_filters)
-            except RuntimeError:
-                return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        try:
+            correlation_matrix = torch.corrcoef(flattened_filters)
+        except RuntimeError:
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-            if correlation_matrix.dim() == 0:
-                correlation_matrix = correlation_matrix.view(1, 1)
+        if correlation_matrix.dim() == 0:
+            correlation_matrix = correlation_matrix.view(1, 1)
 
-            correlation_matrix = torch.nan_to_num(correlation_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+        if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-            full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-            correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
-            full_correlation[active_indices[:, None], active_indices] = correlation_matrix
+        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
+        full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
         return full_correlation
 
     def forward(self, weights, mask):
-        with autocast():
-            # محاسبه ماتریس همبستگی پیرسون
-            correlation_matrix = self.pearson_correlation(weights, mask)
-            mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
-            
-            # ساخت ماتریس ماسک
-            mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-            
-            # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
-            upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
-            
-            # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
-            masked_upper_tri = upper_tri_pearson * mask_matrix
-            
-            # محاسبه جمع مربعات (نرم بدون جذر)
-            squared_sum = (masked_upper_tri ** 2).sum()
-            
-            # تعداد جفت‌های فعال در بخش بالا مثلثی
-            num_active = torch.triu(mask_matrix, diagonal=1).sum()
-            
-            # نرمال‌سازی یا بازگشت 0 در صورت عدم وجود جفت فعال
-            normalized_loss = squared_sum / num_active if num_active > 0 else torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-            
-            # مدیریت مقادیر نامعتبر
-            normalized_loss = torch.nan_to_num(normalized_loss, nan=0.0, posinf=0.0, neginf=0.0)
+        # محاسبه ماتریس همبستگی پیرسون
+        correlation_matrix = self.pearson_correlation(weights, mask)
+        mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
+        
+        # ساخت ماتریس ماسک
+        mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
+        
+        # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
+        upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
+        
+        # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
+        masked_upper_tri = upper_tri_pearson * mask_matrix
+        
+    
+        squared_sum = (masked_upper_tri ** 2).sum()
+        
+  
+        num_active = torch.triu(mask_matrix, diagonal=1).sum()
+        
+     
+        if num_active > 0:
+            normalized_loss = squared_sum / num_active
+        else:
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+        
+ 
+        if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
+            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
         
         return normalized_loss
 
