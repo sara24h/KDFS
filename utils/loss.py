@@ -23,6 +23,14 @@ class RCLoss(nn.Module):
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
 
+
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.cuda.amp import autocast
+
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
@@ -47,10 +55,12 @@ class MaskLoss(nn.Module):
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        try:
-            correlation_matrix = torch.corrcoef(flattened_filters)
-        except RuntimeError:
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        # استفاده از autocast برای محاسبات ماتریس همبستگی
+        with autocast():
+            try:
+                correlation_matrix = torch.corrcoef(flattened_filters)
+            except RuntimeError:
+                return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
         if correlation_matrix.dim() == 0:
             correlation_matrix = correlation_matrix.view(1, 1)
@@ -65,34 +75,40 @@ class MaskLoss(nn.Module):
         return full_correlation
 
     def forward(self, weights, mask):
-        # محاسبه ماتریس همبستگی پیرسون
-        correlation_matrix = self.pearson_correlation(weights, mask)
-        mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
-        
-        # ساخت ماتریس ماسک
-        mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-        
-        # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
-        upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
-        
-        # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
-        masked_upper_tri = upper_tri_pearson * mask_matrix
-        
-    
-        squared_sum = (masked_upper_tri ** 2).sum()
-        
-  
-        num_active = torch.triu(mask_matrix, diagonal=1).sum()
-        
-     
-        if num_active > 0:
-            normalized_loss = squared_sum / num_active
-        else:
-            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
-        
- 
-        if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
-            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+        # اطمینان از اینکه ورودی‌ها روی دستگاه مناسب (GPU) هستند
+        if weights.device != mask.device:
+            mask = mask.to(weights.device)
+
+        # استفاده از autocast برای محاسبات پرهزینه
+        with autocast():
+            # محاسبه ماتریس همبستگی پیرسون
+            correlation_matrix = self.pearson_correlation(weights, mask)
+            mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
+            
+            # ساخت ماتریس ماسک
+            mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
+            
+            # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
+            upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
+            
+            # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
+            masked_upper_tri = upper_tri_pearson * mask_matrix
+            
+            # محاسبه مجموع مربعات
+            squared_sum = (masked_upper_tri ** 2).sum()
+            
+            # محاسبه تعداد عناصر فعال
+            num_active = torch.triu(mask_matrix, diagonal=1).sum()
+            
+            # نرمال‌سازی loss
+            if num_active > 0:
+                normalized_loss = squared_sum / num_active
+            else:
+                normalized_loss = torch.tensor(0.0, device rood: weights.device, dtype=weights.dtype)
+            
+            # بررسی مقادیر نامعتبر
+            if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
+                normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
         
         return normalized_loss
 
