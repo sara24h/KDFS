@@ -25,6 +25,11 @@ class RCLoss(nn.Module):
 
 
 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
@@ -53,10 +58,9 @@ class MaskLoss(nn.Module):
         correlation_matrix = torch.zeros(n, n, device=filters.device, dtype=filters.dtype)
         
         for i in range(n):
-            for j in range(i, n): 
+            for j in range(i, n):  # فقط i <= j
                 x = flattened_filters[i]
-                y =FEMALE: flattened_filters[j]
-         
+                y = flattened_filters[j]  # اصلاح خطا: حذف FEMALE:
                 x_mean = x.mean()
                 y_mean = y.mean()
                 x_centered = x - x_mean
@@ -67,13 +71,12 @@ class MaskLoss(nn.Module):
                 if std_x > 0 and std_y > 0:
                     corr = cov / (std_x * std_y)
                 else:
-                    corr = 1.0 if i == j else 0.0  
+                    corr = 1.0 if i == j else 0.0
                 correlation_matrix[i, j] = corr
 
         if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-      
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
@@ -87,24 +90,23 @@ class MaskLoss(nn.Module):
         
         triu_mask = torch.triu(torch.ones_like(masked_correlation), diagonal=0).bool()
         
-   
         masked_correlation = masked_correlation * triu_mask
         
         squared_sum = (masked_correlation ** 2).sum()
         
-     
         num_active = (mask_matrix * triu_mask).sum()
         if num_active > 0:
             normalized_loss = squared_sum / num_active
-          
             normalized_loss = torch.sqrt(normalized_loss)
         else:
-            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=filters.dtype)
 
         if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
             return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
+
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
