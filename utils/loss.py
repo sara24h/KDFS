@@ -22,58 +22,45 @@ class RCLoss(nn.Module):
 
     def forward(self, x, y):
         return (self.rc(x) - self.rc(y)).pow(2).mean()
-        
+
 
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
 
     def pearson_correlation(self, filters, mask):
-        # بررسی سازگاری ابعاد
         if filters.size(0) != mask.size(0):
             raise ValueError(f"Filters and mask must have same number of channels: {filters.size(0)} vs {mask.size(0)}")
         
-        # فشرده‌سازی ماسک به 1D
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         if mask.dim() != 1:
             raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
-        # یافتن ایندکس‌های فعال
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         elif len(active_indices) == 1:
             return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
-
-        # انتخاب فیلترهای فعال
+        
         active_filters = filters[active_indices]
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
-        # بررسی مقادیر نامعتبر (NaN یا Inf)
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # محاسبه میانگین و مرکز کردن داده‌ها
-        mean = flattened_filters.mean(dim=1, keepdim=True)
-        centered = flattened_filters - mean
+        try:
+            correlation_matrix = torch.corrcoef(flattened_filters)
+        except RuntimeError:
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # محاسبه کوواریانس و انحراف معیار
-        cov = torch.matmul(centered, centered.t()) / centered.size(1)
-        std = torch.sqrt(torch.sum(centered ** 2, dim=1) / centered.size(1))
-        std_matrix = std.unsqueeze(1) * std.unsqueeze(0)
+        if correlation_matrix.dim() == 0:
+            correlation_matrix = correlation_matrix.view(1, 1)
 
-        # محاسبه ماتریس همبستگی
-        correlation_matrix = cov / (std_matrix + 1e-8)  # افزودن epsilon برای جلوگیری از تقسیم بر صفر
+        if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-        # بررسی مقادیر نامعتبر در ماتریس همبستگی
-        correlation_matrix = torch.where(
-            torch.isnan(correlation_matrix) | torch.isinf(correlation_matrix),
-            torch.zeros_like(correlation_matrix),
-            correlation_matrix
-        )
-
-        # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
         return full_correlation
@@ -82,23 +69,22 @@ class MaskLoss(nn.Module):
         correlation_matrix = self.pearson_correlation(weights, mask)
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-        triu_mask = torch.triu(torch.ones_like(mask_matrix), diagonal=0).bool()
+        masked_correlation = correlation_matrix * mask_matrix
         
-        masked_correlation = correlation_matrix * mask_matrix * triu_mask
-        
+
         squared_sum = (masked_correlation ** 2).sum()
-        num_active = (mask_matrix * triu_mask).sum()
         
+
+        num_active = mask_matrix.sum()
         if num_active > 0:
             normalized_loss = squared_sum / num_active
         else:
             normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
-            normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
 
         return normalized_loss
-
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
