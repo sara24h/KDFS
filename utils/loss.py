@@ -29,6 +29,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
 class MaskLoss(nn.Module):
     def __init__(self):
         super(MaskLoss, self).__init__()
@@ -54,7 +59,6 @@ class MaskLoss(nn.Module):
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
         try:
-         
             correlation_matrix = torch.corrcoef(flattened_filters)
         except RuntimeError:
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
@@ -65,7 +69,6 @@ class MaskLoss(nn.Module):
         if torch.any(torch.isnan(correlation_matrix)) or torch.any(torch.isinf(correlation_matrix)):
             return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
 
-    
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
@@ -78,14 +81,14 @@ class MaskLoss(nn.Module):
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         masked_correlation = correlation_matrix * mask_matrix
 
-       
-        triu_indices = torch.triu_indices(row=masked_correlation.size(0), col=masked_correlation.size(0), offset=0)
+        # استفاده از ماتریس بالا مثلثی (بدون قطر اصلی، مطابق فرمول تصویر)
+        triu_indices = torch.triu_indices(row=masked_correlation.size(0), col=masked_correlation.size(0), offset=1)
         triu_correlation = masked_correlation[triu_indices[0], triu_indices[1]]
 
-        
+        # محاسبه مجموع مربعات برای مقادیر بالا مثلثی (بدون قطر اصلی)
         squared_sum = (triu_correlation ** 2).sum()
 
-
+        # تعداد عناصر فعال در ماتریس بالا مثلثی (بدون قطر اصلی)
         triu_mask = mask_matrix[triu_indices[0], triu_indices[1]]
         num_active = triu_mask.sum()
 
