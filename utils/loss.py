@@ -38,22 +38,21 @@ class MaskLoss(nn.Module):
         # یافتن ایندکس‌های فعال
         active_indices = torch.where(mask > 0)[0]
         if len(active_indices) == 0:
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+            return torch.zeros(1, 1, device=filters.device, dtype=filters.dtype), active_indices
         elif len(active_indices) == 1:
-            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
+            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype), active_indices
 
-        # انتخاب فیلترهای فعال
+        # انتخاب فیلترهای فعال و کلیپ کردن
         active_filters = filters[active_indices]
+        active_filters = torch.clamp(active_filters, min=-1e10, max=1e10)
         flattened_filters = active_filters.view(active_filters.size(0), -1)
 
         # بررسی مقادیر نامعتبر (NaN یا Inf)
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+            return torch.zeros(1, 1, device=filters.device, dtype=filters.dtype), active_indices
 
         # محاسبه ماتریس همبستگی با torch.corrcoef
         correlation_matrix = torch.corrcoef(flattened_filters)
-
-        # تبدیل نوع داده‌ای به نوع داده‌ای فیلترها (برای سازگاری با دقت مخلوط)
         correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
 
         # بررسی مقادیر نامعتبر در ماتریس همبستگی
@@ -66,21 +65,21 @@ class MaskLoss(nn.Module):
         # اعمال ماسک مثلثی بالایی
         triu_mask = torch.triu(torch.ones_like(correlation_matrix, dtype=torch.bool), diagonal=0)
         correlation_matrix = correlation_matrix * triu_mask
-        
-        # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
-        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-        full_correlation[active_indices[:, None], active_indices] = correlation_matrix
 
-        return full_correlation
+        return correlation_matrix, active_indices
 
     def forward(self, weights, mask):
-        correlation_matrix = self.pearson_correlation(weights, mask)
+        correlation_matrix, active_indices = self.pearson_correlation(weights, mask)
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
-        mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
         
-        # اعمال عملیات مثلثی بالایی روی mask_matrix
+        if len(active_indices) <= 1:
+            return torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
+
+        # ایجاد mask_matrix با torch.outer
+        active_mask = mask[active_indices]
+        mask_matrix = torch.outer(active_mask, active_mask)
         mask_matrix = mask_matrix * torch.triu(torch.ones_like(mask_matrix, dtype=torch.bool), diagonal=0)
-        
+
         # اعمال ماسک برای فیلترهای فعال
         masked_correlation = correlation_matrix * mask_matrix
         
