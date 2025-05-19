@@ -72,6 +72,10 @@ class MaskLoss(nn.Module):
             correlation_matrix
         )
 
+        # اعمال ماسک مثلثی بالایی (شامل قطر اصلی)
+        triu_mask = torch.triu(torch.ones_like(correlation_matrix), diagonal=0).bool()
+        correlation_matrix = correlation_matrix * triu_mask
+
         # ایجاد ماتریس همبستگی کامل با پر کردن صفرها
         full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
         full_correlation[active_indices[:, None], active_indices] = correlation_matrix
@@ -82,12 +86,15 @@ class MaskLoss(nn.Module):
         correlation_matrix = self.pearson_correlation(weights, mask)
         mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
         mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
-        triu_mask = torch.triu(torch.ones_like(mask_matrix), diagonal=0).bool()
         
-        masked_correlation = correlation_matrix * mask_matrix * triu_mask
+        # اعمال عملیات مثلثی بالایی روی mask_matrix
+        mask_matrix = mask_matrix * torch.triu(torch.ones_like(mask_matrix), diagonal=0).bool()
+        
+        # اعمال ماسک برای فیلترهای فعال
+        masked_correlation = correlation_matrix * mask_matrix
         
         squared_sum = (masked_correlation ** 2).sum()
-        num_active = (mask_matrix * triu_mask).sum()
+        num_active = mask_matrix.sum()  # تعداد جفت‌های فعال در بخش مثلثی بالایی
         
         if num_active > 0:
             normalized_loss = squared_sum / num_active
