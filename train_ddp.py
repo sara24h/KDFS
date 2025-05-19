@@ -394,23 +394,18 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        # محاسبه mask_loss با استفاده از mask_modules
+                        # محاسبه mask_loss بدون چاپ جزئیات ماژول‌ها
                         mask_loss = torch.tensor(0.0, device=images.device)
                         count = 0
-                        for i, module in enumerate(self.student.module.mask_modules):
+                        for module in self.student.module.mask_modules:
                             if hasattr(module, 'mask') and hasattr(module, 'weight'):
                                 weights = module.weight
                                 mask = module.mask
                                 loss = self.mask_loss(weights, mask)
                                 mask_loss += loss
                                 count += 1
-                                if self.rank == 0:
-                                    print(f"Module {i}: Weights shape = {weights.shape}, Mask shape = {mask.shape}, MaskLoss = {loss.item()}")
-                            else:
-                                if self.rank == 0:
-                                    print(f"Module {i} in mask_modules lacks weight or mask")
-                        if self.rank == 0:
-                            print(f"Total modules with mask found: {count}, Total MaskLoss = {mask_loss.item()}")
+                        if count == 0 and self.rank == 0:
+                            print("No modules with mask found")
 
                         total_loss = (
                             ori_loss
@@ -464,7 +459,7 @@ class TrainDDP:
                 self.writer.add_scalar("train/loss/kd_loss", meter_kdloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/rc_loss", meter_rcloss.avg, global_step=epoch)
                 self.writer.add_scalar("train/loss/mask_loss", meter_maskloss.avg, global_step=epoch)
-                self.writer.add_scalar("trainleven/loss/total_loss", meter_loss.avg, global_step=epoch)
+                self.writer.add_scalar("train/loss/total_loss", meter_loss.avg, global_step=epoch)
                 self.writer.add_scalar("train/acc/top1", meter_top1.avg, global_step=epoch)
                 self.writer.add_scalar("train/lr/lr", lr, global_step=epoch)
                 self.writer.add_scalar("train/temperature/gumbel_temperature", self.student.module.gumbel_temperature, global_step=epoch)
@@ -574,7 +569,6 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Train finished!")
 
-    
     def main(self):
         self.dist_init()
         self.result_init()
