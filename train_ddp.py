@@ -349,7 +349,7 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -394,11 +394,13 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
-                        Flops = self.student.module.get_flops()
-                        mask_loss = self.mask_loss(
-                            Flops, Flops_baseline * (10**6), self.compress_rate
-                        )
+                 
+                        mask_loss = torch.tensor(0.0, device=images.device)
+                        for name, module in self.student.module.named_modules():
+                            if hasattr(module, 'mask') and isinstance(module, nn.Conv2d):
+                                weights = module.weight  # وزن‌های لایه کانولوشنی
+                                mask = module.mask  # ماسک مربوطه
+                                mask_loss += self.mask_loss(weights, mask)
 
                         total_loss = (
                             ori_loss
