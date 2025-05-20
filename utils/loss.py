@@ -25,10 +25,6 @@ class RCLoss(nn.Module):
 
 
 
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
 class MaskLoss(nn.Module):
@@ -43,70 +39,67 @@ class MaskLoss(nn.Module):
         if mask.dim() != 1:
             raise ValueError(f"Mask must be squeezable to 1D, got shape: {mask.shape}")
 
-        active_indices = torch.where(mask > 0)[0]
-        if len(active_indices) == 0:
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-        elif len(active_indices) == 1:
-            return torch.ones(1, 1, device=filters.device, dtype=filters.dtype)
-        
-        active_filters = filters[active_indices]
-        flattened_filters = active_filters.view(active_filters.size(0), -1)
+        N = filters.size(0)
+        flattened_filters = filters.view(N, -1).float()
 
         if torch.isnan(flattened_filters).any() or torch.isinf(flattened_filters).any():
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+            return torch.zeros(N, N, device=filters.device, dtype=filters.dtype)
 
-        # استفاده از autocast برای محاسبات ماتریس همبستگی
         with autocast():
-            try:
-                correlation_matrix = torch.corrcoef(flattened_filters)
-            except RuntimeError:
-                return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+            # استانداردسازی فیلترها
+            mean = flattened_filters.mean(dim=1, keepdim=True)
+            std = flattened_filters.std(dim=1, keepdim=True, unbiased=False)
+            std = torch.where(std == 0, torch.tensor(1.0, device=std.device), std)
+            normalized_filters = (flattened_filters - mean) / std
 
-        if correlation_matrix.dim() == 0:
-            correlation_matrix = correlation_matrix.view(1, 1)
+  
+            indices = torch.triu_indices(row=N, col=N, offset=1, device=filters.device)
+            i, j = indices[0], indices[1]
 
-        if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
-            return torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
+            
+            corr = torch.einsum('ik,jk->ij', normalized_filters[i], normalized_filters[j]) / flattened_filters.size(1)
+            correlation_matrix = torch.zeros(N, N, device=filters.device, dtype=filters.dtype)
+            correlation_matrix[i, j] = corr
 
-        full_correlation = torch.zeros(filters.size(0), filters.size(0), device=filters.device, dtype=filters.dtype)
-        correlation_matrix = correlation_matrix.to(dtype=filters.dtype)
-        full_correlation[active_indices[:, None], active_indices] = correlation_matrix
+            if torch.isnan(correlation_matrix).any() or torch.isinf(correlation_matrix).any():
+                return torch.zeros(N, N, device=filters.device, dtype=filters.dtype)
 
-        return full_correlation
+        return correlation_matrix
 
     def forward(self, weights, mask):
-        # اطمینان از اینکه ورودی‌ها روی دستگاه مناسب (GPU) هستند
+  
         if weights.device != mask.device:
             mask = mask.to(weights.device)
+        if weights.dtype != mask.dtype:
+            mask = mask.to(dtype=weights.dtype)
 
-        # استفاده از autocast برای محاسبات پرهزینه
         with autocast():
-            # محاسبه ماتریس همبستگی پیرسون
+       
             correlation_matrix = self.pearson_correlation(weights, mask)
             mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
             
-            # ساخت ماتریس ماسک
+            # ساخت ماتریس ماسک کامل
             mask_matrix = mask.unsqueeze(1) * mask.unsqueeze(0)
             
-            # استخراج بخش بالا مثلثی ماتریس همبستگی (بدون قطر)
-            upper_tri_pearson = torch.triu(correlation_matrix, diagonal=1)
+            # استخراج بخش بالا مثلثی ماتریس ماسک
+            mask_upper_tri = torch.triu(mask_matrix, diagonal=1)
             
-            # اعمال ماتریس ماسک روی ماتریس بالا مثلثی
-            masked_upper_tri = upper_tri_pearson * mask_matrix
+            # ضرب نظیر به نظیر
+            masked_upper_tri = correlation_matrix * mask_upper_tri
             
-            # محاسبه مجموع مربعات
+            # محاسبه مجموع مربعات (نرم Frobenius بدون رادیکال)
             squared_sum = (masked_upper_tri ** 2).sum()
             
             # محاسبه تعداد عناصر فعال
-            num_active = torch.triu(mask_matrix, diagonal=1).sum()
+            num_active = mask_upper_tri.sum()
             
-            # نرمال‌سازی loss
+            # نرمال‌سازی
             if num_active > 0:
                 normalized_loss = squared_sum / num_active
             else:
                 normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
             
-            # بررسی مقادیر نامعتبر
+     
             if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
                 normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
         
