@@ -11,7 +11,7 @@ class FaceDataset(Dataset):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
-        self.img_column = img_column  # Dynamic column name
+        self.img_column = img_column
         self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
     def __len__(self):
@@ -20,13 +20,12 @@ class FaceDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
         if not os.path.exists(img_name):
-            print(f"Warning: Image not found: {img_name}")
-            image_size = 256 if '140k' in self.root_dir else 300
-            image = Image.new('RGB', (image_size, image_size), color='black')
-            label = self.label_map[self.data['label'].iloc[idx]]
-            if self.transform:
-                image = self.transform(image)
-            return image, torch.tensor(label, dtype=torch.float)
+            raise FileNotFoundError(f"image not found: {img_name}")
+        image = Image.open(img_name).convert('RGB')
+        label = self.label_map[self.data['label'].iloc[idx]]
+        if self.transform:
+            image = self.transform(image)
+        return image, torch.tensor(label, dtype=torch.float)
         image = Image.open(img_name).convert('RGB')
         label = self.label_map[self.data['label'].iloc[idx]]
         if self.transform:
