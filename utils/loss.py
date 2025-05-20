@@ -26,6 +26,11 @@ class RCLoss(nn.Module):
 
 
 from torch.cuda.amp import autocast
+import logging
+
+# تنظیم لاگر برای گزارش هشدارها
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class MaskLoss(nn.Module):
     def __init__(self):
@@ -52,11 +57,9 @@ class MaskLoss(nn.Module):
             std = torch.where(std == 0, torch.tensor(1.0, device=std.device), std)
             normalized_filters = (flattened_filters - mean) / std
 
-  
             indices = torch.triu_indices(row=N, col=N, offset=1, device=filters.device)
             i, j = indices[0], indices[1]
 
-            
             corr = torch.einsum('ik,jk->ij', normalized_filters[i], normalized_filters[j]) / flattened_filters.size(1)
             correlation_matrix = torch.zeros(N, N, device=filters.device, dtype=filters.dtype)
             correlation_matrix[i, j] = corr
@@ -67,14 +70,12 @@ class MaskLoss(nn.Module):
         return correlation_matrix
 
     def forward(self, weights, mask):
-  
         if weights.device != mask.device:
             mask = mask.to(weights.device)
         if weights.dtype != mask.dtype:
             mask = mask.to(dtype=weights.dtype)
 
         with autocast():
-       
             correlation_matrix = self.pearson_correlation(weights, mask)
             mask = mask.squeeze(-1).squeeze(-1).squeeze(-1)
             
@@ -93,13 +94,18 @@ class MaskLoss(nn.Module):
             # محاسبه تعداد عناصر فعال
             num_active = mask_upper_tri.sum()
             
-            # نرمال‌سازی
+            # نرمال‌سازی و گزارش در صورت عدم وجود عنصر فعال
             if num_active > 0:
                 normalized_loss = squared_sum / num_active
             else:
+                logger.warning(
+                    "No active elements in mask_upper_tri (num_active=0). "
+                    "This may indicate an empty or all-zero mask. "
+                    f"Mask shape: {mask.shape}, Mask values: {mask.tolist()}"
+                )
                 normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
             
-     
+            # بررسی مقادیر نامعتبر
             if torch.isnan(normalized_loss) or torch.isinf(normalized_loss):
                 normalized_loss = torch.tensor(0.0, device=weights.device, dtype=weights.dtype)
         
