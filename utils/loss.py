@@ -1,16 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torch.utils
 
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, logits_t, logits_s):
-        return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
-
+        return F.kl_div(
+            F.log_softmax(logits_s, dim=1),
+            F.softmax(logits_t, dim=1),
+            reduction="batchmean",
+        )
 
 class RCLoss(nn.Module):
     def __init__(self):
