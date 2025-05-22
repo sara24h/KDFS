@@ -386,11 +386,7 @@ class TrainDDP:
                             logits_teacher = logits_teacher.squeeze(1)
 
                         ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = (self.target_temperature**2) * self.kd_loss(
-                            logits_teacher / self.target_temperature,
-                            logits_student / self.target_temperature,
-                        )
-
+                        kd_loss = self.kd_loss(logits_teacher, logits_student)
 
                         rc_loss = torch.tensor(0, device=images.device)
                         for i in range(len(feature_list_student)):
