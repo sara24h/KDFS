@@ -6,28 +6,12 @@ import torch.nn.functional as F
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
-        self.kd_loss = nn.KLDivLoss(reduction='batchmean')
-        self.eps = 1e-8  
+        self.bce_loss = nn.BCEWithLogitsLoss()
 
-    def forward(self, logits_teacher_scaled, logits_student_scaled):
-        if logits_student_scaled.dim() == 1:
-            logits_student_scaled = logits_student_scaled.unsqueeze(1)
-        if logits_teacher_scaled.dim() == 1:
-            logits_teacher_scaled = logits_teacher_scaled.unsqueeze(1)
+    def forward(self, logits_t, logits_s):
+   
+        return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
 
-        p_teacher_pos = torch.sigmoid(logits_teacher_scaled)
-        p_student_pos = torch.sigmoid(logits_student_scaled)
-
-
-        p_teacher = torch.cat([p_teacher_pos, 1 - p_teacher_pos + self.eps], dim=1)
-        p_student = torch.cat([p_student_pos, 1 - p_student_pos + self.eps], dim=1)
-
-        
-        p_teacher = p_teacher / (p_teacher.sum(dim=1, keepdim=True) + self.eps)
-        log_p_student = torch.log(p_student + self.eps)
-
-        kl_loss = self.kd_loss(log_p_student, p_teacher)
-        return kl_loss
 
 class RCLoss(nn.Module):
     def __init__(self):
