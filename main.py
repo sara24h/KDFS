@@ -220,7 +220,7 @@ def parse_args():
     parser.add_argument(
         "--target_temperature",
         type=float,
-        default=3.0,
+        default=2.0,
         help="temperature of soft targets",
     )
     parser.add_argument(
