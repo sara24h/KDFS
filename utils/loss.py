@@ -2,16 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class KDLoss(nn.Module):
     def __init__(self):
         super(KDLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
 
-    def forward(self, logits_t, logits_s):
-   
-        return self.bce_loss(logits_s, torch.sigmoid(logits_t))  
-
+    def forward(self, logits_teacher, logits_student, temperature):
+        p_t = torch.sigmoid(logits_teacher / temperature)  
+        p_s = torch.sigmoid(logits_student / temperature) 
+        kd_loss = F.binary_cross_entropy(p_s, p_t, reduction='mean')  
+        return kd_loss
 
 class RCLoss(nn.Module):
     def __init__(self):
