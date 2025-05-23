@@ -16,14 +16,14 @@ from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from torch.amp import GradScaler, autocast  
+
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
     "ResNet_50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5000.0,
-        "140k": 5390.0,
+        "140k": 5000.0,
     }
 }
 
@@ -337,7 +337,7 @@ class TrainDDP:
 
         torch.cuda.empty_cache()
         self.teacher.eval()
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = GradScaler()
 
         if self.resume:
             self.resume_student_ckpt()
@@ -349,7 +349,7 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")
+            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
 
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
@@ -378,7 +378,7 @@ class TrainDDP:
                     images = images.cuda()
                     targets = targets.cuda().float()
 
-                    with torch.amp.autocast('cuda'):
+                    with autocast():
                         logits_student, feature_list_student = self.student(images)
                         logits_student = logits_student.squeeze(1)
                         with torch.no_grad():
@@ -386,10 +386,7 @@ class TrainDDP:
                             logits_teacher = logits_teacher.squeeze(1)
 
                         ori_loss = self.ori_loss(logits_student, targets)
-                        kd_loss = (self.target_temperature**2) * self.kd_loss(
-                            logits_teacher / self.target_temperature,
-                            logits_student / self.target_temperature,
-                        )
+                        kd_loss = self.kd_loss(logits_teacher, logits_student)
 
                         rc_loss = torch.tensor(0, device=images.device)
                         for i in range(len(feature_list_student)):
@@ -397,18 +394,11 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        # محاسبه mask_loss بدون چاپ جزئیات ماژول‌ها
-                        mask_loss = torch.tensor(0.0, device=images.device)
-                        count = 0
-                        for module in self.student.module.mask_modules:
-                            if hasattr(module, 'mask') and hasattr(module, 'weight'):
-                                weights = module.weight
-                                mask = module.mask
-                                loss = self.mask_loss(weights, mask)
-                                mask_loss += loss
-                                count += 1
-                        if count == 0 and self.rank == 0:
-                            print("No modules with mask found")
+                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
+                        Flops = self.student.module.get_flops()
+                        mask_loss = self.mask_loss(
+                            Flops, Flops_baseline * (10**6), self.compress_rate
+                        )
 
                         total_loss = (
                             ori_loss
@@ -507,7 +497,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss.reset()
+                meter_val_loss.reset()  # Reset validation loss meter
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -517,6 +507,7 @@ class TrainDDP:
                             logits_student, _ = self.student(images)
                             logits_student = logits_student.squeeze(1)
 
+                            # Compute validation loss
                             val_loss = self.ori_loss(logits_student, targets)
                             meter_val_loss.update(val_loss.item(), images.size(0))
 
@@ -535,7 +526,7 @@ class TrainDDP:
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)
+                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
