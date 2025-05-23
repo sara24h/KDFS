@@ -7,10 +7,14 @@ class KDLoss(nn.Module):
         super(KDLoss, self).__init__()
 
     def forward(self, logits_teacher, logits_student, temperature):
-        p_t = torch.sigmoid(logits_teacher / temperature)  
-        p_s = torch.sigmoid(logits_student / temperature) 
-        kd_loss = F.binary_cross_entropy(p_s, p_t, reduction='mean')  
+
+        kd_loss = F.binary_cross_entropy_with_logits(
+            logits_student / temperature,
+            torch.sigmoid(logits_teacher / temperature), 
+            reduction='mean'
+        )
         return kd_loss
+
 
 class RCLoss(nn.Module):
     def __init__(self):
