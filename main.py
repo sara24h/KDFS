@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from torch.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler, autocast
 import torch.distributed as dist
 
 matplotlib.use('Agg')
