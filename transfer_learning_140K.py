@@ -115,7 +115,7 @@ num_ftrs = model.fc.in_features
 model.fc = nn.Linear(num_ftrs, 1)
 
 # Load checkpoint
-checkpoint_path = '/kaggle/input/resnet50_sparse/pytorch/default/1/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
+checkpoint_path = '/kaggle/input/kdfs-3-khordad-fixed-temp/results/run_resnet50_imagenet_prune1/student_model/finetune_ResNet_50_sparse_best.pt'
 checkpoint = torch.load(checkpoint_path)
 
 if 'student' in checkpoint:
