@@ -537,10 +537,9 @@ class TrainDDP:
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}.format(
+                    "Val_Acc {val_acc:.2f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
-                       # val_loss=meter_val_loss.avg
                     )
                 )
 
