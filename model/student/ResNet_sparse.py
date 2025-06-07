@@ -35,11 +35,19 @@ class SoftMaskedConv2d(nn.Module):
         nn.init.kaiming_normal_(self.mask_weight)
 
     def compute_mask(self, ticket):
+        if torch.isnan(self.mask_weight).any():
+            self.logger.error(f"NaN in mask_weight for layer {self.layer_name}")
+            raise ValueError("NaN in mask_weight")
+        if torch.isinf(self.mask_weight).any():
+            self.logger.error(f"Inf in mask_weight for layer {self.layer_name}")
+            raise ValueError("Inf in mask_weight")
+    
+        mask_weight_fp32 = self.mask_weight.float() 
         if ticket:
-            mask = torch.argmax(self.mask_weight, dim=1).float().view(-1, 1, 1, 1)
+            mask = torch.argmax(mask_weight_fp32, dim=1).float().view(-1, 1, 1, 1)
         else:
             mask = F.gumbel_softmax(
-                logits=self.mask_weight, tau=self.gumbel_temperature, hard=True, dim=1
+                logits=mask_weight_fp32, tau=self.gumbel_temperature, hard=True, dim=1
             )[:, 1, :, :].view(-1, 1, 1, 1)
         return mask
 
