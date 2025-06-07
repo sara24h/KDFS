@@ -349,8 +349,7 @@ class TrainDDP:
             meter_maskloss = meter.AverageMeter("MaskLoss", ":.6e")
             meter_loss = meter.AverageMeter("Loss", ":.4e")
             meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-            meter_val_loss = meter.AverageMeter("ValLoss", ":.4e")  # Added validation loss meter
-
+           
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
@@ -412,6 +411,7 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
@@ -501,7 +501,7 @@ class TrainDDP:
                 self.student.eval()
                 self.student.module.ticket = True
                 meter_top1.reset()
-                meter_val_loss.reset()  # Reset validation loss meter
+                #meter_val_loss.reset()  # Reset validation loss meter
                 with torch.no_grad():
                     with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
                         _tqdm.set_description("Validation epoch: {}/{}".format(epoch, self.num_epochs))
@@ -512,8 +512,8 @@ class TrainDDP:
                             logits_student = logits_student.squeeze(1)
 
                             # Compute validation loss
-                            val_loss = self.ori_loss(logits_student, targets)
-                            meter_val_loss.update(val_loss.item(), images.size(0))
+                            #val_loss = self.ori_loss(logits_student, targets)
+                            #meter_val_loss.update(val_loss.item(), images.size(0))
 
                             preds = (torch.sigmoid(logits_student) > 0.5).float()
                             correct = (preds == targets).sum().item()
@@ -523,23 +523,22 @@ class TrainDDP:
 
                             _tqdm.set_postfix(
                                 val_acc="{:.4f}".format(meter_top1.avg),
-                                val_loss="{:.4f}".format(meter_val_loss.avg)
+                                #val_loss="{:.4f}".format(meter_val_loss.avg)
                             )
                             _tqdm.update(1)
                             time.sleep(0.01)
 
                 Flops = self.student.module.get_flops()
                 self.writer.add_scalar("val/acc/top1", meter_top1.avg, global_step=epoch)
-                self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
+                #self.writer.add_scalar("val/loss/ori_loss", meter_val_loss.avg, global_step=epoch)  # Log validation loss
                 self.writer.add_scalar("val/Flops", Flops, global_step=epoch)
 
                 self.logger.info(
                     "[Val] "
                     "Epoch {0} : "
-                    "Val_Acc {val_acc:.2f}, Val_Loss {val_loss:.4f}".format(
+                    "Val_Acc {val_acc:.2f}".format(
                         epoch,
                         val_acc=meter_top1.avg,
-                        val_loss=meter_val_loss.avg
                     )
                 )
 
