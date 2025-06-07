@@ -412,6 +412,7 @@ class TrainDDP:
                         )
 
                     scaler.scale(total_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
                     scaler.step(self.optim_weight)
                     scaler.step(self.optim_mask)
                     scaler.update()
