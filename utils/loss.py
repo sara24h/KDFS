@@ -33,7 +33,7 @@ class MaskLoss(nn.Module):
         super(MaskLoss, self).__init__()
 
     def forward(self, Flops, Flops_baseline, compress_rate):
-        return torch.pow(Flops / Flops_baseline - compress_rate, 2)
+        return torch.pow(Flops / (Flops_baseline + eps) - (1 - compress_rate), 2)
 
 
 class CrossEntropyLabelSmooth(nn.Module):
