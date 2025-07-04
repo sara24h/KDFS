@@ -96,12 +96,8 @@ class Test:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            if self.dataset_mode == 'hardfake':
-                self.student = ResNet_50_sparse_hardfakevsreal()
-            elif self.dataset_mode == 'rvf10k':
-                self.student = ResNet_50_sparse_rvf10k()
-            else:  # 140k
-                self.student = ResNet_50_sparse_140k()
+            self.student = ResNet_50_sparse_hardfakevsreal()
+           
 
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
