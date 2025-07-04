@@ -1,3 +1,4 @@
+
 import os
 import time
 import numpy as np
@@ -11,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 from utils import meter
 from get_flops_and_params import get_flops_and_params
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from data.dataset import Dataset_selector
 
 class Test:
     def __init__(self, args):
@@ -94,8 +96,13 @@ class Test:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            
-            self.student = ResNet_50_sparse_hardfakevsreal()
+            if self.dataset_mode == 'hardfake':
+                self.student = ResNet_50_sparse_hardfakevsreal()
+            elif self.dataset_mode == 'rvf10k':
+                self.student = ResNet_50_sparse_rvf10k()
+            else:  # 140k
+                self.student = ResNet_50_sparse_140k()
+
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
