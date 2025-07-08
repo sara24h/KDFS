@@ -354,7 +354,7 @@ class TrainDDP:
         for epoch in range(self.start_epoch + 1, self.num_epochs + 1):
             self.train_loader.sampler.set_epoch(epoch)
             self.student.train()
-            self.student.module.ticket = True
+            self.student.module.ticket = False
             if self.rank == 0:
                 meter_oriloss.reset()
                 meter_kdloss.reset()
