@@ -417,7 +417,7 @@ class TrainDDP:
                         for i, m in enumerate(self.student.module.mask_modules):
                             if m.mask_weight.grad is not None:
                                 self.logger.info(f"[Grad] Epoch {epoch}, Mask {i} grad norm: {torch.norm(m.mask_weight.grad).item():.4e}")
-                             else:
+                            else:
                                 self.logger.info(f"[Grad] Epoch {epoch}, Mask {i} grad is None")
                     
                     scaler.step(self.optim_weight)
