@@ -1,4 +1,3 @@
-
 import os
 import time
 import numpy as np
@@ -9,6 +8,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
+import glob
 from utils import meter
 from get_flops_and_params import get_flops_and_params
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
@@ -24,7 +24,7 @@ class Test:
         self.device = args.device
         self.test_batch_size = args.test_batch_size
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', or '140k'
+        self.dataset_mode = args.dataset_mode  # 'hardfake', 'rvf10k', '140k', '200k', '190k', '330k'
 
         # Verify CUDA availability
         if self.device == 'cuda' and not torch.cuda.is_available():
@@ -39,14 +39,24 @@ class Test:
                 if not os.path.exists(csv_path):
                     raise FileNotFoundError(f"CSV file not found: {csv_path}")
             elif self.dataset_mode == 'rvf10k':
-                train_csv = os.path.join(self.dataset_dir, 'train.csv')
-                valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+                train_csv = '/kaggle/input/rvf10k/train.csv'
+                valid_csv = '/kaggle/input/rvf10k/valid.csv'
                 if not os.path.exists(train_csv) or not os.path.exists(valid_csv):
                     raise FileNotFoundError(f"CSV files not found: {train_csv}, {valid_csv}")
-            else:  # 140k
+            elif self.dataset_mode == '140k':
                 test_csv = os.path.join(self.dataset_dir, 'test.csv')
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
+            elif self.dataset_mode == '200k':
+                test_csv = os.path.join(self.dataset_dir, 'test.csv')
+                if not os.path.exists(test_csv):
+                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
+            elif self.dataset_mode == '190k':
+                if not os.path.exists(self.dataset_dir):
+                    raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
+            elif self.dataset_mode == '330k':
+                if not os.path.exists(self.dataset_dir):
+                    raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
 
             # Initialize dataset based on mode
             if self.dataset_mode == 'hardfake':
@@ -63,8 +73,8 @@ class Test:
             elif self.dataset_mode == 'rvf10k':
                 dataset = Dataset_selector(
                     dataset_mode='rvf10k',
-                    rvf10k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
-                    rvf10k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
+                    rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
                     rvf10k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
@@ -72,13 +82,49 @@ class Test:
                     pin_memory=self.pin_memory,
                     ddp=False
                 )
-            else:  # 140k
+            elif self.dataset_mode == '140k':
                 dataset = Dataset_selector(
                     dataset_mode='140k',
                     realfake140k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
                     realfake140k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
                     realfake140k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
                     realfake140k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
+            elif self.dataset_mode == '200k':
+                test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
+                if not os.path.exists(test_csv):
+                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
+                dataset = Dataset_selector(
+                dataset_mode='200k',
+                realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
+                realfake200k_val_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
+                realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
+                realfake200k_root_dir=os.path.join(self.dataset_dir, 'my_real_vs_ai_dataset/my_real_vs_ai_dataset'), 
+                train_batch_size=self.test_batch_size,
+                eval_batch_size=self.test_batch_size,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                ddp=False
+            )
+            elif self.dataset_mode == '190k':
+                dataset = Dataset_selector(
+                    dataset_mode='190k',
+                    realfake190k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
+            elif self.dataset_mode == '330k':
+                dataset = Dataset_selector(
+                    dataset_mode='330k',
+                    realfake330k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
                     eval_batch_size=self.test_batch_size,
                     num_workers=self.num_workers,
@@ -97,8 +143,6 @@ class Test:
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
             self.student = ResNet_50_sparse_hardfakevsreal()
-           
-
             # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
