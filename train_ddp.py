@@ -20,6 +20,19 @@ from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
+Flops_baselines = {
+    "ResNet_50": {
+        "hardfakevsrealfaces": 7700.0,
+        "rvf10k": 5390,
+        "140k": 5390.0,
+        "200k": 5390.0,
+        "330k": 5390.0,
+        "190k": 5390.0,
+        
+    }
+}
+
+
 class TrainDDP:
     def __init__(self, args):
         self.args = args
