@@ -180,9 +180,9 @@ class Dataset_selector(Dataset):
                 img_name = row.get('filename', row.get('image', row.get('path', '')))
                 return os.path.join(folder, img_name)
 
-            train_data['images_id'] = train_data.apply(create_image_path, axis=1)
-            val_data['images_id'] = val_data.apply(create_image_path, axis=1)
-            test_data['images_id'] = test_data.apply(create_image_path, axis=1)
+            train_data['filename'] = train_data.apply(create_image_path, axis=1)
+            val_data['filename'] = val_data.apply(create_image_path, axis=1)
+            test_data['filename'] = test_data.apply(create_image_path, axis=1)
 
         elif dataset_mode == '190k':
             if not realfake190k_root_dir:
@@ -372,12 +372,12 @@ if __name__ == "__main__":
     # Example for 200k Real and Fake Faces
     dataset_200k = Dataset_selector(
         dataset_mode='200k',
-        realfake200k_train_csv='/kaggle/input/200k-real-and-fake-faces/train_labels.csv',
-        realfake200k_val_csv='/kaggle/input/200k-real-and-fake-faces/val_labels.csv',
-        realfake200k_test_csv='/kaggle/input/200k-real-and-fake-faces/test_labels.csv',
-        realfake200k_root_dir='/kaggle/input/200k-real-and-fake-faces',
-        train_batch_size=64,
-        eval_batch_size=64,
+        realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
+        realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
+        realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
+        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset',
+        train_batch_size=128,
+        eval_batch_size=128,
         ddp=True,
     )
 
