@@ -7,7 +7,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 class FaceDataset(Dataset):
-    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='filename'):
         self.data = data_frame
         self.root_dir = root_dir
         self.transform = transform
@@ -177,12 +177,39 @@ class Dataset_selector(Dataset):
 
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
-                img_name = row.get('images_id', row.get('image', row.get('path', '')))
+                img_name = row.get('filename', row.get('image', row.get('path', '')))
                 return os.path.join(folder, img_name)
 
-            train_data['images_id'] = train_data.apply(create_image_path, axis=1)
-            val_data['images_id'] = val_data.apply(create_image_path, axis=1)
-            test_data['images_id'] = test_data.apply(create_image_path, axis=1)
+            train_data['filename'] = train_data.apply(create_image_path, axis=1)
+            val_data['filename'] = val_data.apply(create_image_path, axis=1)
+            test_data['filename'] = test_data.apply(create_image_path, axis=1)
+
+        elif dataset_mode == '190k':
+            if not realfake190k_root_dir:
+                raise ValueError("realfake190k_root_dir must be provided")
+            root_dir = realfake190k_root_dir
+
+            def create_dataframe(split):
+                data = {'filename': [], 'label': []}
+                real_path = os.path.join(root_dir, split, 'Real')
+                fake_path = os.path.join(root_dir, split, 'Fake')
+                
+                for img_path in glob.glob(os.path.join(real_path, 'real_*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(1)  # Real = 1
+                
+                for img_path in glob.glob(os.path.join(fake_path, 'fake_*.jpg')):
+                    data['filename'].append(os.path.relpath(img_path, root_dir))
+                    data['label'].append(0)  # Fake = 0
+                
+                df = pd.DataFrame(data)
+                if df.empty:
+                    raise ValueError(f"No images found in {split} directory")
+                return df
+
+            train_data = create_dataframe('Train')
+            val_data = create_dataframe('Validation')
+            test_data = create_dataframe('Test')
 
         elif dataset_mode == '190k':
             if not realfake190k_root_dir:
