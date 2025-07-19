@@ -99,7 +99,7 @@ class Dataset_selector(Dataset):
         ])
 
         # Set img_column based on dataset_mode
-        img_column = 'path' if dataset_mode in ['140k'] else 'images_id'
+        img_column = 'path' if dataset_mode in ['140k', '12.9k'] else 'filename' if dataset_mode in ['200k', '190k', '330k'] else 'images_id'
 
         # Load data based on dataset_mode
         if dataset_mode == 'hardfake':
