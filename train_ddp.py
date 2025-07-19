@@ -12,20 +12,13 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k,SoftMaskedConv2d
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
+from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-
-Flops_baselines = {
-    "ResNet_50": {
-        "hardfakevsrealfaces": 7700.0,
-        "rvf10k": 5000.0,
-        "140k": 5390.0,
-    }
-}
 
 class TrainDDP:
     def __init__(self, args):
@@ -74,8 +67,20 @@ class TrainDDP:
             self.args.dataset_type = "140k"
             self.num_classes = 1
             self.image_size = 256
+        elif self.dataset_mode == "200k":
+            self.args.dataset_type = "200k"
+            self.num_classes = 1
+            self.image_size = 256
+        elif self.dataset_mode == "190k":
+            self.args.dataset_type = "190k"
+            self.num_classes = 1
+            self.image_size = 256
+        elif self.dataset_mode == "330k":
+            self.args.dataset_type = "330k"
+            self.num_classes = 1
+            self.image_size = 256
         else:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
     def dist_init(self):
         dist.init_process_group("nccl")
@@ -115,55 +120,74 @@ class TrainDDP:
             torch.backends.cudnn.enabled = True
 
     def dataload(self):
-        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k']:
-            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', or '140k'")
+        if self.dataset_mode not in ['hardfake', 'rvf10k', '140k', '200k', '190k', '330k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
+
+        hardfake_csv_file = None
+        hardfake_root_dir = None
+        rvf10k_train_csv = None
+        rvf10k_valid_csv = None
+        rvf10k_root_dir = None
+        realfake140k_train_csv = None
+        realfake140k_valid_csv = None
+        realfake140k_test_csv = None
+        realfake140k_root_dir = None
+        realfake200k_train_csv = None
+        realfake200k_val_csv = None
+        realfake200k_test_csv = None
+        realfake200k_root_dir = None
+        realfake190k_root_dir = None
+        realfake330k_root_dir = None
 
         if self.dataset_mode == 'hardfake':
             hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
             hardfake_root_dir = self.dataset_dir
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
+            if self.rank == 0 and not os.path.exists(hardfake_csv_file):
+                raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
         elif self.dataset_mode == 'rvf10k':
-            hardfake_csv_file = None
-            hardfake_root_dir = None
             rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
             rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
             rvf10k_root_dir = self.dataset_dir
-            realfake140k_train_csv = None
-            realfake140k_valid_csv = None
-            realfake140k_test_csv = None
-            realfake140k_root_dir = None
-        else:  # dataset_mode == '140k'
-            hardfake_csv_file = None
-            hardfake_root_dir = None
-            rvf10k_train_csv = None
-            rvf10k_valid_csv = None
-            rvf10k_root_dir = None
-            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
-            realfake140k_root_dir = self.dataset_dir
-
-        if self.rank == 0:
-            if self.dataset_mode == 'hardfake' and not os.path.exists(hardfake_csv_file):
-                raise FileNotFoundError(f"CSV file not found: {hardfake_csv_file}")
-            if self.dataset_mode == 'rvf10k':
+            if self.rank == 0:
                 if not os.path.exists(rvf10k_train_csv):
                     raise FileNotFoundError(f"Train CSV file not found: {rvf10k_train_csv}")
                 if not os.path.exists(rvf10k_valid_csv):
                     raise FileNotFoundError(f"Valid CSV file not found: {rvf10k_valid_csv}")
-            if self.dataset_mode == '140k':
+        elif self.dataset_mode == '140k':
+            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
+            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
+            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
+            realfake140k_root_dir = self.dataset_dir
+            if self.rank == 0:
                 if not os.path.exists(realfake140k_train_csv):
                     raise FileNotFoundError(f"Train CSV file not found: {realfake140k_train_csv}")
                 if not os.path.exists(realfake140k_valid_csv):
                     raise FileNotFoundError(f"Valid CSV file not found: {realfake140k_valid_csv}")
                 if not os.path.exists(realfake140k_test_csv):
                     raise FileNotFoundError(f"Test CSV file not found: {realfake140k_test_csv}")
+        elif self.dataset_mode == '200k':
+            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
+            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
+            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
+            realfake200k_root_dir = self.dataset_dir
+            if self.rank == 0:
+                if not os.path.exists(realfake200k_train_csv):
+                    raise FileNotFoundError(f"Train CSV file not found: {realfake200k_train_csv}")
+                if not os.path.exists(realfake200k_val_csv):
+                    raise FileNotFoundError(f"Valid CSV file not found: {realfake200k_val_csv}")
+                if not os.path.exists(realfake200k_test_csv):
+                    raise FileNotFoundError(f"Test CSV file not found: {realfake200k_test_csv}")
+        elif self.dataset_mode == '190k':
+            realfake190k_root_dir = self.dataset_dir
+            if self.rank == 0 and not os.path.exists(realfake190k_root_dir):
+                raise FileNotFoundError(f"190k dataset directory not found: {realfake190k_root_dir}")
+        elif self.dataset_mode == '330k':
+            realfake330k_root_dir = self.dataset_dir
+            if self.rank == 0 and not os.path.exists(realfake330k_root_dir):
+                raise FileNotFoundError(f"330k dataset directory not found: {realfake330k_root_dir}")
+
+        if self.rank == 0:
+            self.logger.info(f"Loading dataset: {self.dataset_mode}")
 
         dataset_instance = Dataset_selector(
             dataset_mode=self.dataset_mode,
@@ -176,6 +200,12 @@ class TrainDDP:
             realfake140k_valid_csv=realfake140k_valid_csv,
             realfake140k_test_csv=realfake140k_test_csv,
             realfake140k_root_dir=realfake140k_root_dir,
+            realfake200k_train_csv=realfake200k_train_csv,
+            realfake200k_val_csv=realfake200k_val_csv,
+            realfake200k_test_csv=realfake200k_test_csv,
+            realfake200k_root_dir=realfake200k_root_dir,
+            realfake190k_root_dir=realfake190k_root_dir,
+            realfake330k_root_dir=realfake330k_root_dir,
             train_batch_size=self.train_batch_size,
             eval_batch_size=self.eval_batch_size,
             num_workers=self.num_workers,
@@ -219,18 +249,11 @@ class TrainDDP:
 
         if self.rank == 0:
             self.logger.info("Building student model")
-        if self.dataset_mode == "hardfake":
-            self.student = ResNet_50_sparse_hardfakevsreal(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
-            )
-        else:  # rvf10k or 140k
-            self.student = ResNet_50_sparse_rvf10k(
-                gumbel_start_temperature=self.gumbel_start_temperature,
-                gumbel_end_temperature=self.gumbel_end_temperature,
-                num_epochs=self.num_epochs,
-            )
+
+        self.student = ResNet_50_sparse_hardfakevsreal(
+            gumbel_start_temperature=self.gumbel_start_temperature,
+            gumbel_end_temperature=self.gumbel_end_temperature,
+  
         self.student.dataset_type = self.args.dataset_type
         num_ftrs = self.student.fc.in_features
         self.student.fc = nn.Linear(num_ftrs, 1)
