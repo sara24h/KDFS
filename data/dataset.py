@@ -177,12 +177,12 @@ class Dataset_selector(Dataset):
 
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
-                img_name = row.get('filename', row.get('image', row.get('path', '')))
+                img_name = row.get('images_id', row.get('image', row.get('path', '')))
                 return os.path.join(folder, img_name)
 
-            train_data['filename'] = train_data.apply(create_image_path, axis=1)
-            val_data['filename'] = val_data.apply(create_image_path, axis=1)
-            test_data['filename'] = test_data.apply(create_image_path, axis=1)
+            train_data['images_id'] = train_data.apply(create_image_path, axis=1)
+            val_data['images_id'] = val_data.apply(create_image_path, axis=1)
+            test_data['images_id'] = test_data.apply(create_image_path, axis=1)
 
         elif dataset_mode == '190k':
             if not realfake190k_root_dir:
