@@ -178,7 +178,7 @@ class Dataset_selector(Dataset):
             def create_image_path(row):
                 folder = 'real' if row['label'] == 1 else 'ai_images'
                 img_name = row.get('filename', row.get('image', row.get('path', '')))
-                return os.path.join(folder, img_name)
+                return os.path.join( img_name)
 
             train_data['filename'] = train_data.apply(create_image_path, axis=1)
             val_data['filename'] = val_data.apply(create_image_path, axis=1)
@@ -402,7 +402,7 @@ if __name__ == "__main__":
         realfake200k_train_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv',
         realfake200k_val_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv',
         realfake200k_test_csv='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv',
-        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset',
+        realfake200k_root_dir='/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/my_real_vs_ai_dataset/my_real_vs_ai_dataset',
         train_batch_size=128,
         eval_batch_size=128,
         ddp=True,
