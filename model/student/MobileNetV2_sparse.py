@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import math
@@ -15,11 +16,8 @@ class MaskedNet(nn.Module):
         self.gumbel_start_temperature = gumbel_start_temperature
         self.gumbel_end_temperature = gumbel_end_temperature
         self.num_epochs = num_epochs
-
         self.gumbel_temperature = gumbel_start_temperature
-
         self.ticket = False
-
         self.mask_modules = []
 
     def checkpoint(self):
@@ -34,9 +32,7 @@ class MaskedNet(nn.Module):
                 m.checkpoint = copy.deepcopy(m.state_dict())
 
     def rewind_weights(self):
-        for m in self
-
-.mask_modules:
+        for m in self.mask_modules:
             m.rewind_weights()
         for m in self.modules():
             if (
@@ -56,14 +52,12 @@ class MaskedNet(nn.Module):
 
     def get_flops(self):
         Flops_total = torch.tensor(0)
-        # Flops_conv = feature_map_h * feature_map_w * k * k * c_in * c_out
-        # Flops_bn = feature_map_h * feature_map_w * c_in
         Flops_total = (
             Flops_total + 112 * 112 * 3 * 3 * 3 * 32 + 112 * 112 * 32
-        )  # first conv and bn layer
+        )
         Flops_total = (
             Flops_total + 112 * 112 * 3 * 3 * 32 + 112 * 112 * 32
-        )  # first dw conv and bn layer
+        )
         for i, m in enumerate(self.mask_modules):
             Flops_dw_conv = 0
             Flops_dw_bn = 0
@@ -86,7 +80,6 @@ class MaskedNet(nn.Module):
                     * m.mask.sum()
                 )
             Flops_bn = m.feature_map_h * m.feature_map_w * m.mask.sum()
-            # dw conv
             if (i - 1) % 2 == 0:
                 Flops_dw_conv = (
                     m.feature_map_h
@@ -103,20 +96,9 @@ class MaskedNet(nn.Module):
 
 
 def _make_divisible(v, divisor, min_value=None):
-    """
-    This function is taken from the original tf repo.
-    It ensures that all layers have a channel number that is divisible by 8
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
-    :param v:
-    :param divisor:
-    :param min_value:
-    :return:
-    """
     if min_value is None:
         min_value = divisor
     new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    # Make sure that round down does not go down by more than 10%.
     if new_v < 0.9 * v:
         new_v += divisor
     return new_v
@@ -142,41 +124,30 @@ class InvertedResidual_sparse(nn.Module):
     def __init__(self, inp, oup, stride, expand_ratio):
         super().__init__()
         assert stride in [1, 2]
-
         hidden_dim = round(inp * expand_ratio)
         self.identity = stride == 1 and inp == oup
-
         if expand_ratio == 1:
             self.conv = nn.Sequential(
-                # dw
-                nn.Conv2d(
-                    hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False
-                ),
+                nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
                 nn.BatchNorm2d(hidden_dim),
                 nn.ReLU6(inplace=True),
-                # pw-linear
                 SoftMaskedConv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
             )
         else:
             self.conv = nn.Sequential(
-                # pw
                 SoftMaskedConv2d(inp, hidden_dim, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(hidden_dim),
                 nn.ReLU6(inplace=True),
-                # dw
-                nn.Conv2d(
-                    hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False
-                ),
+                nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
                 nn.BatchNorm2d(hidden_dim),
                 nn.ReLU6(inplace=True),
-                # pw-linear
                 SoftMaskedConv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
             )
 
     def forward(self, x, ticket):
-        out = x.clone()
+        out = x
         for layer in self.conv:
             if isinstance(layer, SoftMaskedConv2d):
                 out = layer(out, ticket)
@@ -191,34 +162,32 @@ class InvertedResidual_sparse(nn.Module):
 class MobileNetV2_sparse(MaskedNet):
     def __init__(
         self,
-        num_classes=2,  # Changed to 2 for binary classification
+        num_classes=1,
         width_mult=1.0,
         gumbel_start_temperature=2,
         gumbel_end_temperature=0.1,
         num_epochs=350,
     ):
         super().__init__(gumbel_start_temperature, gumbel_end_temperature, num_epochs)
-        # setting of inverted residual blocks
+        
+        teacher_feature_dims = {
+            "stage1": 16,
+            "stage2": 32,
+            "stage3": 96,
+            "stage4": 320
+        }
+        
         self.cfgs = [
-            # t, c, n, s
-            [1, 16, 1, 1],
-            [6, 24, 2, 2],
-            [6, 32, 3, 2],
-            [6, 64, 4, 2],
-            [6, 96, 3, 1],
-            [6, 160, 3, 2],
-            [6, 320, 1, 1],
+            [1, 16, 1, 1], [6, 24, 2, 2], [6, 32, 3, 2], [6, 64, 4, 2],
+            [6, 96, 3, 1], [6, 160, 3, 2], [6, 320, 1, 1],
         ]
 
-        # building first layer
-        input_channel = _make_divisible(32 * width_mult, 4 if width_mult == 0.1 else 8)
+        input_channel = _make_divisible(32 * width_mult, 8)
         layers = [conv_3x3_bn(3, input_channel, 2)]
-        # building inverted residual blocks
+        
         block = InvertedResidual_sparse
         for num, (t, c, n, s) in enumerate(self.cfgs):
-            output_channel = _make_divisible(
-                c * width_mult, 4 if width_mult == 0.1 else 8
-            )
+            output_channel = _make_divisible(c * width_mult, 8)
             for i in range(n):
                 layers.append(
                     block(input_channel, output_channel, s if i == 0 else 1, t)
@@ -226,66 +195,66 @@ class MobileNetV2_sparse(MaskedNet):
                 input_channel = output_channel
 
             if num == 0:
-                self.convert1 = nn.Conv2d(output_channel, output_channel, kernel_size=1)
+                self.convert1 = nn.Conv2d(output_channel, teacher_feature_dims["stage1"], kernel_size=1)
             if num == 2:
-                self.convert2 = nn.Conv2d(output_channel, output_channel, kernel_size=1)
+                self.convert2 = nn.Conv2d(output_channel, teacher_feature_dims["stage2"], kernel_size=1)
             if num == 4:
-                self.convert3 = nn.Conv2d(output_channel, output_channel, kernel_size=1)
+                self.convert3 = nn.Conv2d(output_channel, teacher_feature_dims["stage3"], kernel_size=1)
             if num == 6:
-                self.convert4 = nn.Conv2d(output_channel, output_channel, kernel_size=1)
-
-        self.features = nn.Sequential(*layers)
-        # building last several layers
-        output_channel = (
-            _make_divisible(1280 * width_mult, 4 if width_mult == 0.1 else 8)
-            if width_mult > 1.0
-            else 1280
-        )
-        self.conv = conv_1x1_bn_sparse(input_channel, output_channel)
+                self.convert4 = nn.Conv2d(output_channel, teacher_feature_dims["stage4"], kernel_size=1)
+            
+        self.features = nn.ModuleList(layers)
+        
+        output_channel_final = _make_divisible(1280 * width_mult, 8) if width_mult > 1.0 else 1280
+        self.conv = conv_1x1_bn_sparse(input_channel, output_channel_final)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Linear(output_channel, num_classes)
-
-        self.mask_modules = [m for m in self.modules() if type(m) == SoftMaskedConv2d]
-
+        self.classifier = nn.Linear(output_channel_final, num_classes)
+        self.mask_modules = [m for m in self.modules() if isinstance(m, SoftMaskedConv2d)]
         self._initialize_weights()
 
     def forward(self, x):
         feature_list = []
+        out = x
+        
+        # لایه اول یک کانولوشن معمولی است
+        out = self.features[0](out) 
+        
+        # استخراج ویژگی‌ها در نقاط کلیدی
+        # ایندکس‌ها بر اساس معماری استاندارد MobileNetV2 هستند
+        if len(self.features) > 1:
+            out = self.features[1](out, self.ticket)
+            feature_list.append(self.convert1(out))
+            
+        for i in range(2, 7):
+            if len(self.features) > i:
+                out = self.features[i](out, self.ticket)
+        if len(self.features) > 6:
+             feature_list.append(self.convert2(out))
+             
+        for i in range(7, 14):
+            if len(self.features) > i:
+                out = self.features[i](out, self.ticket)
+        if len(self.features) > 13:
+             feature_list.append(self.convert3(out))
+             
+        for i in range(14, 18):
+            if len(self.features) > i:
+                out = self.features[i](out, self.ticket)
+        if len(self.features) > 17:
+             feature_list.append(self.convert4(out))
 
-        for i, block in enumerate(self.features):
-            if i == 0:
-                x = block(x)
-            else:
-                x = block(x, self.ticket)
-
-            if i == 1:
-                feature_list.append(self.convert1(x))
-            elif i == 6:
-                feature_list.append(self.convert2(x))
-            elif i == 13:
-                feature_list.append(self.convert3(x))
-            elif i == 17:
-                feature_list.append(self.convert4(x))
-
-        for layer in self.conv:
-            if isinstance(layer, SoftMaskedConv2d):
-                x = layer(x, self.ticket)
-            else:
-                x = layer(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x, feature_list
+        # لایه‌های نهایی
+        out = self.conv(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.classifier(out)
+        
+        return out, feature_list
 
     def _initialize_weights(self):
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2.0 / n))
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, SoftMaskedConv2d):
-                n = m.kernel_size * m.kernel_size * m.out_channels
+            if isinstance(m, (nn.Conv2d, SoftMaskedConv2d)):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels if isinstance(m, nn.Conv2d) else m.kernel_size * m.kernel_size * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2.0 / n))
                 if m.bias is not None:
                     m.bias.data.zero_()
@@ -296,13 +265,12 @@ class MobileNetV2_sparse(MaskedNet):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
 
-
-def MobileNetV2_sparse_imagenet(
+def MobileNetV2_sparse_deepfake(
     gumbel_start_temperature=2, gumbel_end_temperature=0.5, num_epochs=350
 ):
     return MobileNetV2_sparse(
-        num_classes=2,  # Changed to 2 for binary classification
-        width_mult= Yok1.0,
+        num_classes=1,
+        width_mult=1.0,
         gumbel_start_temperature=gumbel_start_temperature,
         gumbel_end_temperature=gumbel_end_temperature,
         num_epochs=num_epochs,
