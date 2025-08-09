@@ -19,10 +19,12 @@ matplotlib.use('Agg')
 
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from model.student import ResNet_sparse
+from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
+from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
 from utils import utils, loss, meter, scheduler
 from train import Train
-from test import Test
+from test_140k import Test
 from finetune import Finetune
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
@@ -44,7 +46,7 @@ def parse_args():
         "--dataset_mode",
         type=str,
         default="hardfake",
-        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),  # Added 330k
+        choices=("hardfake", "rvf10k", "140k", "200k", "190k", "330k"),
         help="Dataset to use: hardfake, rvf10k, 140k, 200k, 190k, or 330k",
     )
     parser.add_argument(
@@ -114,7 +116,7 @@ def parse_args():
         help="The path to the 190k dataset directory (for 190k mode)",
     )
     parser.add_argument(
-        "--realfake330k_root_dir",  # New argument for 330k
+        "--realfake330k_root_dir",
         type=str,
         default="/kaggle/input/deepfake-dataset",
         help="The path to the 330k dataset directory (for 330k mode)",
@@ -284,12 +286,6 @@ def parse_args():
         help="Coefficient of mask loss",
     )
     parser.add_argument(
-        "--compress_rate",
-        type=float,
-        default=0.3,
-        help="Compress rate of the student model",
-    )
-    parser.add_argument(
         "--finetune_student_ckpt_path",
         type=str,
         default=None,
@@ -332,6 +328,12 @@ def parse_args():
         help="eta_min of CosineAnnealingLR in finetune",
     )
     parser.add_argument(
+        "--compress_rate",
+        type=float,
+        default=0.3,
+        help="Compress rate of the student model",
+    )
+    parser.add_argument(
         "--finetune_weight_decay",
         type=float,
         default=2e-5,
@@ -360,6 +362,24 @@ def parse_args():
         type=int,
         default=32,
         help="Batch size for test",
+    )
+    parser.add_argument(
+        "--saved_model_path",
+        type=str,
+        default="./pruned_model.pth",
+        help="Path to save the pruned model",
+    )
+    parser.add_argument(
+        "--f_epochs",
+        type=int,
+        default=10,
+        help="Number of epochs for fine-tuning",
+    )
+    parser.add_argument(
+        "--f_lr",
+        type=float,
+        default=0.001,
+        help="Learning rate for fine-tuning",
     )
 
     return parser.parse_args()
@@ -403,8 +423,14 @@ def validate_args(args):
         if not os.path.exists(args.realfake330k_root_dir):
             raise FileNotFoundError(f"330k dataset directory not found: {args.realfake330k_root_dir}")
 
-    if args.phase in ["train", "finetune"] and not os.path.exists(args.teacher_ckpt_path):
-        raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
+    if args.phase in ["train", "finetune"]:
+        if not os.path.exists(args.teacher_ckpt_path):
+            raise FileNotFoundError(f"Teacher checkpoint not found: {args.teacher_ckpt_path}")
+        # بررسی سازگاری teacher_ckpt_path با معماری انتخاب‌شده
+        if args.arch == "MobileNetV2" and "resnet" in args.teacher_ckpt_path.lower():
+            raise ValueError(f"Teacher checkpoint path ({args.teacher_ckpt_path}) is not compatible with MobileNetV2 architecture")
+        elif args.arch == "ResNet_50" and "mobilenet" in args.teacher_ckpt_path.lower():
+            raise ValueError(f"Teacher checkpoint path ({args.teacher_ckpt_path}) is not compatible with ResNet_50 architecture")
 
     if args.phase == "finetune" and args.finetune_student_ckpt_path and not os.path.exists(args.finetune_student_ckpt_path):
         raise FileNotFoundError(f"Finetune student checkpoint not found: {args.finetune_student_ckpt_path}")
