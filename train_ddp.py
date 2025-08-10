@@ -47,7 +47,7 @@ class TrainDDP:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
-        self.dataset_type = args.dataset_type
+        self.dataset_mode = args.dataset_mode
         self.num_workers = args.num_workers
         self.pin_memory = args.pin_memory
         self.arch = args.arch
