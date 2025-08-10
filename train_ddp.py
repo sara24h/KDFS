@@ -253,6 +253,7 @@ class TrainDDP:
             self.logger.info("==> Building model..")
             self.logger.info("Loading teacher model")
 
+        # Load teacher model
         if self.arch == 'resnet50':
             teacher_model = ResNet_50_hardfakevsreal()
         elif self.arch == 'MobileNetV2':
@@ -261,10 +262,8 @@ class TrainDDP:
         else:
             raise ValueError(f"Unsupported architecture: {self.arch}")
 
-        # --- FIX 1: Robustly load teacher weights ---
-        # This code removes the 'module.' prefix added by DDP
+        # Robustly load teacher weights
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
-        # Handle different checkpoint saving conventions
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher.get('student', ckpt_teacher))
 
         if list(state_dict.keys())[0].startswith('module.'):
@@ -297,7 +296,7 @@ class TrainDDP:
             self.logger.info("Building student model")
 
         # Select the correct sparse student model class
-        if self.arch == 'resnet50':
+        if self.arch.lower() == 'resnet50':
             StudentModelClass = ResNet_50_sparse_rvf10k if self.dataset_mode != "hardfake" else ResNet_50_sparse_hardfakevsreal
         elif self.arch.lower() == 'mobilenetv2':
             StudentModelClass = MobileNetV2_sparse_deepfake
@@ -313,18 +312,17 @@ class TrainDDP:
 
         self.student.dataset_type = self.args.dataset_type
         
-        if self.arch.lower() == 'mobilenetv2':  # استفاده از arch.lower() برای انعطاف بیشتر
-    # دسترسی مستقیم به لایه نهایی MobileNetV2 که نامش 'classifier' است
-            num_ftrs = self.student.module.classifier.in_features
-            self.student.module.classifier = nn.Linear(num_ftrs, 1)
-        else: # برای ResNet
-    # دسترسی به لایه نهایی ResNet که نامش 'fc' است
-            num_ftrs = self.student.module.fc.in_features
-            self.student.module.fc = nn.Linear(num_ftrs, 1)
-            
         # Move to GPU and then wrap with DDP
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
+
+        # Modify the final classification layer after DDP wrapping
+        if self.arch.lower() == 'mobilenetv2':
+            num_ftrs = self.student.module.classifier.in_features
+            self.student.module.classifier = nn.Linear(num_ftrs, 1)
+        else: # For ResNet
+            num_ftrs = self.student.module.fc.in_features
+            self.student.module.fc = nn.Linear(num_ftrs, 1)
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
