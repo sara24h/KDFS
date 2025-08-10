@@ -108,8 +108,8 @@ class TrainDDP:
         else:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
-        if self.arch.lower() not in ['resnet50', 'mobilenetv2']:
-            raise ValueError("arch must be 'resnet50' or 'mobilenetv2'")
+        if self.arch not in ['resnet50', 'MobileNetV2']:
+            raise ValueError("arch must be 'resnet50' or 'MobileNetV2'")
 
     def dist_init(self):
         dist.init_process_group("nccl")
@@ -255,7 +255,7 @@ class TrainDDP:
 
         if self.arch == 'resnet50':
             teacher_model = ResNet_50_hardfakevsreal()
-        elif self.arch == 'mobilenetv2':
+        elif self.arch == 'MobileNetV2':
             # Use the standard MobileNetV2 architecture for the teacher
             teacher_model = MobileNetV2_deepfake()
         else:
