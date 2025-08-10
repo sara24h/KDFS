@@ -19,12 +19,12 @@ matplotlib.use('Agg')
 
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-#from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
+from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
-#from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
 from utils import utils, loss, meter, scheduler
 from train import Train
-from test_140k import Test
+from test_330k import Test
 from finetune import Finetune
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
@@ -326,12 +326,6 @@ def parse_args():
         default=4e-8,
         type=float,
         help="eta_min of CosineAnnealingLR in finetune",
-    )
-    parser.add_argument(
-        "--compress_rate",
-        type=float,
-        default=0.3,
-        help="Compress rate of the student model",
     )
     parser.add_argument(
         "--finetune_weight_decay",
