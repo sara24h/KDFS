@@ -375,7 +375,12 @@ def parse_args():
         default=0.001,
         help="Learning rate for fine-tuning",
     )
-
+    parser.add_argument(
+        "--compress_rate",
+        type=float,
+        default=None,
+        help="Compress rate of the student model",
+    )
     return parser.parse_args()
 
 def validate_args(args):
