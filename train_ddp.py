@@ -485,7 +485,7 @@ class TrainDDP:
                                 feature_list_student[i], feature_list_teacher[i]
                             )
 
-                        Flops_baseline = Flops_baselines[self.arch]
+                        Flops_baseline = Flops_baselines[self.arch][self.args.dataset_type]
                         Flops = self.student.module.get_flops()
                         mask_loss = self.mask_loss(
                             Flops, Flops_baseline * (10**6), self.compress_rate
