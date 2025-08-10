@@ -299,7 +299,7 @@ class TrainDDP:
         # Select the correct sparse student model class
         if self.arch == 'resnet50':
             StudentModelClass = ResNet_50_sparse_rvf10k if self.dataset_mode != "hardfake" else ResNet_50_sparse_hardfakevsreal
-        elif self.arch == 'mobilenetv2':
+        elif self.arch.lower() == 'mobilenetv2':
             StudentModelClass = MobileNetV2_sparse_deepfake
         else:
             raise ValueError(f"Unsupported architecture for student: {self.arch}")
