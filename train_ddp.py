@@ -13,11 +13,11 @@ from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k, SoftMaskedConv2d
-#from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
 from utils import utils, loss, meter, scheduler
 from thop import profile
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-#from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
+from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
 from torch import amp
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -30,6 +30,15 @@ Flops_baselines = {
         "200k": 5390.0,
         "330k": 5390.0,
         "190k": 5390.0,
+        
+    },
+    "MobileNetV2": {
+        "hardfakevsrealfaces": 7700.0,
+        "rvf10k": 416.68,
+        "140k": 416.68,
+        "200k": 416.68,
+        "330k": 416.68,
+        "190k": 416.68,
         
     }
 }
@@ -99,7 +108,6 @@ class TrainDDP:
         else:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
-        # اعتبارسنجی arch
         if self.arch.lower() not in ['resnet50', 'mobilenetv2']:
             raise ValueError("arch must be 'resnet50' or 'mobilenetv2'")
 
@@ -305,8 +313,6 @@ class TrainDDP:
 
         self.student.dataset_type = self.args.dataset_type
         
-        # --- FIX 2: Correctly modify student architecture BEFORE DDP wrapping ---
-        # This code correctly accesses the final layer and replaces it.
         if self.arch == 'mobilenetv2':
             # Direct access, no [-1] index, on the unwrapped model
             num_ftrs = self.student.classifier.in_features
