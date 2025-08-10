@@ -313,13 +313,14 @@ class TrainDDP:
 
         self.student.dataset_type = self.args.dataset_type
         
-        if self.arch == 'mobilenetv2':
-            # Direct access, no [-1] index, on the unwrapped model
-            num_ftrs = self.student.classifier.in_features
-            self.student.classifier = nn.Linear(num_ftrs, 1)
-        else: # For ResNet
-            num_ftrs = self.student.fc.in_features
-            self.student.fc = nn.Linear(num_ftrs, 1)
+        if self.arch.lower() == 'mobilenetv2':  # استفاده از arch.lower() برای انعطاف بیشتر
+    # دسترسی مستقیم به لایه نهایی MobileNetV2 که نامش 'classifier' است
+            num_ftrs = self.student.module.classifier.in_features
+            self.student.module.classifier = nn.Linear(num_ftrs, 1)
+        else: # برای ResNet
+    # دسترسی به لایه نهایی ResNet که نامش 'fc' است
+            num_ftrs = self.student.module.fc.in_features
+            self.student.module.fc = nn.Linear(num_ftrs, 1)
             
         # Move to GPU and then wrap with DDP
         self.student = self.student.cuda()
