@@ -253,16 +253,13 @@ class TrainDDP:
             self.logger.info("==> Building model..")
             self.logger.info("Loading teacher model")
 
-        # Load teacher model
         if self.arch == 'resnet50':
             teacher_model = ResNet_50_hardfakevsreal()
         elif self.arch == 'MobileNetV2':
-            # Use the standard MobileNetV2 architecture for the teacher
             teacher_model = MobileNetV2_deepfake()
         else:
             raise ValueError(f"Unsupported architecture: {self.arch}")
 
-        # Robustly load teacher weights
         ckpt_teacher = torch.load(self.teacher_ckpt_path, map_location="cpu")
         state_dict = ckpt_teacher.get('config_state_dict', ckpt_teacher.get('student', ckpt_teacher))
 
@@ -270,7 +267,7 @@ class TrainDDP:
             from collections import OrderedDict
             new_state_dict = OrderedDict()
             for k, v in state_dict.items():
-                name = k.replace('module.', '', 1)  # remove `module.`
+                name = k.replace('module.', '', 1)  
                 new_state_dict[name] = v
             state_dict = new_state_dict
         
@@ -295,7 +292,6 @@ class TrainDDP:
         if self.rank == 0:
             self.logger.info("Building student model")
 
-        # Select the correct sparse student model class
         if self.arch.lower() == 'resnet50':
             StudentModelClass = ResNet_50_sparse_rvf10k if self.dataset_mode != "hardfake" else ResNet_50_sparse_hardfakevsreal
         elif self.arch.lower() == 'mobilenetv2':
@@ -303,7 +299,6 @@ class TrainDDP:
         else:
             raise ValueError(f"Unsupported architecture for student: {self.arch}")
 
-        # Instantiate the student model
         self.student = StudentModelClass(
             gumbel_start_temperature=self.gumbel_start_temperature,
             gumbel_end_temperature=self.gumbel_end_temperature,
@@ -312,16 +307,16 @@ class TrainDDP:
 
         self.student.dataset_type = self.args.dataset_type
         
-        # Move to GPU and then wrap with DDP
         self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank])
 
         if self.arch.lower() == 'mobilenetv2':
-            num_ftrs = self.student.module.classifier.in_features
-            self.student.module.classifier = nn.Linear(num_ftrs, 1).cuda()
-        else: # For ResNet
-            num_ftrs = self.student.module.fc.in_features
-            self.student.module.fc = nn.Linear(num_ftrs, 1).cuda()
+            num_ftrs = self.student.classifier.in_features
+            self.student.classifier = nn.Linear(num_ftrs, 1).cuda()
+        else:  # برای ResNet
+            num_ftrs = self.student.fc.in_features
+            self.student.fc = nn.Linear(num_ftrs, 1).cuda()
+
+        self.student = DDP(self.student, device_ids=[self.local_rank])
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
