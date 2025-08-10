@@ -316,13 +316,12 @@ class TrainDDP:
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank])
 
-        # Modify the final classification layer after DDP wrapping
         if self.arch.lower() == 'mobilenetv2':
             num_ftrs = self.student.module.classifier.in_features
-            self.student.module.classifier = nn.Linear(num_ftrs, 1)
+            self.student.module.classifier = nn.Linear(num_ftrs, 1).cuda()
         else: # For ResNet
             num_ftrs = self.student.module.fc.in_features
-            self.student.module.fc = nn.Linear(num_ftrs, 1)
+            self.student.module.fc = nn.Linear(num_ftrs, 1).cuda()
 
     def define_loss(self):
         self.ori_loss = nn.BCEWithLogitsLoss().cuda()
