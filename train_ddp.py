@@ -23,7 +23,7 @@ from torch import amp
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 Flops_baselines = {
-    "ResNet_50": {
+    "resnet50": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 5390,
         "140k": 5390.0,
@@ -32,7 +32,7 @@ Flops_baselines = {
         "190k": 5390.0,
         
     },
-    "MobileNetV2": {
+    "mobilenetv2": {
         "hardfakevsrealfaces": 7700.0,
         "rvf10k": 416.68,
         "140k": 416.68,
