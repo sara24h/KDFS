@@ -108,6 +108,8 @@ class TrainDDP:
         else:
             raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '200k', '190k', or '330k'")
 
+        self.arch = args.arch.lower().replace('_', '')
+        
         if self.arch not in ['resnet50', 'MobileNetV2']:
             raise ValueError("arch must be 'resnet50' or 'MobileNetV2'")
 
@@ -312,7 +314,7 @@ class TrainDDP:
         if self.arch.lower() == 'mobilenetv2':
             num_ftrs = self.student.classifier.in_features
             self.student.classifier = nn.Linear(num_ftrs, 1).cuda()
-        else:  # برای ResNet
+        else:  
             num_ftrs = self.student.fc.in_features
             self.student.fc = nn.Linear(num_ftrs, 1).cuda()
 
