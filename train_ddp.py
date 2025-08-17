@@ -257,7 +257,7 @@ class TrainDDP:
 
         if self.arch == 'resnet50':
             teacher_model = ResNet_50_hardfakevsreal()
-        elif self.arch == 'MobileNetV2':
+        elif self.arch == 'mobilenetv2':
             teacher_model = MobileNetV2_deepfake()
         else:
             raise ValueError(f"Unsupported architecture: {self.arch}")
