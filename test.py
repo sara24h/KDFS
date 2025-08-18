@@ -143,8 +143,8 @@ class Test:
         print("==> Building student model..")
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
-            self.student = ResNet_50_sparse_hardfakevsreal()
-            # Load checkpoint
+            self.student = MobileNetV2_sparse()
+
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
@@ -167,7 +167,7 @@ class Test:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True  # Enable ticket mode for sparse model
+        self.student.ticket = True  
         try:
             with torch.no_grad():
                 with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
