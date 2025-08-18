@@ -11,7 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 import glob
 from utils import meter
 from get_flops_and_params import get_flops_and_params
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+#from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse
 from data.dataset import Dataset_selector
 
 class Test:
