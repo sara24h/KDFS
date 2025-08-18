@@ -87,7 +87,7 @@ def get_flops_and_params(args):
     }[args.dataset_mode]
 
     # Load sparse student model to extract masks
-    student = ResNet_50_sparse_hardfakevsreal()
+    student = MobileNetV2_sparse_deepfake()
     ckpt_student = torch.load(args.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
     student.load_state_dict(ckpt_student["student"])
 
@@ -99,7 +99,7 @@ def get_flops_and_params(args):
     ]
 
     # Load pruned model with masks (always use ResNet_50_pruned_hardfakevsreal)
-    pruned_model = ResNet_50_pruned_hardfakevsreal(masks=masks)
+    pruned_model = MobileNetV2_pruned(masks=masks)
     
     # Set input size based on dataset
     input = torch.rand([1, 3, image_sizes[dataset_type], image_sizes[dataset_type]])
