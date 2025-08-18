@@ -106,8 +106,8 @@ def get_flops_and_params(args):
     Flops, Params = profile(pruned_model, inputs=(input,), verbose=False)
 
     # Use dataset-specific baseline values
-    Flops_baseline = Flops_baselines["ResNet_50"][dataset_type]
-    Params_baseline = Params_baselines["ResNet_50"][dataset_type]
+    Flops_baseline = Flops_baselines["MobileNetV2"][dataset_type]
+    Params_baseline = Params_baselines["MobileNetV2"][dataset_type]
 
     Flops_reduction = (
         (Flops_baseline - Flops / (10**6)) / Flops_baseline * 100.0
