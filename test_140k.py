@@ -115,8 +115,35 @@ class TestDDP:
             print("==> Loading datasets...")
         
         image_size = (256, 256)
-        
-        # مرحله ۱: ابتدا دیتا منیجر اصلی را برای خواندن میانگین و انحراف معیار می‌سازیم
+
+        # Helper function to create the correct keyword arguments for Dataset_selector
+        def get_dataset_kwargs(mode, path):
+            kwargs = {}
+            if mode == 'hardfake':
+                kwargs['hardfake_root_dir'] = path
+                kwargs['hardfake_csv_file'] = os.path.join(path, 'data.csv')
+            elif mode == 'rvf10k':
+                kwargs['rvf10k_root_dir'] = path
+                kwargs['rvf10k_train_csv'] = os.path.join(path, 'train.csv')
+                kwargs['rvf10k_valid_csv'] = os.path.join(path, 'valid.csv')
+            elif mode == '140k':
+                kwargs['realfake140k_root_dir'] = path
+                kwargs['realfake140k_train_csv'] = os.path.join(path, 'train.csv')
+                kwargs['realfake140k_valid_csv'] = os.path.join(path, 'valid.csv')
+                kwargs['realfake140k_test_csv'] = os.path.join(path, 'test.csv')
+            elif mode == '190k':
+                kwargs['realfake190k_root_dir'] = path
+            elif mode == '200k':
+                kwargs['realfake200k_root_dir'] = path
+                kwargs['realfake200k_train_csv'] = os.path.join(path, 'train_labels.csv')
+                kwargs['realfake200k_val_csv'] = os.path.join(path, 'val_labels.csv')
+                kwargs['realfake200k_test_csv'] = os.path.join(path, 'test_labels.csv')
+            elif mode == '330k':
+                kwargs['realfake330k_root_dir'] = path
+            return kwargs
+
+        # --- Create Fine-tuning Loader ---
+        finetune_kwargs = get_dataset_kwargs(self.args.finetune_dataset_mode, self.args.finetune_dataset_dir)
         finetune_dataset_manager = Dataset_selector(
             dataset_mode=self.args.finetune_dataset_mode,
             train_batch_size=self.args.train_batch_size,
@@ -124,11 +151,10 @@ class TestDDP:
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             ddp=True,
-            **{'root_dir': self.args.finetune_dataset_dir} 
+            **finetune_kwargs
         )
         
-        # مرحله ۲: خواندن مقادیر میانگین و انحراف معیار به صورت پویا از دیتا منیجر
-        # فرض بر این است که کلاس شما این مقادیر را با نام‌های .mean و .std ذخیره می‌کند
+        # Read dynamic mean and std
         try:
             mean_dynamic = finetune_dataset_manager.mean
             std_dynamic = finetune_dataset_manager.std
@@ -137,14 +163,12 @@ class TestDDP:
                 print(f"  Mean: {mean_dynamic}")
                 print(f"  Std: {std_dynamic}")
         except AttributeError:
-            # در صورتی که این مقادیر در کلاس شما وجود نداشته باشد، از مقادیر پیش‌فرض ImageNet استفاده می‌شود
             mean_dynamic = [0.485, 0.456, 0.406]
             std_dynamic = [0.229, 0.224, 0.225]
             if self.rank == 0:
-                print("==> Warning: Could not find .mean and .std attributes in Dataset_selector.")
-                print("==> Falling back to default ImageNet normalization stats.")
+                print("==> Warning: Using default ImageNet normalization stats.")
 
-        # مرحله ۳: ساخت ترنسفورم‌ها با استفاده از مقادیر پویا
+        # Create transforms
         transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -153,40 +177,41 @@ class TestDDP:
             transforms.ToTensor(),
             transforms.Normalize(mean=mean_dynamic, std=std_dynamic),
         ])
-
         transform_val_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean_dynamic, std=std_dynamic),
         ])
 
-        # مرحله ۴: اعمال ترنسفورم‌ها به دیتا لودرها
+        # Apply transforms to fine-tuning loaders
         self.train_loader = finetune_dataset_manager.loader_train
         self.val_loader = finetune_dataset_manager.loader_val
         self.train_loader.dataset.transform = transform_train
         self.val_loader.dataset.transform = transform_val_test
         
-        # ساخت و اعمال ترنسفورم به دیتا لودر تست
+        # --- Create Main Test Loader ---
+        test_kwargs = get_dataset_kwargs(self.args.test_dataset_mode, self.args.test_dataset_dir)
         test_dataset_manager = Dataset_selector(
             dataset_mode=self.args.test_dataset_mode,
             eval_batch_size=self.args.test_batch_size,
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             ddp=True,
-            **{'root_dir': self.args.test_dataset_dir}
+            **test_kwargs
         )
         self.test_loader = test_dataset_manager.loader_test
         self.test_loader.dataset.transform = transform_val_test
 
-        # ساخت و اعمال ترنسفورم به دیتا لودر تست جدید (در صورت وجود)
+        # --- Create Additional Test Loader (if provided) ---
         if self.args.new_test_dataset_dir and self.args.new_test_dataset_mode:
+            new_test_kwargs = get_dataset_kwargs(self.args.new_test_dataset_mode, self.args.new_test_dataset_dir)
             new_test_manager = Dataset_selector(
                 dataset_mode=self.args.new_test_dataset_mode,
                 eval_batch_size=self.args.test_batch_size,
                 num_workers=self.args.num_workers,
                 pin_memory=self.args.pin_memory,
                 ddp=True,
-                **{'root_dir': self.args.new_test_dataset_dir}
+                **new_test_kwargs
             )
             self.new_test_loader = new_test_manager.loader_test
             self.new_test_loader.dataset.transform = transform_val_test
