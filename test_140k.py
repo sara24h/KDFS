@@ -225,7 +225,7 @@ class TestDDP:
             print(f"==> Loading sparse student checkpoint from: {self.args.sparsed_student_ckpt_path}")
         
         ckpt = torch.load(self.args.sparsed_student_ckpt_path, map_location=self.device)
-        self.student.load_state_dict(ckpt['model'], strict=False)
+        self.student.load_state_dict(ckpt, strict=False)
         self.student.to(self.device)
         
         self.student = DDP(self.student, device_ids=[self.local_rank])
