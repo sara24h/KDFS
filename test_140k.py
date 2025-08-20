@@ -6,9 +6,9 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 import numpy as np
-from sklearn.metrics import precision_score, recall_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 from data.dataset import Dataset_selector
@@ -22,46 +22,46 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Test and Fine-tune Sparse ResNet Model with DDP")
     
     # آرگومان‌های برای فاین‌تیون
-    parser.add_argument('--finetune_dataset_mode', type=str, required=True, 
+    parser.add_argument('--finetune_dataset_mode', type=str, required=True,
                         choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '330k'],
-                        help="Dataset mode for fine-tuning (train/val/test)")
-    parser.add_argument('--finetune_dataset_dir', type=str, required=True, 
+                        help="Dataset mode for fine-tuning (train/val)")
+    parser.add_argument('--finetune_dataset_dir', type=str, required=True,
                         help="Directory path to the fine-tuning dataset")
     
     # آرگومان‌های برای تست اصلی
-    parser.add_argument('--test_dataset_mode', type=str, required=True, 
+    parser.add_argument('--test_dataset_mode', type=str, required=True,
                         choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '330k'],
                         help="Dataset mode for main test")
-    parser.add_argument('--test_dataset_dir', type=str, required=True, 
+    parser.add_argument('--test_dataset_dir', type=str, required=True,
                         help="Directory path to the main test dataset")
     
     # آرگومان‌های اختیاری برای تست اضافی
-    parser.add_argument('--new_test_dataset_mode', type=str, default=None, 
+    parser.add_argument('--new_test_dataset_mode', type=str, default=None,
                         choices=['hardfake', 'rvf10k', '140k', '190k', '200k', '330k', None],
                         help="Dataset mode for additional new test (optional)")
-    parser.add_argument('--new_test_dataset_dir', type=str, default=None, 
+    parser.add_argument('--new_test_dataset_dir', type=str, default=None,
                         help="Directory for additional new test dataset (optional)")
     
     # سایر آرگومان‌ها
-    parser.add_argument('--sparsed_student_ckpt_path', type=str, required=True, 
+    parser.add_argument('--sparsed_student_ckpt_path', type=str, required=True,
                         help="Path to the sparse student checkpoint")
-    parser.add_argument('--result_dir', type=str, required=True, 
+    parser.add_argument('--result_dir', type=str, required=True,
                         help="Directory to save results")
-    parser.add_argument('--num_workers', type=int, default=4, 
+    parser.add_argument('--num_workers', type=int, default=2,
                         help="Number of data loader workers")
-    parser.add_argument('--pin_memory', action='store_true', default=True, 
+    parser.add_argument('--pin_memory', action='store_true', default=True,
                         help="Pin memory for data loaders")
-    parser.add_argument('--arch', type=str, default='resnet50', 
+    parser.add_argument('--arch', type=str, default='resnet50',
                         help="Model architecture")
-    parser.add_argument('--seed', type=int, default=42, 
+    parser.add_argument('--seed', type=int, default=42,
                         help="Random seed")
-    parser.add_argument('--train_batch_size', type=int, default=32, 
-                        help="Train batch size")
-    parser.add_argument('--test_batch_size', type=int, default=256, 
-                        help="Test/eval batch size")
-    parser.add_argument('--f_lr', type=float, default=0.001, 
+    parser.add_argument('--train_batch_size', type=int, default=32,
+                        help="Train batch size per GPU")
+    parser.add_argument('--test_batch_size', type=int, default=256,
+                        help="Test/eval batch size per GPU")
+    parser.add_argument('--f_lr', type=float, default=0.001,
                         help="Fine-tuning learning rate")
-    parser.add_argument('--f_epochs', type=int, default=10, 
+    parser.add_argument('--f_epochs', type=int, default=10,
                         help="Number of fine-tuning epochs")
     
     args = parser.parse_args()
@@ -70,25 +70,6 @@ def parse_args():
 class TestDDP:
     def __init__(self, args):
         self.args = args
-        self.finetune_dataset_dir = args.finetune_dataset_dir
-        self.test_dataset_dir = args.test_dataset_dir
-        self.new_test_dataset_dir = args.new_test_dataset_dir
-        self.num_workers = args.num_workers
-        self.pin_memory = args.pin_memory
-        self.arch = args.arch
-        self.seed = args.seed
-        self.train_batch_size = args.train_batch_size
-        self.test_batch_size = args.test_batch_size
-        self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-        self.finetune_dataset_mode = args.finetune_dataset_mode
-        self.test_dataset_mode = args.test_dataset_mode
-        self.new_test_dataset_mode = args.new_test_dataset_mode
-        self.result_dir = args.result_dir
-
-        self.world_size = 0
-        self.local_rank = -1
-        self.rank = -1
-
         self.dist_init()
         self.setup_seed()
         self.result_init()
@@ -100,6 +81,7 @@ class TestDDP:
         self.test_loader = None
         self.new_test_loader = None
         self.student = None
+        self.best_val_acc = 0.0
 
     def dist_init(self):
         dist.init_process_group("nccl")
@@ -110,19 +92,21 @@ class TestDDP:
 
     def result_init(self):
         if self.rank == 0:
-            if not os.path.exists(self.result_dir):
-                os.makedirs(self.result_dir)
-            logging.basicConfig(filename=os.path.join(self.result_dir, "test_logger.log"), level=logging.INFO)
+            if not os.path.exists(self.args.result_dir):
+                os.makedirs(self.args.result_dir)
+            logging.basicConfig(filename=os.path.join(self.args.result_dir, "test_logger.log"), 
+                                level=logging.INFO, format='%(asctime)s - %(message)s')
             self.logger = logging.getLogger("test_logger")
+            print(f"Results will be saved to: {self.args.result_dir}")
 
     def setup_seed(self):
-        self.seed = self.seed + self.rank
-        random.seed(self.seed)
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
+        seed = self.args.seed + self.rank
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed(self.seed)
-            torch.cuda.manual_seed_all(self.seed)
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
@@ -131,131 +115,232 @@ class TestDDP:
             print("==> Loading datasets...")
         
         image_size = (256, 256)
-        mean_140k = [0.5207, 0.4258, 0.3806]
-        std_140k = [0.2490, 0.2239, 0.2212]
+        
+        # مرحله ۱: ابتدا دیتا منیجر اصلی را برای خواندن میانگین و انحراف معیار می‌سازیم
+        finetune_dataset_manager = Dataset_selector(
+            dataset_mode=self.args.finetune_dataset_mode,
+            train_batch_size=self.args.train_batch_size,
+            eval_batch_size=self.args.test_batch_size,
+            num_workers=self.args.num_workers,
+            pin_memory=self.args.pin_memory,
+            ddp=True,
+            **{'root_dir': self.args.finetune_dataset_dir} 
+        )
+        
+        # مرحله ۲: خواندن مقادیر میانگین و انحراف معیار به صورت پویا از دیتا منیجر
+        # فرض بر این است که کلاس شما این مقادیر را با نام‌های .mean و .std ذخیره می‌کند
+        try:
+            mean_dynamic = finetune_dataset_manager.mean
+            std_dynamic = finetune_dataset_manager.std
+            if self.rank == 0:
+                print(f"==> Using dynamic normalization stats for '{self.args.finetune_dataset_mode}':")
+                print(f"  Mean: {mean_dynamic}")
+                print(f"  Std: {std_dynamic}")
+        except AttributeError:
+            # در صورتی که این مقادیر در کلاس شما وجود نداشته باشد، از مقادیر پیش‌فرض ImageNet استفاده می‌شود
+            mean_dynamic = [0.485, 0.456, 0.406]
+            std_dynamic = [0.229, 0.224, 0.225]
+            if self.rank == 0:
+                print("==> Warning: Could not find .mean and .std attributes in Dataset_selector.")
+                print("==> Falling back to default ImageNet normalization stats.")
 
-        transform_train_140k = transforms.Compose([
+        # مرحله ۳: ساخت ترنسفورم‌ها با استفاده از مقادیر پویا
+        transform_train = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(15),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.ToTensor(),
-            transforms.Normalize(mean=mean_140k, std=std_140k),
+            transforms.Normalize(mean=mean_dynamic, std=std_dynamic),
         ])
 
-        transform_val_test_140k = transforms.Compose([
+        transform_val_test = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=mean_140k, std=std_140k),
+            transforms.Normalize(mean=mean_dynamic, std=std_dynamic),
         ])
 
-        # Loader for fine-tuning (train/val/test from finetune dataset)
-        finetune_params = {
-            'dataset_mode': self.finetune_dataset_mode,
-            'train_batch_size': self.train_batch_size,
-            'eval_batch_size': self.test_batch_size,
-            'num_workers': self.num_workers,
-            'pin_memory': self.pin_memory,
-            'ddp': True
-        }
-        
-        if self.finetune_dataset_mode == 'hardfake':
-            finetune_params['hardfake_csv_file'] = os.path.join(self.finetune_dataset_dir, 'data.csv')
-            finetune_params['hardfake_root_dir'] = self.finetune_dataset_dir
-        elif self.finetune_dataset_mode == 'rvf10k':
-            finetune_params['rvf10k_train_csv'] = os.path.join(self.finetune_dataset_dir, 'train.csv')
-            finetune_params['rvf10k_valid_csv'] = os.path.join(self.finetune_dataset_dir, 'valid.csv')
-            finetune_params['rvf10k_root_dir'] = self.finetune_dataset_dir
-        elif self.finetune_dataset_mode == '140k':
-            finetune_params['realfake140k_train_csv'] = os.path.join(self.finetune_dataset_dir, 'train.csv')
-            finetune_params['realfake140k_valid_csv'] = os.path.join(self.finetune_dataset_dir, 'valid.csv')
-            finetune_params['realfake140k_test_csv'] = os.path.join(self.finetune_dataset_dir, 'test.csv')
-            finetune_params['realfake140k_root_dir'] = self.finetune_dataset_dir
-        elif self.finetune_dataset_mode == '200k':
-            image_root_dir = os.path.join(self.finetune_dataset_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset')
-            finetune_params['realfake200k_root_dir'] = image_root_dir
-            finetune_params['realfake200k_train_csv'] = os.path.join(self.finetune_dataset_dir, 'train_labels.csv')
-            finetune_params['realfake200k_val_csv'] = os.path.join(self.finetune_dataset_dir, 'val_labels.csv')
-            finetune_params['realfake200k_test_csv'] = os.path.join(self.finetune_dataset_dir, 'test_labels.csv')
-        elif self.finetune_dataset_mode == '190k':
-            finetune_params['realfake190k_root_dir'] = self.finetune_dataset_dir
-        elif self.finetune_dataset_mode == '330k':
-            finetune_params['realfake330k_root_dir'] = self.finetune_dataset_dir
-
-        finetune_dataset_manager = Dataset_selector(**finetune_params)
-
-        if self.rank == 0:
-            print("Overriding transforms to use consistent 140k normalization stats for all datasets.")
-        finetune_dataset_manager.loader_train.dataset.transform = transform_train_140k
-        finetune_dataset_manager.loader_val.dataset.transform = transform_val_test_140k
-        finetune_dataset_manager.loader_test.dataset.transform = transform_val_test_140k
-
+        # مرحله ۴: اعمال ترنسفورم‌ها به دیتا لودرها
         self.train_loader = finetune_dataset_manager.loader_train
         self.val_loader = finetune_dataset_manager.loader_val
-        # Note: finetune_dataset_manager.loader_test is not used for main test anymore
+        self.train_loader.dataset.transform = transform_train
+        self.val_loader.dataset.transform = transform_val_test
         
-        if self.rank == 0:
-            print(f"Fine-tune loaders for '{self.finetune_dataset_mode}' configured.")
-
-        # Loader for main test (separate dataset)
-        test_params = {
-            'dataset_mode': self.test_dataset_mode,
-            'eval_batch_size': self.test_batch_size,
-            'num_workers': self.num_workers,
-            'pin_memory': self.pin_memory,
-            'ddp': True
-        }
-        
-        if self.test_dataset_mode == 'hardfake':
-            test_params['hardfake_csv_file'] = os.path.join(self.test_dataset_dir, 'data.csv')
-            test_params['hardfake_root_dir'] = self.test_dataset_dir
-        elif self.test_dataset_mode == 'rvf10k':
-            test_params['rvf10k_valid_csv'] = os.path.join(self.test_dataset_dir, 'valid.csv')  # Assuming test uses valid.csv or adjust
-            test_params['rvf10k_root_dir'] = self.test_dataset_dir
-        elif self.test_dataset_mode == '140k':
-            test_params['realfake140k_test_csv'] = os.path.join(self.test_dataset_dir, 'test.csv')
-            test_params['realfake140k_root_dir'] = self.test_dataset_dir
-        elif self.test_dataset_mode == '200k':
-            test_params['realfake200k_test_csv'] = os.path.join(self.test_dataset_dir, 'test_labels.csv')
-            test_params['realfake200k_root_dir'] = os.path.join(self.test_dataset_dir, 'my_real_vs_ai_dataset', 'my_real_vs_ai_dataset')
-        elif self.test_dataset_mode == '190k':
-            test_params['realfake190k_root_dir'] = self.test_dataset_dir
-        elif self.test_dataset_mode == '330k':
-            test_params['realfake330k_root_dir'] = self.test_dataset_dir
-
-        test_dataset_manager = Dataset_selector(**test_params)
-        test_dataset_manager.loader_test.dataset.transform = transform_val_test_140k
+        # ساخت و اعمال ترنسفورم به دیتا لودر تست
+        test_dataset_manager = Dataset_selector(
+            dataset_mode=self.args.test_dataset_mode,
+            eval_batch_size=self.args.test_batch_size,
+            num_workers=self.args.num_workers,
+            pin_memory=self.args.pin_memory,
+            ddp=True,
+            **{'root_dir': self.args.test_dataset_dir}
+        )
         self.test_loader = test_dataset_manager.loader_test
+        self.test_loader.dataset.transform = transform_val_test
+
+        # ساخت و اعمال ترنسفورم به دیتا لودر تست جدید (در صورت وجود)
+        if self.args.new_test_dataset_dir and self.args.new_test_dataset_mode:
+            new_test_manager = Dataset_selector(
+                dataset_mode=self.args.new_test_dataset_mode,
+                eval_batch_size=self.args.test_batch_size,
+                num_workers=self.args.num_workers,
+                pin_memory=self.args.pin_memory,
+                ddp=True,
+                **{'root_dir': self.args.new_test_dataset_dir}
+            )
+            self.new_test_loader = new_test_manager.loader_test
+            self.new_test_loader.dataset.transform = transform_val_test
+
+    def build_model(self):
+        if self.rank == 0:
+            print(f"==> Building model '{self.args.arch}'...")
+        self.student = ResNet_50_sparse_hardfakevsreal()
         
         if self.rank == 0:
-            print(f"Test loader for '{self.test_dataset_mode}' configured.")
+            print(f"==> Loading sparse student checkpoint from: {self.args.sparsed_student_ckpt_path}")
+        
+        ckpt = torch.load(self.args.sparsed_student_ckpt_path, map_location=self.device)
+        self.student.load_state_dict(ckpt['model'], strict=False)
+        self.student.to(self.device)
+        
+        self.student = DDP(self.student, device_ids=[self.local_rank])
 
-        # Loader for new test (optional)
-        if self.new_test_dataset_dir and self.new_test_dataset_mode:
-            if self.rank == 0:
-                print("==> Loading additional new test dataset...")
-            new_params = {
-                'dataset_mode': self.new_test_dataset_mode,
-                'eval_batch_size': self.test_batch_size,
-                'num_workers': self.num_workers,
-                'pin_memory': self.pin_memory,
-                'ddp': True
-            }
+    def finetune(self):
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(self.student.parameters(), lr=self.args.f_lr)
+        scaler = GradScaler()
+        
+        for epoch in range(self.args.f_epochs):
+            self.train_loader.sampler.set_epoch(epoch)
             
-            if self.new_test_dataset_mode == 'hardfake':
-                new_params['hardfake_csv_file'] = os.path.join(self.new_test_dataset_dir, 'data.csv')
-                new_params['hardfake_root_dir'] = self.new_test_dataset_dir
-            # Add similar for other modes...
-            # (برای اختصار، کد کامل رو برای همه modeها کپی نکردم، اما می‌تونی مثل بالا اضافه کنی)
+            # --- Training Phase ---
+            self.student.train()
+            train_loss = 0.0
+            pbar = tqdm(self.train_loader, disable=(self.rank != 0))
+            for images, labels in pbar:
+                images, labels = images.to(self.device), labels.to(self.device)
+                
+                optimizer.zero_grad()
+                with autocast():
+                    outputs = self.student(images)
+                    loss = criterion(outputs, labels)
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+                
+                train_loss += loss.item()
+                pbar.set_description(f"Epoch {epoch+1}/{self.args.f_epochs} | Train Loss: {loss.item():.4f}")
 
-            new_dataset_manager = Dataset_selector(**new_params)
-            new_dataset_manager.loader_test.dataset.transform = transform_val_test_140k
-            self.new_test_loader = new_dataset_manager.loader_test
+            # --- Validation Phase ---
+            val_acc = self._evaluate(self.val_loader, "Validation")
+            
             if self.rank == 0:
-                print(f"New test loader for '{self.new_test_dataset_mode}' configured.")
+                if val_acc > self.best_val_acc:
+                    self.best_val_acc = val_acc
+                    save_path = os.path.join(self.args.result_dir, 'finetuned_best.pt')
+                    torch.save(self.student.module.state_dict(), save_path)
+                    print(f"Epoch {epoch+1}: New best model saved with accuracy: {val_acc:.4f}")
+                    self.logger.info(f"Epoch {epoch+1}: New best model saved with accuracy: {val_acc:.4f}")
+            
+            dist.barrier()
 
-    # بقیه کد مثل قبل (build_model, compute_metrics, display_samples, finetune, main) بدون تغییر عمده، فقط در dataload تغییر دادم.
-    # برای کامل بودن، فرض کن بقیه کد همان هست، فقط در main از test_loader جدید استفاده می‌شه.
+    def test(self):
+        if self.rank == 0:
+            print("==> Loading best fine-tuned model for final test...")
+        
+        best_model_path = os.path.join(self.args.result_dir, 'finetuned_best.pt')
+        if os.path.exists(best_model_path):
+            self.student.module.load_state_dict(torch.load(best_model_path, map_location=self.device))
+        else:
+            if self.rank == 0:
+                print("Warning: No best model found. Testing with the last model.")
+        
+        self._evaluate(self.test_loader, f"Main Test ({self.args.test_dataset_mode})", final_test=True)
+        
+        if self.new_test_loader:
+            self._evaluate(self.new_test_loader, f"Additional Test ({self.args.new_test_dataset_mode})", final_test=True)
+
+    def _evaluate(self, dataloader, phase_name, final_test=False):
+        self.student.eval()
+        all_preds = []
+        all_labels = []
+
+        with torch.no_grad():
+            pbar = tqdm(dataloader, disable=(self.rank != 0))
+            for images, labels in pbar:
+                images, labels = images.to(self.device), labels.to(self.device)
+                outputs = self.student(images)
+                _, preds = torch.max(outputs, 1)
+                
+                all_preds.append(preds)
+                all_labels.append(labels)
+                pbar.set_description(f"Evaluating on {phase_name}")
+
+        preds_tensor = torch.cat(all_preds)
+        labels_tensor = torch.cat(all_labels)
+        
+        # جمع‌آوری نتایج از تمام پردازنده‌ها
+        gathered_preds = [torch.zeros_like(preds_tensor) for _ in range(self.world_size)]
+        gathered_labels = [torch.zeros_like(labels_tensor) for _ in range(self.world_size)]
+        
+        dist.all_gather(gathered_preds, preds_tensor)
+        dist.all_gather(gathered_labels, labels_tensor)
+
+        if self.rank == 0:
+            final_preds = torch.cat(gathered_preds).cpu().numpy()
+            final_labels = torch.cat(gathered_labels).cpu().numpy()
+            
+            accuracy = accuracy_score(final_labels, final_preds)
+            precision = precision_score(final_labels, final_preds, average='binary', zero_division=0)
+            recall = recall_score(final_labels, final_preds, average='binary', zero_division=0)
+            f1 = f1_score(final_labels, final_preds, average='binary', zero_division=0)
+
+            print(f"\nResults for {phase_name}:")
+            print(f"  Accuracy: {accuracy:.4f}")
+            print(f"  Precision: {precision:.4f}")
+            print(f"  Recall: {recall:.4f}")
+            print(f"  F1-Score: {f1:.4f}")
+            self.logger.info(f"Results for {phase_name}: Acc={accuracy:.4f}, Prec={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+            
+            if final_test:
+                cm = confusion_matrix(final_labels, final_preds)
+                plt.figure(figsize=(8, 6))
+                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Real', 'Fake'], yticklabels=['Real', 'Fake'])
+                plt.xlabel('Predicted')
+                plt.ylabel('Actual')
+                plt.title(f'Confusion Matrix - {phase_name}')
+                cm_path = os.path.join(self.args.result_dir, f'confusion_matrix_{phase_name.replace(" ", "_")}.png')
+                plt.savefig(cm_path)
+                plt.close()
+                print(f"Confusion matrix saved to {cm_path}")
+
+            return accuracy
+        return 0.0
+
+    def main(self):
+        self.dataload()
+        self.build_model()
+        
+        if self.rank == 0:
+            print("\n" + "="*50)
+            print("               STARTING FINE-TUNING")
+            print("="*50 + "\n")
+        self.finetune()
+        
+        dist.barrier()
+        
+        if self.rank == 0:
+            print("\n" + "="*50)
+            print("                STARTING FINAL TESTING")
+            print("="*50 + "\n")
+        self.test()
+        
+        if self.rank == 0:
+            print("\nProcess finished successfully.")
+        
+        dist.destroy_process_group()
+
 
 if __name__ == "__main__":
     args = parse_args()
