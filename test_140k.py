@@ -17,7 +17,7 @@ import torch.nn as nn
 import random
 from datetime import datetime
 
-class TestDDP:
+class Test:
     def __init__(self, args):
         self.args = args
         self.dataset_dir = args.dataset_dir
@@ -502,5 +502,5 @@ if __name__ == '__main__':
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'  # Set if needed
     
-    test = TestDDP(args)
+    test = Test(args)
     test.main()
