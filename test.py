@@ -12,7 +12,6 @@ import glob
 from utils import meter
 from get_flops_and_params import get_flops_and_params
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
-from model.student.MobileNetV2_sparse import MobileNetV2_sparse
 from data.dataset import Dataset_selector
 
 class Test:
@@ -49,7 +48,7 @@ class Test:
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
             elif self.dataset_mode == '200k':
-                test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
+                test_csv = os.path.join(self.dataset_dir, 'test.csv')
                 if not os.path.exists(test_csv):
                     raise FileNotFoundError(f"CSV file not found: {test_csv}")
             elif self.dataset_mode == '190k':
@@ -97,21 +96,18 @@ class Test:
                     ddp=False
                 )
             elif self.dataset_mode == '200k':
-                test_csv = os.path.join(self.dataset_dir, 'test_labels.csv')
-                if not os.path.exists(test_csv):
-                    raise FileNotFoundError(f"CSV file not found: {test_csv}")
                 dataset = Dataset_selector(
-                dataset_mode='200k',
-                realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
-                realfake200k_val_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
-                realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
-                realfake200k_root_dir=os.path.join(self.dataset_dir, 'my_real_vs_ai_dataset/my_real_vs_ai_dataset'), 
-                train_batch_size=self.test_batch_size,
-                eval_batch_size=self.test_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=False
-            )
+                    dataset_mode='200k',
+                    realfake200k_train_csv=os.path.join(self.dataset_dir, 'train.csv'),
+                    realfake200k_valid_csv=os.path.join(self.dataset_dir, 'valid.csv'),
+                    realfake200k_test_csv=os.path.join(self.dataset_dir, 'test.csv'),
+                    realfake200k_root_dir=self.dataset_dir,
+                    train_batch_size=self.test_batch_size,
+                    eval_batch_size=self.test_batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=self.pin_memory,
+                    ddp=False
+                )
             elif self.dataset_mode == '190k':
                 dataset = Dataset_selector(
                     dataset_mode='190k',
@@ -144,7 +140,7 @@ class Test:
         try:
             print(f"Loading sparse student model for dataset mode: {self.dataset_mode}")
             self.student = ResNet_50_sparse_hardfakevsreal()
-
+            # Load checkpoint
             if not os.path.exists(self.sparsed_student_ckpt_path):
                 raise FileNotFoundError(f"Checkpoint file not found: {self.sparsed_student_ckpt_path}")
             ckpt_student = torch.load(self.sparsed_student_ckpt_path, map_location="cpu", weights_only=True)
@@ -167,7 +163,7 @@ class Test:
         meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
 
         self.student.eval()
-        self.student.ticket = True  
+        self.student.ticket = True  # Enable ticket mode for sparse model
         try:
             with torch.no_grad():
                 with tqdm(total=len(self.test_loader), ncols=100, desc="Test") as _tqdm:
