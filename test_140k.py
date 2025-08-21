@@ -33,7 +33,7 @@ class Test:
         self.new_dataset_dir = getattr(args, 'new_dataset_dir', None)
         self.f_lr = args.f_lr
         self.f_epochs = args.f_epochs
-        self.local_rank = args.local_rank
+        #self.local_rank = args.local_rank
         self.rank = -1
         self.world_size = -1
         self.seed = args.seed if hasattr(args, 'seed') else 42  # Add seed if not present
