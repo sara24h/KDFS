@@ -1,411 +1,391 @@
-import json
-import os
-import random
-import time
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
-from utils import utils, loss, meter, scheduler
-from data.dataset import Dataset_selector
-from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
+import os
+import pandas as pd
+from PIL import Image
+from sklearn.model_selection import train_test_split
 
+class FaceDataset(Dataset):
+    def __init__(self, data_frame, root_dir, transform=None, img_column='images_id'):
+        self.data = data_frame
+        self.root_dir = root_dir
+        self.transform = transform
+        self.img_column = img_column
+        self.label_map = {1: 1, 0: 0, 'real': 1, 'fake': 0, 'Real': 1, 'Fake': 0}
 
-class FinetuneDDP:
-    def __init__(self, args):
-        """Initialize FinetuneDDP with provided arguments."""
-        self.args = args
-        self.dataset_dir = args.dataset_dir
-        self.dataset_mode = args.dataset_mode
-        if self.dataset_mode == "hardfake":
-            self.dataset_type = "hardfakevsrealfaces"
-        elif self.dataset_mode == "rvf10k":
-            self.dataset_type = "rvf10k"
-        elif self.dataset_mode == "140k":
-            self.dataset_type = "140k"
-        elif self.dataset_mode == "200k":
-            self.dataset_type = "200k"
+    def __len__(self):
+        return len(self.data)
 
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, self.data[self.img_column].iloc[idx])
+        if not os.path.exists(img_name):
+            raise FileNotFoundError(f"image not found: {img_name}")
+        image = Image.open(img_name).convert('RGB')
+        label = self.label_map[self.data['label'].iloc[idx]]
+        if self.transform:
+            image = self.transform(image)
+        return image, torch.tensor(label, dtype=torch.float)
+
+class Dataset_selector(Dataset):
+    def __init__(
+        self,
+        dataset_mode,  # 'hardfake', 'rvf10k', '140k', '190k', '200k', '330k'
+        hardfake_csv_file=None,
+        hardfake_root_dir=None,
+        rvf10k_train_csv=None,
+        rvf10k_valid_csv=None,
+        rvf10k_root_dir=None,
+        realfake140k_train_csv=None,
+        realfake140k_valid_csv=None,
+        realfake140k_test_csv=None,
+        realfake140k_root_dir=None,
+        realfake200k_train_csv=None,
+        realfake200k_val_csv=None,
+        realfake200k_test_csv=None,
+        realfake200k_root_dir=None,
+        realfake190k_root_dir=None,
+        realfake330k_root_dir=None,
+        train_batch_size=32,
+        eval_batch_size=32,
+        num_workers=8,
+        pin_memory=True,
+        ddp=False,
+    ):
+        if dataset_mode not in ['hardfake', 'rvf10k', '140k', '190k', '200k', '330k']:
+            raise ValueError("dataset_mode must be 'hardfake', 'rvf10k', '140k', '190k', '200k', or '330k'")
+
+        self.dataset_mode = dataset_mode
+
+        # Define image size based on dataset_mode
+        image_size = (256, 256) if dataset_mode in ['rvf10k', '140k', '190k', '200k', '330k'] else (300, 300)
+
+        # Define mean and std based on dataset_mode
+        if dataset_mode == 'hardfake':
+            mean = (0.5124, 0.4165, 0.3684)
+            std = (0.2363, 0.2087, 0.2029)
+        elif dataset_mode == 'rvf10k':
+            mean = (0.5212, 0.4260, 0.3811)
+            std = (0.2486, 0.2238, 0.2211)
+        elif dataset_mode == '140k':
+            mean = (0.5207, 0.4258, 0.3806)
+            std = (0.2490, 0.2239, 0.2212)
+        elif dataset_mode == '200k':
+            mean = (0.4868, 0.3972, 0.3624)
+            std = (0.2296, 0.2066, 0.2009)
+        elif dataset_mode == '190k':
+            mean = (0.4668, 0.3816, 0.3414)
+            std = (0.2410, 0.2161, 0.2081)
+        else:  
+            mean = (0.4923, 0.4042, 0.3624)
+            std = (0.2446, 0.2198, 0.2141)   
+
+        # Define transforms
+        transform_train = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomCrop(image_size[0], padding=8),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std),
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std),
+        ])
+
+        # Set img_column based on dataset_mode
+        img_column = 'path' if dataset_mode in ['140k'] else 'images_id'
+
+        # Load data based on dataset_mode
+        if dataset_mode == 'hardfake':
+            if not hardfake_csv_file or not hardfake_root_dir:
+                raise ValueError("hardfake_csv_file and hardfake_root_dir must be provided")
+            full_data = pd.read_csv(hardfake_csv_file)
+
+            def create_image_path(row):
+                folder = 'fake' if row['label'] == 'fake' else 'real'
+                img_name = row['images_id']
+                img_name = os.path.basename(img_name)
+                if not img_name.endswith('.jpg'):
+                    img_name += '.jpg'
+                return os.path.join(folder, img_name)
+
+            full_data['images_id'] = full_data.apply(create_image_path, axis=1)
+            root_dir = hardfake_root_dir
+
+            train_data, temp_data = train_test_split(
+                full_data, test_size=0.3, stratify=full_data['label'], random_state=3407
+            )
+            val_data, test_data = train_test_split(
+                temp_data, test_size=0.5, stratify=temp_data['label'], random_state=3407
+            )
+            train_data = train_data.reset_index(drop=True)
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
+
+        elif dataset_mode == 'rvf10k':
+            if not rvf10k_train_csv or not rvf10k_valid_csv or not rvf10k_root_dir:
+                raise ValueError("rvf10k_train_csv, rvf10k_valid_csv, and rvf10k_root_dir must be provided")
+            train_data = pd.read_csv(rvf10k_train_csv)
+
+            def create_image_path(row, split='train'):
+                folder = 'fake' if row['label'] == 0 else 'real'
+                img_name = row['id']
+                img_name = os.path.basename(img_name)
+                if not img_name.endswith('.jpg'):
+                    img_name += '.jpg'
+                return os.path.join('rvf10k', split, folder, img_name)
+
+            train_data['images_id'] = train_data.apply(lambda row: create_image_path(row, 'train'), axis=1)
+            valid_data = pd.read_csv(rvf10k_valid_csv)
+            valid_data['images_id'] = valid_data.apply(lambda row: create_image_path(row, 'valid'), axis=1)
+
+            val_data, test_data = train_test_split(
+                valid_data, test_size=0.5, stratify=valid_data['label'], random_state=3407
+            )
+            val_data = val_data.reset_index(drop=True)
+            test_data = test_data.reset_index(drop=True)
+            root_dir = rvf10k_root_dir
+
+        elif dataset_mode == '140k':
+            if not realfake140k_train_csv or not realfake140k_valid_csv or not realfake140k_test_csv or not realfake140k_root_dir:
+                raise ValueError("realfake140k_train_csv, realfake140k_valid_csv, realfake140k_test_csv, and realfake140k_root_dir must be provided")
+            train_data = pd.read_csv(realfake140k_train_csv)
+            val_data = pd.read_csv(realfake140k_valid_csv)
+            test_data = pd.read_csv(realfake140k_test_csv)
+            root_dir = os.path.join(realfake140k_root_dir, 'real_vs_fake', 'real-vs-fake')
+
+            if 'path' not in train_data.columns:
+                raise ValueError("CSV files for 140k dataset must contain a 'path' column")
+
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        elif dataset_mode == '200k':
+            if not realfake200k_train_csv or not realfake200k_val_csv or not realfake200k_test_csv or not realfake200k_root_dir:
+                raise ValueError("realfake200k_train_csv, realfake200k_val_csv, realfake200k_test_csv, and realfake200k_root_dir must be provided")
+            train_data = pd.read_csv(realfake200k_train_csv)
+            val_data = pd.read_csv(realfake200k_val_csv)
+            test_data = pd.read_csv(realfake200k_test_csv)
+            root_dir = realfake200k_root_dir
+
+            def create_image_path(row):
+                folder = 'real' if row['label'] == 1 else 'ai_images'
+                img_name = row.get('filename', row.get('image', row.get('path', '')))
+                return os.path.join(folder, img_name)
+
+            train_data['images_id'] = train_data.apply(create_image_path, axis=1)
+            val_data['images_id'] = val_data.apply(create_image_path, axis=1)
+            test_data['images_id'] = test_data.apply(create_image_path, axis=1)
+
+        elif dataset_mode == '190k':
+            if not realfake190k_root_dir:
+                raise ValueError("realfake190k_root_dir must be provided")
+            root_dir = realfake190k_root_dir
+
+            def collect_images_from_folder(split):
+                data = []
+                for label in ['Real', 'Fake']:
+                    folder_path = os.path.join(root_dir, split, label)
+                    if not os.path.exists(folder_path):
+                        raise FileNotFoundError(f"Folder not found: {folder_path}")
+                    for img_name in os.listdir(folder_path):
+                        if img_name.endswith(('.jpg', '.jpeg', '.png')):
+                            img_path = os.path.join(split, label, img_name)
+                            data.append({'images_id': img_path, 'label': label})
+                return pd.DataFrame(data)
+
+            train_data = collect_images_from_folder('Train')
+            val_data = collect_images_from_folder('Validation')
+            test_data = collect_images_from_folder('Test')
+
+            train_data = train_data.sample(frac=1, random_state=None).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=None).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=None).reset_index(drop=True)
+
+        elif dataset_mode == '330k':
+            if not realfake330k_root_dir:
+                raise ValueError("realfake330k_root_dir must be provided")
+            root_dir = realfake330k_root_dir
+
+            def collect_images_from_folder(split):
+                data = []
+                for label in ['Real', 'Fake']:
+                    folder_path = os.path.join(root_dir, split, label)
+                    if not os.path.exists(folder_path):
+                        raise FileNotFoundError(f"Folder not found: {folder_path}")
+                    for img_name in os.listdir(folder_path):
+                        if img_name.endswith(('.jpg', '.jpeg', '.png')):
+                            img_path = os.path.join(split, label, img_name)
+                            data.append({'images_id': img_path, 'label': label})
+                return pd.DataFrame(data)
+
+            train_data = collect_images_from_folder('train')
+            val_data = collect_images_from_folder('valid')
+            test_data = collect_images_from_folder('test')
+
+            train_data = train_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            val_data = val_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+            test_data = test_data.sample(frac=1, random_state=3407).reset_index(drop=True)
+
+        # Debug: Print data statistics
+        print(f"{dataset_mode} dataset statistics:")
+        print(f"Sample train image paths:\n{train_data[img_column].head()}")
+        print(f"Total train dataset size: {len(train_data)}")
+        print(f"Train label distribution:\n{train_data['label'].value_counts()}")
+        print(f"Sample validation image paths:\n{val_data[img_column].head()}")
+        print(f"Total validation dataset size: {len(val_data)}")
+        print(f"Validation label distribution:\n{val_data['label'].value_counts()}")
+        print(f"Sample test image paths:\n{test_data[img_column].head()}")
+        print(f"Total test dataset size: {len(test_data)}")
+        print(f"Test label distribution:\n{test_data['label'].value_counts()}")
+
+        # Check for missing images
+        for split, data in [('train', train_data), ('validation', val_data), ('test', test_data)]:
+            missing_images = []
+            for img_path in data[img_column]:
+                full_path = os.path.join(root_dir, img_path)
+                if not os.path.exists(full_path):
+                    missing_images.append(full_path)
+            if missing_images:
+                print(f"Missing {split} images: {len(missing_images)}")
+                print(f"Sample missing {split} images:", missing_images[:5])
+
+        # Create datasets
+        train_dataset = FaceDataset(train_data, root_dir, transform=transform_train, img_column=img_column)
+        val_dataset = FaceDataset(val_data, root_dir, transform=transform_test, img_column=img_column)
+        test_dataset = FaceDataset(test_data, root_dir, transform=transform_test, img_column=img_column)
+
+        # Create data loaders with DDP support for all loaders
+        if ddp:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+            val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=True)
+            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=True)
+            
+            self.loader_train = DataLoader(
+                train_dataset, 
+                batch_size=train_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=train_sampler,
+            )
+            self.loader_val = DataLoader(
+                val_dataset, 
+                batch_size=eval_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=val_sampler,
+            )
+            self.loader_test = DataLoader(
+                test_dataset, 
+                batch_size=eval_batch_size, 
+                num_workers=num_workers,
+                pin_memory=pin_memory, 
+                sampler=test_sampler,
+            )
         else:
-            raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
-        self.num_workers = args.num_workers
-        self.pin_memory = args.pin_memory
-        self.arch = args.arch
-        self.seed = args.seed
-        self.result_dir = args.result_dir
-        self.finetune_train_batch_size = args.finetune_train_batch_size
-        self.finetune_eval_batch_size = args.finetune_eval_batch_size
-        self.finetune_student_ckpt_path = args.finetune_student_ckpt_path
-        self.finetune_num_epochs = args.finetune_num_epochs
-        self.finetune_lr = args.finetune_lr
-        self.finetune_warmup_steps = args.finetune_warmup_steps
-        self.finetune_warmup_start_lr = args.finetune_warmup_start_lr
-        self.finetune_lr_decay_T_max = args.finetune_lr_decay_T_max
-        self.finetune_lr_decay_eta_min = args.finetune_lr_decay_eta_min
-        self.finetune_weight_decay = args.finetune_weight_decay
-        self.finetune_resume = args.finetune_resume
-        self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-
-        self.start_epoch = 0
-        self.best_prec1_after_finetune = 0
-        self.world_size = 0
-        self.local_rank = -1
-        self.rank = -1
-
-    def dist_init(self):
-        """Initialize distributed training with NCCL backend."""
-        dist.init_process_group("nccl")
-        self.world_size = dist.get_world_size()
-        self.rank = dist.get_rank()
-        self.local_rank = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(self.local_rank)
-
-    def result_init(self):
-        """Initialize logging and TensorBoard writer for rank 0."""
-        if self.rank == 0:
-            self.writer = SummaryWriter(self.result_dir)
-            self.logger = utils.get_logger(
-                os.path.join(self.result_dir, "finetune_logger.log"), "finetune_logger"
+            self.loader_train = DataLoader(
+                train_dataset, 
+                batch_size=train_batch_size, 
+                shuffle=True,
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
             )
-            self.logger.info("Finetune configuration:")
-            self.logger.info(str(json.dumps(vars(self.args), indent=4)))
-            utils.record_config(
-                self.args, os.path.join(self.result_dir, "finetune_config.txt")
+            self.loader_val = DataLoader(
+                val_dataset, 
+                batch_size=eval_batch_size, 
+                shuffle=False, 
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
             )
-            self.logger.info("--------- Finetune -----------")
-
-    def setup_seed(self):
-        """Set random seeds for reproducibility."""
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        torch.use_deterministic_algorithms(True)
-        self.seed += self.rank
-        random.seed(self.seed)
-        np.random.seed(self.seed)  
-        torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = str(self.seed)  
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(self.seed)
-            torch.cuda.manual_seed_all(self.seed)
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.enabled = True
-
-    def dataload(self):
-        """Load dataset based on dataset_mode."""
-        if self.dataset_mode == 'hardfake':
-            hardfake_csv_file = os.path.join(self.dataset_dir, 'data.csv')
-            hardfake_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='hardfake',
-                hardfake_csv_file=hardfake_csv_file,
-                hardfake_root_dir=hardfake_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
-        elif self.dataset_mode == 'rvf10k':
-            rvf10k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            rvf10k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            rvf10k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='rvf10k',
-                rvf10k_train_csv=rvf10k_train_csv,
-                rvf10k_valid_csv=rvf10k_valid_csv,
-                rvf10k_root_dir=rvf10k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
-        elif self.dataset_mode == '140k':
-            realfake140k_train_csv = os.path.join(self.dataset_dir, 'train.csv')
-            realfake140k_valid_csv = os.path.join(self.dataset_dir, 'valid.csv')
-            realfake140k_test_csv = os.path.join(self.dataset_dir, 'test.csv')
-            realfake140k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='140k',
-                realfake140k_train_csv=realfake140k_train_csv,
-                realfake140k_valid_csv=realfake140k_valid_csv,
-                realfake140k_test_csv=realfake140k_test_csv,
-                realfake140k_root_dir=realfake140k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
-        elif self.dataset_mode == '200k':
-            realfake200k_train_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/train_labels.csv"
-            realfake200k_val_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/val_labels.csv"
-            realfake200k_test_csv = "/kaggle/input/200k-real-vs-ai-visuals-by-mbilal/test_labels.csv"
-            realfake200k_root_dir = self.dataset_dir
-            dataset = Dataset_selector(
-                dataset_mode='200k',
-                realfake200k_train_csv=realfake200k_train_csv,
-                realfake200k_val_csv=realfake200k_val_csv,
-                realfake200k_test_csv=realfake200k_test_csv,
-                realfake200k_root_dir=realfake200k_root_dir,
-                train_batch_size=self.finetune_train_batch_size,
-                eval_batch_size=self.finetune_eval_batch_size,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                ddp=True
-            )
-       
-      
-        else:
-            raise ValueError(f"Unknown dataset_mode: {self.dataset_mode}")
-
-        self.train_loader = dataset.loader_train
-        self.val_loader = dataset.loader_val
-        self.test_loader = dataset.loader_test
-        if self.rank == 0:
-            self.logger.info("Dataset loaded successfully!")
-
-    def build_model(self):
-        """Build and load the student model."""
-        if self.rank == 0:
-            self.logger.info("==> Building model...")
-            self.logger.info("Loading student model")
-        if not os.path.exists(self.finetune_student_ckpt_path):
-            raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
-        
-        self.student = ResNet_50_sparse_hardfakevsreal()
-     
-        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
-        self.student.load_state_dict(ckpt_student["student"])
-        if self.rank == 0:
-            self.best_prec1_before_finetune = ckpt_student["best_prec1"]
-        self.student = self.student.cuda()
-        self.student = DDP(self.student, device_ids=[self.local_rank], find_unused_parameters=True)
-
-    def define_loss(self):
-        """Define the loss function."""
-        self.ori_loss = nn.BCEWithLogitsLoss()
-
-    def define_optim(self):
-        """Define optimizer and scheduler."""
-        weight_params = map(
-            lambda a: a[1],
-            filter(
-                lambda p: p[1].requires_grad and "mask" not in p[0],
-                self.student.module.named_parameters(),
-            ),
-        )
-        self.finetune_optim_weight = torch.optim.Adamax(
-            weight_params,
-            lr=self.finetune_lr,
-            weight_decay=self.finetune_weight_decay,
-            eps=1e-7,
-        )
-        self.finetune_scheduler_student_weight = scheduler.CosineAnnealingLRWarmup(
-            self.finetune_optim_weight,
-            T_max=self.finetune_lr_decay_T_max,
-            eta_min=self.finetune_lr_decay_eta_min,
-            last_epoch=-1,
-            warmup_steps=self.finetune_warmup_steps,
-            warmup_start_lr=self.finetune_warmup_start_lr,
-        )
-
-    def resume_student_ckpt(self):
-        """Resume training from a checkpoint."""
-        ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
-        self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
-        self.start_epoch = ckpt_student["start_epoch"]
-        self.student.module.load_state_dict(ckpt_student["student"])
-        self.finetune_optim_weight.load_state_dict(
-            ckpt_student["finetune_optim_weight"]
-        )
-        self.finetune_scheduler_student_weight.load_state_dict(
-            ckpt_student["finetune_scheduler_student_weight"]
-        )
-        if self.rank == 0:
-            self.logger.info(f"=> Resuming from epoch {self.start_epoch}...")
-
-    def save_student_ckpt(self, is_best):
-        """Save model checkpoint."""
-        if self.rank == 0:
-            folder = os.path.join(self.result_dir, "student_model")
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-
-            ckpt_student = {
-                "best_prec1_after_finetune": self.best_prec1_after_finetune,
-                "start_epoch": self.start_epoch,
-                "student": self.student.module.state_dict(),
-                "finetune_optim_weight": self.finetune_optim_weight.state_dict(),
-                "finetune_scheduler_student_weight": self.finetune_scheduler_student_weight.state_dict(),
-            }
-
-            if is_best:
-                torch.save(
-                    ckpt_student,
-                    os.path.join(folder, f"finetune_{self.arch}_sparse_best.pt"),
-                )
-            torch.save(
-                ckpt_student,
-                os.path.join(folder, f"finetune_{self.arch}_sparse_last.pt"),
+            self.loader_test = DataLoader(
+                test_dataset, 
+                batch_size=eval_batch_size, 
+                shuffle=False, 
+                num_workers=num_workers, 
+                pin_memory=pin_memory,
             )
 
-    def reduce_tensor(self, tensor):
-        """Reduce tensor across all processes in DDP."""
-        rt = tensor.clone()
-        dist.all_reduce(rt, op=dist.ReduceOp.SUM)
-        rt /= self.world_size
-        return rt
+        # Debug: Print loader sizes
+        print(f"Train loader batches: {len(self.loader_train)}")
+        print(f"Validation loader batches: {len(self.loader_val)}")
+        print(f"Test loader batches: {len(self.loader_test)}")
 
-    def finetune(self):
-        """Perform finetuning of the student model."""
-        self.ori_loss = self.ori_loss.cuda()
-        if self.finetune_resume:
-            self.resume_student_ckpt()
-
-        if self.rank == 0:
-            meter_oriloss = meter.AverageMeter("OriLoss", ":.4e")
-            meter_loss = meter.AverageMeter("Loss", ":.4e")
-            meter_top1 = meter.AverageMeter("Acc@1", ":6.2f")
-
-        for epoch in range(self.start_epoch + 1, self.finetune_num_epochs + 1):
-            self.train_loader.sampler.set_epoch(epoch)
-            self.student.module.train()
-            self.student.module.ticket = True
-            if self.rank == 0:
-                meter_oriloss.reset()
-                meter_loss.reset()
-                meter_top1.reset()
-                finetune_lr = (
-                    self.finetune_optim_weight.state_dict()["param_groups"][0]["lr"]
-                    if epoch > 1
-                    else self.finetune_warmup_start_lr
-                )
-
-            with tqdm(total=len(self.train_loader), ncols=100) as _tqdm:
-                if self.rank == 0:
-                    _tqdm.set_description(f"Epoch: {epoch}/{self.finetune_num_epochs}")
-                for images, targets in self.train_loader:
-                    self.finetune_optim_weight.zero_grad()
-                    images = images.cuda()
-                    targets = targets.cuda().float()
-                    logits_student, _ = self.student(images)
-                    logits_student = logits_student.squeeze(1)
-                    ori_loss = self.ori_loss(logits_student, targets)
-                    total_loss = ori_loss
-                    total_loss.backward()
-                    self.finetune_optim_weight.step()
-
-                    preds = (torch.sigmoid(logits_student) > 0.5).float()
-                    correct = (preds == targets).sum().item()
-                    prec1 = torch.tensor(100. * correct / images.size(0), device=images.device)
-                    n = images.size(0)
-
-                    dist.barrier()
-                    reduced_ori_loss = self.reduce_tensor(ori_loss)
-                    reduced_total_loss = self.reduce_tensor(total_loss)
-                    reduced_prec1 = self.reduce_tensor(prec1)
-
-                    if self.rank == 0:
-                        meter_oriloss.update(reduced_ori_loss.item(), n)
-                        meter_loss.update(reduced_total_loss.item(), n)
-                        meter_top1.update(reduced_prec1.item(), n)
-
-                        _tqdm.set_postfix(
-                            loss=f"{meter_loss.avg:.4f}",
-                            top1=f"{meter_top1.avg:.4f}",
-                        )
-                        _tqdm.update(1)
-                    time.sleep(0.01)
-
-            self.finetune_scheduler_student_weight.step()
-
-            if self.rank == 0:
-                self.writer.add_scalar("finetune_train/loss/ori_loss", meter_oriloss.avg, epoch)
-                self.writer.add_scalar("finetune_train/loss/total_loss", meter_loss.avg, epoch)
-                self.writer.add_scalar("finetune_train/acc/top1", meter_top1.avg, epoch)
-                self.writer.add_scalar("finetune_train/lr/lr", finetune_lr, epoch)
-
-                self.logger.info(
-                    f"[Finetune_train] Epoch {epoch}: "
-                    f"Learning rate {finetune_lr:.6f} "
-                    f"Original loss {meter_oriloss.avg:.4f} "
-                    f"Total loss {meter_loss.avg:.4f} "
-                    f"Accuracy@1 {meter_top1.avg:.2f}"
-                )
-
-            if self.rank == 0:
-                self.student.module.eval()
-                self.student.module.ticket = True
-                meter_top1.reset()
-                with torch.no_grad():
-                    with tqdm(total=len(self.val_loader), ncols=100) as _tqdm:
-                        _tqdm.set_description(f"Epoch: {epoch}/{self.finetune_num_epochs}")
-                        for images, targets in self.val_loader:
-                            images = images.cuda()
-                            targets = targets.cuda().float()
-                            logits_student, _ = self.student(images)
-                            logits_student = logits_student.squeeze(1)
-                            preds = (torch.sigmoid(logits_student) > 0.5).float()
-                            correct = (preds == targets).sum().item()
-                            prec1 = 100. * correct / images.size(0)
-                            n = images.size(0)
-                            meter_top1.update(prec1, n)
-                            _tqdm.set_postfix(top1=f"{meter_top1.avg:.4f}")
-                            _tqdm.update(1)
-                            time.sleep(0.01)
-
-                self.writer.add_scalar("finetune_val/acc/top1", meter_top1.avg, epoch)
-                self.logger.info(
-                    f"[Finetune_val] Epoch {epoch}: Accuracy@1 {meter_top1.avg:.2f}"
-                )
-
-                masks = [round(m.mask.mean().item(), 2) for m in self.student.module.mask_modules]
-                self.logger.info(f"[Average mask] Epoch {epoch}: {masks}")
-
-                self.start_epoch += 1
-                if self.best_prec1_after_finetune < meter_top1.avg:
-                    self.best_prec1_after_finetune = meter_top1.avg
-                    self.save_student_ckpt(True)
-                else:
-                    self.save_student_ckpt(False)
-
-                self.logger.info(f" => Best Accuracy@1 before finetune: {self.best_prec1_before_finetune}")
-                self.logger.info(f" => Best Accuracy@1 after finetune: {self.best_prec1_after_finetune}")
-
-        if self.rank == 0:
-            self.logger.info("Finetuning completed!")
-            self.logger.info(f"Best Accuracy@1: {self.best_prec1_after_finetune}")
+        # Test a sample batch
+        for loader, name in [(self.loader_train, 'train'), (self.loader_val, 'validation'), (self.loader_test, 'test')]:
             try:
-                (
-                    Flops_baseline,
-                    Flops,
-                    Flops_reduction,
-                    Params_baseline,
-                    Params,
-                    Params_reduction,
-                ) = utils.get_flops_and_params(self.args)
-                self.logger.info(
-                    f"Baseline parameters: {Params_baseline:.2f}M, Parameters: {Params:.2f}M, Parameter reduction: {Params_reduction:.2f}%"
-                )
-                self.logger.info(
-                    f"Baseline FLOPs: {Flops_baseline:.2f}M, FLOPs: {Flops:.2f}M, FLOPs reduction: {Flops_reduction:.2f}%"
-                )
-            except AttributeError:
-                self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and parameters calculation.")
+                sample = next(iter(loader))
+                print(f"Sample {name} batch image shape: {sample[0].shape}")
+                print(f"Sample {name} batch labels: {sample[1]}")
+            except Exception as e:
+                print(f"Error loading sample {name} batch: {e}")
 
-    def main(self):
-        """Main function to orchestrate finetuning process."""
-        self.dist_init()
-        self.result_init()
-        self.setup_seed()
-        self.dataload()
-        self.build_model()
-        self.define_loss()
-        self.define_optim()
-        self.finetune()
-        dist.destroy_process_group()
+if __name__ == "__main__":
+    # Example for hardfakevsrealfaces
+    dataset_hardfake = Dataset_selector(
+        dataset_mode='hardfake',
+        hardfake_csv_file='/kaggle/input/hardfakevsrealfaces/data.csv',
+        hardfake_root_dir='/kaggle/input/hardfakevsrealfaces',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for rvf10k
+    dataset_rvf10k = Dataset_selector(
+        dataset_mode='rvf10k',
+        rvf10k_train_csv='/kaggle/input/rvf10k/train.csv',
+        rvf10k_valid_csv='/kaggle/input/rvf10k/valid.csv',
+        rvf10k_root_dir='/kaggle/input/rvf10k',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for 140k Real and Fake Faces
+    dataset_140k = Dataset_selector(
+        dataset_mode='140k',
+        realfake140k_train_csv='/kaggle/input/140k-real-and-fake-faces/train.csv',
+        realfake140k_valid_csv='/kaggle/input/140k-real-and-fake-faces/valid.csv',
+        realfake140k_test_csv='/kaggle/input/140k-real-and-fake-faces/test.csv',
+        realfake140k_root_dir='/kaggle/input/140k-real-and-fake-faces',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for 190k Real and Fake Faces
+    dataset_190k = Dataset_selector(
+        dataset_mode='190k',
+        realfake190k_root_dir='/kaggle/input/deepfake-and-real-images/Dataset',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for 200k Real and Fake Faces
+    dataset_200k = Dataset_selector(
+        dataset_mode='200k',
+        realfake200k_train_csv='/kaggle/input/200k-real-and-fake-faces/train_labels.csv',
+        realfake200k_val_csv='/kaggle/input/200k-real-and-fake-faces/val_labels.csv',
+        realfake200k_test_csv='/kaggle/input/200k-real-and-fake-faces/test_labels.csv',
+        realfake200k_root_dir='/kaggle/input/200k-real-and-fake-faces',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
+
+    # Example for 330k Real and Fake Faces
+    dataset_330k = Dataset_selector(
+        dataset_mode='330k',
+        realfake330k_root_dir='/kaggle/input/deepfake-dataset',
+        train_batch_size=64,
+        eval_batch_size=64,
+        ddp=True,
+    )
