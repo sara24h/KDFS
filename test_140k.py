@@ -48,7 +48,7 @@ class Test:
         self.student = None
 
     def dist_init(self):
-        dist.init_process_group("nccl")
+        dist.init_process_group(backend='nccl', init_method=f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}", world_size=ngpus_per_node, rank=gpu)
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
         torch.cuda.set_device(self.local_rank)
