@@ -99,7 +99,7 @@ class Test:
                 dataset = Dataset_selector(
                     dataset_mode='200k',
                     realfake200k_train_csv=os.path.join(self.dataset_dir, 'train_labels.csv'),
-                    realfake200k_val_csv=os.path.join(self.dataset_dir, 'valid_labels.csv'),
+                    realfake200k_val_csv=os.path.join(self.dataset_dir, 'val_labels.csv'),
                     realfake200k_test_csv=os.path.join(self.dataset_dir, 'test_labels.csv'),
                     realfake200k_root_dir=self.dataset_dir,
                     train_batch_size=self.test_batch_size,
