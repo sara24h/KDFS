@@ -19,12 +19,12 @@ matplotlib.use('Agg')
 
 from data.dataset import FaceDataset, Dataset_selector
 from model.teacher.ResNet import ResNet_50_hardfakevsreal
-from model.teacher.Mobilenetv2 import MobileNetV2_deepfake
+from model.teacher.MobilenetV2 import MobileNetV2_deepfake
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal, ResNet_50_sparse_rvf10k
 from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake
 from utils import utils, loss, meter, scheduler
 from train import Train
-from test import Test
+from test_140k import Test
 from finetune import Finetune
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
@@ -376,18 +376,11 @@ def parse_args():
         help="Learning rate for fine-tuning",
     )
     parser.add_argument(
-        "--f_weight_decay",
+        "--compress_rate",
         type=float,
-        default=0.0001,
-        help=" weight decay for fine-tuning",
-    )
-    parser.add_argument(
-        "--new_dataset_dir",
-        type=str,
         default=None,
-        help="Optional new dataset directory for additional testing",
+        help="Compress rate of the student model",
     )
-
     return parser.parse_args()
 
 def validate_args(args):
@@ -443,9 +436,6 @@ def validate_args(args):
 
     if args.phase == "test" and args.sparsed_student_ckpt_path and not os.path.exists(args.sparsed_student_ckpt_path):
         raise FileNotFoundError(f"Sparsed student checkpoint not found: {args.sparsed_student_ckpt_path}")
-
-    if args.new_dataset_dir and not os.path.exists(args.new_dataset_dir):
-        raise FileNotFoundError(f"New dataset directory not found: {args.new_dataset_dir}")
 
 def main():
     args = parse_args()
