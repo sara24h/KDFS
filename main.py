@@ -26,7 +26,7 @@ from utils import utils, loss, meter, scheduler
 from train import Train
 from test import Test
 from finetune import Finetune
-from finetune_gen import Finetune
+from finetune_gen import FinetuneDDP
 from train_ddp import TrainDDP
 from finetune_ddp import FinetuneDDP
 import json
