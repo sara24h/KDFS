@@ -48,7 +48,7 @@ class Test:
             transforms.RandomRotation(15),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.ToTensor(),
-            transforms.Normalize(mean=mean_330k, std=std_330k),
+            transforms.Normalize(mean=mean_200k, std=std_200k),
         ])
 
         transform_val_test_200k = transforms.Compose([
