@@ -42,15 +42,13 @@ class Test:
         mean_200k = [0.4868, 0.3972, 0.3624]
         std_200k = [0.2296, 0.2066, 0.2009]
 
-        transform_train_200k = transforms.Compose([
+        transform_train_330k = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomCrop(image_size[0], padding=8),
-            transforms.RandomRotation(20),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
             transforms.ToTensor(),
-            transforms.Normalize(mean=mean_200k, std=std_200k),
+            transforms.Normalize(mean=mean_330k, std=std_330k),
         ])
 
         transform_val_test_200k = transforms.Compose([
