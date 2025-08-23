@@ -42,11 +42,13 @@ class Test:
         mean_200k = [0.4868, 0.3972, 0.3624]
         std_200k = [0.2296, 0.2066, 0.2009]
 
-        transform_train_200k = transforms.Compose([
+       transform_train_200k = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.RandomCrop(image_size[0], padding=8),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            transforms.RandomAffine(degrees=0, translate=(0.15, 0.15), scale=(0.8, 1.2)),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean_200k, std=std_200k),
         ])
@@ -91,7 +93,7 @@ class Test:
 
         dataset_manager = Dataset_selector(**params)
 
-        print("Overriding transforms to use consistent 330k normalization stats for all datasets.")
+        print("Overriding transforms to use consistent 220k normalization stats for all datasets.")
         dataset_manager.loader_train.dataset.transform = transform_train_200k
         dataset_manager.loader_val.dataset.transform = transform_val_test_200k
         dataset_manager.loader_test.dataset.transform = transform_val_test_200k
@@ -100,7 +102,7 @@ class Test:
         self.val_loader = dataset_manager.loader_val
         self.test_loader = dataset_manager.loader_test
         
-        print(f"All loaders for '{self.dataset_mode}' are now configured with 330k normalization.")
+        print(f"All loaders for '{self.dataset_mode}' are now configured with 200k normalization.")
 
         # Load new test dataset if provided
         if self.new_dataset_dir:
