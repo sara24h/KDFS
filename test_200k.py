@@ -42,7 +42,7 @@ class Test:
         mean_200k = [0.4868, 0.3972, 0.3624]
         std_200k = [0.2296, 0.2066, 0.2009]
 
-       transform_train_200k = transforms.Compose([
+        transform_train_200k = transforms.Compose([
             transforms.Resize(image_size),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomCrop(image_size[0], padding=8),
