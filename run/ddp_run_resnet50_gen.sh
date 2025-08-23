@@ -201,7 +201,7 @@ elif [ "$PHASE" = "finetune" ]; then
         exit 1
     fi
 
-    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/main.py \
+    echo "torchrun --nproc_per_node=$nproc_per_node --master_port=$master_port /kaggle/working/KDFS/finetune_gen.py \
         --phase finetune \
         --arch $arch \
         --device cuda \
