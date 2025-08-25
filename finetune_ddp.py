@@ -191,25 +191,33 @@ class FinetuneDDP:
     def build_model(self):
         if self.rank == 0:
             self.logger.info("==> Building model...")
-            self.logger.info("Loading student model")
+            self.logger.info(f"Loading student model for architecture: {self.args.arch}")
+
+        arch_name = self.args.arch.lower().replace('_', '')
+        if arch_name == 'resnet50':
+            self.student = ResNet_50_sparse_hardfakevsreal()
+        elif arch_name == 'mobilenetv2':
+            self.student = MobileNetV2_sparse_deepfake()
+        else:
+            raise ValueError(f"Unsupported architecture for finetuning: {self.args.arch}")
+
         if not os.path.exists(self.finetune_student_ckpt_path):
             raise FileNotFoundError(f"Checkpoint file not found: {self.finetune_student_ckpt_path}")
         
-        self.student = ResNet_50_sparse_hardfakevsreal()
-     
-        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu", weights_only=True)
+        ckpt_student = torch.load(self.finetune_student_ckpt_path, map_location="cpu")
         self.student.load_state_dict(ckpt_student["student"])
+        
         if self.rank == 0:
-            self.best_prec1_before_finetune = ckpt_student["best_prec1"]
+            self.best_prec1_before_finetune = ckpt_student.get("best_prec1", 0) 
+            self.logger.info(f"Model '{self.args.arch}' loaded successfully.")
+
         self.student = self.student.cuda()
         self.student = DDP(self.student, device_ids=[self.local_rank], find_unused_parameters=True)
 
     def define_loss(self):
-        """Define the loss function."""
         self.ori_loss = nn.BCEWithLogitsLoss()
 
     def define_optim(self):
-        """Define optimizer and scheduler."""
         weight_params = map(
             lambda a: a[1],
             filter(
@@ -247,7 +255,6 @@ class FinetuneDDP:
             self.logger.info(f"=> Resuming from epoch {self.start_epoch}...")
 
     def save_student_ckpt(self, is_best):
-        """Save model checkpoint."""
         if self.rank == 0:
             folder = os.path.join(self.result_dir, "student_model")
             if not os.path.exists(folder):
