@@ -12,11 +12,10 @@ from tqdm import tqdm
 from utils import utils, loss, meter, scheduler
 from data.dataset import Dataset_selector
 from model.student.ResNet_sparse import ResNet_50_sparse_hardfakevsreal
-
+from model.student.MobileNetV2_sparse import MobileNetV2_sparse_deepfake 
 
 class FinetuneDDP:
     def __init__(self, args):
-        """Initialize FinetuneDDP with provided arguments."""
         self.args = args
         self.dataset_dir = args.dataset_dir
         self.dataset_mode = args.dataset_mode
@@ -51,7 +50,6 @@ class FinetuneDDP:
         self.finetune_weight_decay = args.finetune_weight_decay
         self.finetune_resume = args.finetune_resume
         self.sparsed_student_ckpt_path = args.sparsed_student_ckpt_path
-
         self.start_epoch = 0
         self.best_prec1_after_finetune = 0
         self.world_size = 0
@@ -59,7 +57,6 @@ class FinetuneDDP:
         self.rank = -1
 
     def dist_init(self):
-        """Initialize distributed training with NCCL backend."""
         dist.init_process_group("nccl")
         self.world_size = dist.get_world_size()
         self.rank = dist.get_rank()
@@ -67,7 +64,6 @@ class FinetuneDDP:
         torch.cuda.set_device(self.local_rank)
 
     def result_init(self):
-        """Initialize logging and TensorBoard writer for rank 0."""
         if self.rank == 0:
             self.writer = SummaryWriter(self.result_dir)
             self.logger = utils.get_logger(
@@ -87,9 +83,9 @@ class FinetuneDDP:
         torch.use_deterministic_algorithms(True)
         self.seed += self.rank
         random.seed(self.seed)
-        np.random.seed(self.seed)  # اصلاح self.seed_ به self.seed
+        np.random.seed(self.seed)  
         torch.manual_seed(self.seed)
-        os.environ["PYTHONHASHSEED"] = str(self.seed)  # اصلاح PYTHONPATH به PYTHONHASHSEED
+        os.environ["PYTHONHASHSEED"] = str(self.seed)  
         if torch.cuda.is_available():
             torch.cuda.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
@@ -193,7 +189,6 @@ class FinetuneDDP:
             self.logger.info("Dataset loaded successfully!")
 
     def build_model(self):
-        """Build and load the student model."""
         if self.rank == 0:
             self.logger.info("==> Building model...")
             self.logger.info("Loading student model")
@@ -238,7 +233,6 @@ class FinetuneDDP:
         )
 
     def resume_student_ckpt(self):
-        """Resume training from a checkpoint."""
         ckpt_student = torch.load(self.finetune_resume, map_location="cpu", weights_only=True)
         self.best_prec1_after_finetune = ckpt_student["best_prec1_after_finetune"]
         self.start_epoch = ckpt_student["start_epoch"]
@@ -278,14 +272,12 @@ class FinetuneDDP:
             )
 
     def reduce_tensor(self, tensor):
-        """Reduce tensor across all processes in DDP."""
         rt = tensor.clone()
         dist.all_reduce(rt, op=dist.ReduceOp.SUM)
         rt /= self.world_size
         return rt
 
     def finetune(self):
-        """Perform finetuning of the student model."""
         self.ori_loss = self.ori_loss.cuda()
         if self.finetune_resume:
             self.resume_student_ckpt()
@@ -422,7 +414,7 @@ class FinetuneDDP:
                 self.logger.warning("Function get_flops_and_params not found in utils. Skipping FLOPs and parameters calculation.")
 
     def main(self):
-        """Main function to orchestrate finetuning process."""
+
         self.dist_init()
         self.result_init()
         self.setup_seed()
