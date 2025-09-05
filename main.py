@@ -67,12 +67,7 @@ def parse_args():
         default="/kaggle/input/hardfakevsrealfaces/data.csv",
         help="The path to the hardfake CSV file (for hardfake mode)",
     )
-    parser.add_argument(
-        "--compress_rate",
-        type=float,
-        default=None,
-        help="Compress rate of the student model",
-    )
+    
     parser.add_argument(
         "--rvf10k_train_csv",
         type=str,
